@@ -256,20 +256,31 @@ pub fn status(meeting_id: &str) -> Option<JobState> {
         .flatten()
         .map(|j| j.state)
 }
+/// Explain the correction and review behavior before calling regenerate.
+pub const REGENERATE_CONFIRM: &str = "Regenerate notes? Your edits will be sent as corrections. Edits that no longer match will be kept for review.";
+
+pub fn regenerate(meeting_id: &str) -> io::Result<()> {
+    request_in(meeting_id, Request::TryAgain, true)
+}
+
 pub fn request(meeting_id: &str, mode: Request) -> io::Result<()> {
+    request_in(meeting_id, mode, false)
+}
+
+fn request_in(meeting_id: &str, mode: Request, confirmed_regeneration: bool) -> io::Result<()> {
     let settings = settings()?;
     if settings.engine() != Engine::App {
         return Err(super::store_io::invalid(
             "Choose the app notes engine first",
         ));
     }
-    queue::enqueue_in(
-        &super::state_dir(),
-        &super::meeting_parts::source(&super::state_dir(), &super::meetings_dir(), meeting_id),
-        meeting_id,
-        Some(mode),
-        &settings,
-    )?;
+    let root = super::state_dir();
+    let source = super::meeting_parts::source(&root, &super::meetings_dir(), meeting_id);
+    if confirmed_regeneration {
+        queue::regenerate_in(&root, &source, meeting_id, &settings)?;
+    } else {
+        queue::enqueue_in(&root, &source, meeting_id, Some(mode), &settings)?;
+    }
     queue::start_worker()
 }
 pub fn test_helper(h: Helper, model: &str) -> Result<Duration, String> {

@@ -208,6 +208,7 @@ pub(super) fn generate(
         &settings.model
     };
     let call = prompt::Call {
+        source: None,
         root,
         helper,
         model,

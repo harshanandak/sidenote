@@ -169,6 +169,16 @@ impl<'a> Store<'a> {
             .collect())
     }
 
+    pub(super) fn corrections(&self, summary: &Value) -> io::Result<Vec<Edit>> {
+        Ok(self
+            .edits()?
+            .into_iter()
+            .filter(|edit| {
+                edit.text != edit.base && edit.field.read(summary).as_ref() == Some(&edit.base)
+            })
+            .collect())
+    }
+
     pub fn overlay(&self, summary: &mut Value) -> io::Result<Vec<Edit>> {
         let mut aside = Vec::new();
         for edit in self.edits()? {
@@ -346,6 +356,101 @@ mod tests {
         };
         assert_eq!(&reloaded.current(Field::Title).unwrap().text, expected);
         assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn concurrent_device_edits_keep_both_versions_for_restore() {
+        let (dir, _, folder) = fixture();
+        std::fs::write(
+            folder.join("english-summary.json"),
+            br#"{"title":"Original title","made_by":{"time":"2026-11-22T00:00:00Z"}}"#,
+        )
+        .unwrap();
+        let a_root = dir.path().join("device-a");
+        let b_root = dir.path().join("device-b");
+        let a = Store::new(&a_root, &folder, "100-200");
+        let b = Store::new(&b_root, &folder, "100-200");
+        let a_before = a.current(Field::Title).unwrap();
+        let b_before = b.current(Field::Title).unwrap();
+        a.save(Field::Title, &a_before, "Device A title").unwrap();
+        b.save(Field::Title, &b_before, "Device B title").unwrap();
+        let a_local = a.current(Field::Title).unwrap();
+        let b_local = b.current(Field::Title).unwrap();
+
+        copy_journal(&a_root, &b_root);
+        copy_journal(&b_root, &a_root);
+        let winner = a.current(Field::Title).unwrap();
+        assert_eq!(winner, b.current(Field::Title).unwrap());
+        let (loser, stale_draft) = if winner == a_local {
+            (&b, &b_local)
+        } else {
+            assert_eq!(winner, b_local);
+            (&a, &a_local)
+        };
+        assert!(
+            loser
+                .save(Field::Title, stale_draft, "Stale draft")
+                .is_err()
+        );
+        for store in [a, b] {
+            let edits = store.edits().unwrap();
+            let history = &edits[0].history;
+            assert_eq!(history[0].text, "Original title");
+            for text in ["Device A title", "Device B title"] {
+                let version = history.iter().find(|snapshot| snapshot.text == text);
+                assert!(version.is_some(), "missing saved version {text}");
+                store
+                    .restore(
+                        Field::Title,
+                        &store.current(Field::Title).unwrap(),
+                        &version.unwrap().id(),
+                    )
+                    .unwrap();
+                assert_eq!(store.current(Field::Title).unwrap().text, text);
+            }
+        }
+    }
+
+    #[test]
+    fn restore_keeps_the_selected_version_when_delayed_history_moves_its_index() {
+        let (dir, _, folder) = fixture();
+        std::fs::write(
+            folder.join("english-summary.json"),
+            br#"{"title":"Original title","made_by":{"time":"2026-11-22T00:00:00Z"}}"#,
+        )
+        .unwrap();
+        let roots = ["one", "two", "three"].map(|name| dir.path().join(name));
+        let stores = roots
+            .each_ref()
+            .map(|root| Store::new(root, &folder, "100-200"));
+        let observer = dir.path().join("observer");
+        for (i, store) in stores.iter().enumerate() {
+            let before = store.current(Field::Title).unwrap();
+            store.save(Field::Title, &before, &i.to_string()).unwrap();
+            copy_journal(&roots[i], &observer);
+        }
+        let winner = Store::new(&observer, &folder, "100-200")
+            .current(Field::Title)
+            .unwrap();
+        let winning_index = winner.text.parse::<usize>().unwrap();
+        let store = &stores[winning_index];
+        let mut losing = (0..stores.len())
+            .filter(|&i| i != winning_index)
+            .map(|i| (stores[i].edits().unwrap()[0].history[1].id(), i))
+            .collect::<Vec<_>>();
+        losing.sort();
+        let (selected, latest) = &losing[1];
+        assert!(store.restore(Field::Title, &winner, selected).is_err());
+        copy_journal(&roots[*latest], &roots[winning_index]);
+        let displayed = store.edits().unwrap();
+        assert_eq!(displayed[0].history[2].id(), *selected);
+        copy_journal(&roots[losing[0].1], &roots[winning_index]);
+        assert_eq!(store.edits().unwrap()[0].history[2].id(), losing[0].0);
+        store.restore(Field::Title, &winner, selected).unwrap();
+        assert_eq!(
+            store.current(Field::Title).unwrap().text,
+            latest.to_string()
+        );
     }
 
     #[test]

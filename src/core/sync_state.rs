@@ -78,6 +78,7 @@ impl Register {
 #[derive(Default)]
 struct View {
     items: BTreeMap<Key, Register>,
+    summary_history: BTreeMap<Key, BTreeMap<String, Value>>,
     sources: BTreeSet<String>,
     warnings: Vec<String>,
     own_bad: bool,
@@ -91,6 +92,21 @@ impl View {
                 .map(|s| format!("{}:{s}", journal.device)),
         );
         for change in &journal.changes {
+            // A losing text register can still hold versions absent from the winner.
+            if journal.store == super::summary_edits::FILE
+                && let [kind, _] = change.key.as_slice()
+                && kind == "edits"
+                && let Some(value) = &change.value
+                && super::summary_edits::Edit::deserialize(value).is_ok()
+                && let Some(history) = value["history"].as_array()
+            {
+                let snapshots = self.summary_history.entry(change.key.clone()).or_default();
+                for snapshot in history {
+                    snapshots
+                        .entry(super::summary_edits::snapshot_id(snapshot))
+                        .or_insert_with(|| snapshot.clone());
+                }
+            }
             let incoming = Register {
                 at: change.at,
                 device: journal.device.clone(),
@@ -109,7 +125,24 @@ impl View {
     fn values(&self) -> Items {
         self.items
             .iter()
-            .filter_map(|(k, r)| r.value.clone().map(|v| (k.clone(), v)))
+            .filter_map(|(key, register)| {
+                let mut value = register.value.clone()?;
+                if let Some(snapshots) = self.summary_history.get(key)
+                    && let Some(history) = value.get_mut("history").and_then(Value::as_array_mut)
+                {
+                    let present: BTreeSet<_> = history
+                        .iter()
+                        .map(super::summary_edits::snapshot_id)
+                        .collect();
+                    history.extend(
+                        snapshots
+                            .iter()
+                            .filter(|(id, _)| !present.contains(*id))
+                            .map(|(_, snapshot)| snapshot.clone()),
+                    );
+                }
+                Some((key.clone(), value))
+            })
             .collect()
     }
     fn next_time(&self) -> io::Result<u64> {
@@ -931,14 +964,13 @@ pub(super) fn update_merged_validated<T: Serialize + DeserializeOwned + Default>
     for _ in 0..3 {
         let mut s = Session::open(root, store)?;
         let before = s.value::<T>()?;
-        let registers = s.view.items.clone();
         let mut value: T = serde_json::from_value(before.clone())?;
         change(&mut value)?;
         let latest = read_view(root, store, &s.own)?;
         if latest.own_bad {
             return Err(invalid("Own journal is unreadable"));
         }
-        if latest.items != registers {
+        if latest.items != s.view.items || latest.summary_history != s.view.summary_history {
             continue;
         }
         validate()?;
