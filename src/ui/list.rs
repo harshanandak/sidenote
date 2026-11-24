@@ -278,26 +278,18 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .pt(if narrow { 8.0 } else { 20.0 })
         .pb(32.0)
         .child(
-            row()
+            col()
                 .w_full()
-                .items_end()
-                .justify_between()
-                .gap(12.0)
-                .mb(18.0)
+                .gap(4.0)
+                .mb(10.0)
                 .child(
                     text_title(&title, if narrow { 28.0 } else { 34.0 }, p)
                         .grow(1.0)
                         .min_w(0.0),
                 )
-                .child(roles::meta(count, p).pb(6.0)),
+                .child(roles::meta(count, p)),
         )
-        .child(
-            link("Short recordings", p)
-                .key("filter-short-recordings")
-                .self_start()
-                .mb(10.0)
-                .on_press(|s: &mut State| s.set_filter(Filter::Short)),
-        )
+        .child(meeting_views(s, p))
         .children((s.filter != Filter::All).then(|| {
             link("Show all meetings", p)
                 .key("filter-clear")
@@ -313,13 +305,10 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .children(super::today::strip(s, p))
         .children(super::project_merge::panel(s, k, p, layer))
         .children(super::area::project_tools(s, k, p, layer))
-        .child(search_box(
-            s,
-            k,
-            42.0,
-            "Search meetings, tasks and transcripts",
-            p,
-        ));
+        .children(
+            (s.search.focused || !s.search.text.is_empty())
+                .then(|| search_box(s, k, 34.0, "Filter meetings and transcripts", p)),
+        );
     let mut position = 0;
     for group in &s.groups {
         doc = doc.child(
@@ -354,6 +343,20 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     .child(ask::overlay(s, k, p, narrow, layer))
 }
 
+fn meeting_views(s: &State, p: Palette) -> El {
+    let short = super::widgets::quiet_button("Short recordings", "filter-short-recordings", p)
+        .fill(if s.filter == Filter::Short {
+            p.sel
+        } else {
+            rune::Color::TRANSPARENT
+        })
+        .on_press(|s: &mut State| s.set_filter(Filter::Short));
+    row().gap(4.0).child(short).children(
+        (super::nav::meetings_home(s) && s.delete_available())
+            .then(|| super::meeting_delete::list_button(p)),
+    )
+}
+
 pub fn text_title(s: &str, size: f32, p: Palette) -> El {
     rune::text(s.to_string())
         .font(display(size))
@@ -374,6 +377,7 @@ fn short_recordings(s: &State, p: Palette, narrow: bool) -> El {
             p,
         ))
         .child(roles::SMALL.wrap(core::recording_guard::EXPLANATION, p.soft))
+        .child(meeting_views(s, p))
         .child(
             link("Show all meetings", p)
                 .key("filter-clear")

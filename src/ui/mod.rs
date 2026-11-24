@@ -2259,33 +2259,11 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
     }
 }
 
-fn top_bar(s: &State, p: theme::Palette, narrow: bool, layer: &mut Vec<El>) -> El {
+fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
     let mut left = row().gap(4.0).items_center().min_w(0.0);
-    if !s.sidebar_is_open() {
-        left = left.child(
-            (if nav::meetings_home(s) {
-                widgets::button(
-                    "Show sidebar",
-                    "sidebar-toggle",
-                    widgets::ButtonRole::Ghost,
-                    p,
-                )
-            } else {
-                widgets::icon_button(
-                    &icons::PANEL_OPEN,
-                    "Show sidebar (Ctrl+\\)",
-                    "sidebar-toggle",
-                    widgets::ButtonRole::Ghost,
-                    p,
-                )
-            })
-            .on_press(|s: &mut State| s.toggle_sidebar()),
-        );
-    }
-    if nav::meetings_home(s) && s.delete_available() {
-        left = left.child(meeting_delete::list_button(p));
-    }
+    let mut show = false;
     if s.view == tasks::View::Meetings && s.selected.is_some() {
+        show = true;
         let title = s.current().map(|m| m.title.as_str()).unwrap_or_default();
         left = left.child(
             widgets::breadcrumb("Meetings", title, "meeting-breadcrumb", p, |s| s.go_home())
@@ -2293,6 +2271,7 @@ fn top_bar(s: &State, p: theme::Palette, narrow: bool, layer: &mut Vec<El>) -> E
         );
     }
     if s.on_memory() && s.memory.browse {
+        show = true;
         left = left.child(widgets::breadcrumb(
             "Memory",
             "All",
@@ -2304,18 +2283,60 @@ fn top_bar(s: &State, p: theme::Palette, narrow: bool, layer: &mut Vec<El>) -> E
             },
         ));
     }
+    show.then(|| left.h(34.0).w_full().px(14.0))
+}
+
+const TITLEBAR_H: f32 = 48.0;
+
+fn titlebar(
+    s: &State,
+    cx: &mut Cx<State>,
+    p: theme::Palette,
+    narrow: bool,
+    layer: &mut Vec<El>,
+) -> El {
+    let insets = cx.chrome_insets();
+    cx.caption_color(p.ink);
+    let gutter = if narrow {
+        0.0
+    } else {
+        insets.leading.max(insets.trailing)
+    };
+    let left = row()
+        .pl(insets.leading)
+        .pr((gutter - insets.leading).max(0.0))
+        .gap(4.0)
+        .items_center()
+        .children(s.on_hex().then(nav::logo))
+        .children((!s.on_hex()).then(|| nav::toggle(s, p)))
+        .child(nav::search(p));
+    let (pill, action) = if s.on_hex() {
+        (None, None)
+    } else {
+        nav::actions(s, p, narrow, layer)
+    };
+    let center = row().h(TITLEBAR_H).center().min_w(0.0).children(pill);
+    let right = row()
+        .pr(insets.trailing)
+        .pl((gutter - insets.trailing).max(0.0))
+        .pt(10.0)
+        .justify_end()
+        .children(action);
+    let (left, center, right) = if narrow {
+        (left, center.grow(1.0), right)
+    } else {
+        (left.grow(1.0), center, right.grow(1.0))
+    };
     row()
         .key("top-bar")
         .w_full()
-        .min_h(52.0)
-        .py(6.0)
-        .px(if narrow { 10.0 } else { 14.0 })
-        .gap(12.0)
-        .items_center()
-        .justify_between()
-        .fill(p.bg)
-        .child(left.grow(1.0))
-        .child(nav::actions(s, p, narrow, layer))
+        .min_h(TITLEBAR_H)
+        .px(8.0)
+        .gap(4.0)
+        .window_drag()
+        .child(left.h(TITLEBAR_H))
+        .child(center)
+        .child(right)
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -2441,7 +2462,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .min_h(0.0)
         .fill(p.bg)
-        .children((!on_hex).then(|| top_bar(s, p, narrow, &mut layer)))
+        .children((!on_hex).then(|| page_actions(s, p)).flatten())
         .children(updates::recorder_gap_notice(s, p));
     if let Some(bar) = hex::error_bar(s, p) {
         main = main.child(bar);
@@ -2497,7 +2518,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         );
     }
     let main = main.child(content);
-    let mut app = row()
+    let mut app = col()
         .key("app")
         .w_full()
         .h_full()
@@ -2514,10 +2535,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             // A lost focus is not a hide: a window on another monitor still shows the indicator.
             s.hex_visibility(focused || hex::window_shown());
         });
-    // The rail stays in every window. Open, the sidebar pushes the page aside, except in a
-    // narrow window, where it is a drawer over it.
+    app = app.child(titlebar(s, cx, p, window_narrow, &mut layer));
     let open = s.sidebar_is_open();
-    app = app
+    let mut body = row()
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
         .child(if on_hex {
             hex::settings_sidebar(s, &k, p)
         } else if window_narrow && open {
@@ -2531,7 +2554,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(rune::el().w(1.0).h_full().fill(p.line))
         .child(main);
     if window_narrow && open && !on_hex {
-        app = app
+        body = body
             .child(
                 rune::el()
                     .key("nav-scrim")
@@ -2545,6 +2568,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .shadow(0.0, 32.0, p.shadow),
             );
     }
+    app = app.child(body);
     if let Some(finder) = finder::overlay(s, &k, p, window_narrow) {
         app = app.child(finder);
     }
@@ -4666,6 +4690,10 @@ pub fn run() {
             rune::FontSmoothing::Off
         },
     ));
+    #[cfg(windows)]
+    {
+        app = app.titlebar(rune::Titlebar::new(TITLEBAR_H));
+    }
     let trace = sidenote::env_var("SIDENOTE_TRACE_FIRST_FRAME");
     let refresh_handle = app.handle();
     let mut first_frame = false;
