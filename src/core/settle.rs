@@ -95,7 +95,7 @@ impl Default for Store {
         Self::new(super::state_dir(), super::meetings_dir())
     }
 }
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     id.split_once('-').is_some_and(|(a, b)| {
         !a.is_empty() && !b.is_empty() && a.bytes().chain(b.bytes()).all(|b| b.is_ascii_digit())
     })
@@ -131,6 +131,10 @@ fn identity(task: &Value) -> String {
         .unwrap_or("")
         .into()
 }
+pub(super) fn summary_lock(root: &Path) -> io::Result<fs::File> {
+    store_io::lock(&root.join("local/settle-log.lock"))
+}
+
 impl Store {
     pub fn new(root: PathBuf, meetings: PathBuf) -> Self {
         Self { root, meetings }
@@ -139,7 +143,7 @@ impl Store {
         self.root.join("memory/settle-log")
     }
     fn lock(&self) -> io::Result<fs::File> {
-        store_io::lock(&self.root.join("local/settle-log.lock"))
+        summary_lock(&self.root)
     }
     pub(super) fn recycle_claim(&self, ids: &BTreeSet<String>) -> io::Result<Option<fs::File>> {
         let lock = match store_io::try_lock(&self.root.join("local/settle-log.lock")) {
