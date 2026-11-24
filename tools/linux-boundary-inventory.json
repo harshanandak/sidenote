@@ -403,9 +403,9 @@
 
   "src/ui/area_scene.rs": "ed9d0a3291369f5ab6a8a3e2c0da8a04bb05ba7155a065cd2604c9da7b1bf160",
 
-  "src/ui/ask_settings.rs": "c6aba5971947b5eb71090b820932d93fd5041bb05be55a9e65ae1000f36608ac",
+  "src/ui/ask_settings.rs": "ffbf1edb338e253dc13f32cbd2b594946c5bb7711671926a62941e9de2a2e60f",
 
-  "src/ui/ask_switch_tests.rs": "a4cd9c4aaa1c355989f2dfa7eb5edae0a1cd2a11edaa86aeb415986f756aa0c6",
+  "src/ui/ask_switch_tests.rs": "c3510b01d4faafe494fdacdc5de65dbd73d17253c56a5394dcbb681ab33163e5",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "b8bdf637fe0cfca7b25b889432524d1ecbb8d1a68143cc703536ae5ba4c46788",
+  "src/ui/mod.rs": "88c76f0e80282dd04580307ff241d06b310d6ae21a6b33001970d9c772ba04e0",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

@@ -1352,10 +1352,10 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     rt.update(|s, _| scene_agents(s, ALL_AGENTS));
     rt.frame(0.0);
     assert!(rt.find("ask-model").is_none());
-    assert!(rt.find("ask-suggestions").is_none());
+    assert!(rt.find("ask-options-menu").is_none());
     rt.update(|s, _| s.ask_open = true);
     rt.frame(0.0);
-    assert!(rt.find("ask-suggestions").is_some());
+    assert!(rt.find("ask-options").is_some());
     assert!(
         rt.state.selected.is_some() && rt.find("ask-model").is_some(),
         "meeting"
@@ -1369,6 +1369,52 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
         rt.state.on_live() && rt.find("ask-model").is_some(),
         "live screen"
     );
+}
+
+#[test]
+fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
+    if in_parent("ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor") {
+        return;
+    }
+    for size in [DEFAULT_SIZE, (390.0, 844.0)] {
+        let mut rt = page_at(size);
+        rt.update(|s, _| {
+            scene_agents(s, ALL_AGENTS);
+            s.ask_open = true;
+        });
+        rt.frame(0.0);
+        assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
+        let chip = |rt: &Runtime<State>| element(rt, "ask-options").label.unwrap();
+        assert_eq!(rt.state.ask_key(), MEETING);
+        assert_eq!(chip(&rt), "Ask options, What did we decide?");
+        rt.update(|s, _| s.set_ask_scope(true));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+        rt.update(|s, _| s.go_home());
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options, List my tasks");
+        rt.update(|s, _| s.question = TextEdit::new("A draft"));
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options");
+        rt.update(|s, _| {
+            s.question = TextEdit::default();
+            scene_live(s, "", &[], false);
+            s.hex.status = Some(Ok(hex_engine_recording()));
+        });
+        rt.frame(0.0);
+        assert!(rt.state.ask_current_live());
+        assert_eq!(chip(&rt), "Ask options, What did I miss");
+        rt.update(|s, _| {
+            s.asks
+                .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
+        });
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options");
+        rt.update(|s, _| s.go_home());
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+        assert_eq!(chip(&rt), "Ask options, List my tasks");
+    }
 }
 
 #[test]
@@ -1537,15 +1583,14 @@ fn reduced_motion_opens_the_ask_panel_without_moving_the_pill() {
     rt.frame(0.0);
     rt.settle_all();
     rt.frame(0.0);
-    let closed = rect_of(&rt, "ask-panel");
+    let closed = rect_of(&rt, "ask-options");
     let pill = rect_of(&rt, "ask-pill");
     rt.update(|_, tx| tx.focus("ask-input", true));
     rt.frame(0.0);
     rt.update(|s, tx| s.ask_open = ask::focus_open(s, tx));
     rt.frame(0.016);
-    let opened = rect_of(&rt, "ask-panel");
-    assert_eq!(opened[1], closed[1] - 40.0);
-    assert_eq!(opened[3], closed[3] + 40.0);
+    let opened = rect_of(&rt, "ask-options");
+    assert_eq!((opened[1], opened[3]), (closed[1], closed[3]));
     assert_eq!(rect_of(&rt, "ask-pill"), pill);
 }
 
@@ -1586,7 +1631,8 @@ fn ask_pressing_send_and_a_suggestion_keeps_the_editor_focused() {
     rt.update(|s, _| s.question.text.clear());
     rt.update(|s, _| s.thread_hidden = true);
     rt.frame(0.2);
-    tap(&mut rt, "suggest-0");
+    tap(&mut rt, "ask-options");
+    tap(&mut rt, "ask-options-item0");
     assert!(rt.state.asks.contains_key(MEETING));
     assert!(
         rt.state.question.focused,
@@ -1908,11 +1954,11 @@ fn the_bar_starts_at_the_notes_column(name: &str, size: (f32, f32)) {
     let notes = rect("meeting-view");
     let (dock, chip, pill) = (
         rect("meeting-bottom-bar"),
-        rect("suggest-0"),
+        rect("ask-options"),
         rect("ask-pill"),
     );
     assert_eq!(dock[0], notes[0], "the dock starts at the notes column");
-    assert_eq!(chip[0], pill[0] + 2.0, "the chip sits inside the panel");
+    assert!(chip[0] > pill[0] && chip[0] + chip[2] < pill[0] + pill[2]);
 }
 
 #[test]
