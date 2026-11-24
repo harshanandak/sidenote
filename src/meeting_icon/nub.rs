@@ -1,4 +1,4 @@
-// Recording pill layout and motion adapted from Hex (MIT). See THIRD_PARTY.md.
+// Adapted from Hex (7ed860ff). Copyright (c) 2026 Christopher Langton, MIT License. See THIRD_PARTY.md.
 use std::{
     f32::consts::TAU,
     time::{Duration, Instant},
