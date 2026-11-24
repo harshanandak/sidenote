@@ -613,7 +613,7 @@ impl State {
             pane_h: Cell::new(800.0),
             live_document_h: Cell::new(340.0),
             live_thread_h: Cell::new(140.0),
-            overlay_h: Cell::new(150.0),
+            overlay_h: Cell::new(78.0),
             pending_scroll: None,
             pending_thread: None,
             events_tx,
