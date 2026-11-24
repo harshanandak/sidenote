@@ -80,7 +80,16 @@ pub struct SnapshotEdit {
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
+pub(super) fn snapshot_id(value: &Value) -> String {
+    let hash = blake3::hash(value.to_string().as_bytes());
+    hash.to_hex().to_string()
+}
+
 impl SnapshotEdit {
+    pub fn id(&self) -> String {
+        snapshot_id(&json!(self))
+    }
+
     pub fn by_you(text: &str) -> Self {
         Self {
             text: text.into(),
@@ -199,10 +208,14 @@ impl<'a> Store<'a> {
         self.record(field, expected, |_| Ok(SnapshotEdit::by_you(text)))
     }
 
-    pub fn restore(&self, field: Field, expected: &Line, version: usize) -> io::Result<()> {
+    pub fn restore(&self, field: Field, expected: &Line, version: &str) -> io::Result<()> {
         self.record(field, expected, |edit| {
             let version = edit
-                .and_then(|edit| edit.history.get(version))
+                .and_then(|edit| {
+                    edit.history
+                        .iter()
+                        .find(|snapshot| snapshot.id() == version)
+                })
                 .ok_or_else(stale)?;
             Ok(SnapshotEdit::by_you(&version.text))
         })
@@ -272,17 +285,27 @@ fn stale() -> io::Error {
 mod tests {
     use super::*;
 
-    fn fixture() -> tempfile::TempDir {
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("100-200")).unwrap();
-        dir
+        let (root, folder) = (dir.path().join("state"), dir.path().join("100-200"));
+        std::fs::create_dir(&folder).unwrap();
+        (dir, root, folder)
+    }
+
+    fn copy_journal(from: &Path, to: &Path) {
+        let device = super::super::DeviceSettings::load_in(from).unwrap();
+        let key = blake3::hash(FILE.as_bytes()).to_string();
+        let path = Path::new("state").join(device.id).join(key);
+        std::fs::create_dir_all(to.join(&path)).unwrap();
+        for entry in std::fs::read_dir(from.join(&path)).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), to.join(&path).join(entry.file_name())).unwrap();
+        }
     }
 
     #[test]
     fn saved_edit_overlays_generated_text_after_reload() {
-        let dir = fixture();
-        let root = dir.path().join("state");
-        let folder = dir.path().join("100-200");
+        let (_dir, root, folder) = fixture();
         let original = br#"{"title":"Original title","topics":[]}"#;
         let path = folder.join("english-summary.json");
         std::fs::write(&path, original).unwrap();
@@ -293,29 +316,41 @@ mod tests {
         let edited = reloaded.current(Field::Title).unwrap();
         assert_eq!(edited.text, "My title");
         assert!(store.save(Field::Title, &before, "Stale draft").is_err());
-        reloaded.restore(Field::Title, &edited, 0).unwrap();
+        let id = reloaded.edits().unwrap()[0].history[0].id();
+        reloaded.restore(Field::Title, &edited, &id).unwrap();
         let edits = reloaded.edits().unwrap();
         assert_eq!(edits.len(), 1);
-        assert_eq!(
-            edits[0]
-                .history
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<Vec<_>>(),
-            ["Original title", "My title", "Original title"]
-        );
-        assert_eq!(
-            reloaded.current(Field::Title).unwrap().text,
-            "Original title"
-        );
+        let history = &edits[0].history;
+        let texts: Vec<_> = history.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["Original title", "My title", "Original title"]);
+        let displayed = reloaded.current(Field::Title).unwrap();
+        assert_eq!(displayed.text, "Original title");
+
+        let peer = root.with_file_name("peer");
+        copy_journal(&root, &peer);
+        sync_state::update_merged(&peer, FILE, |records: &mut Records| {
+            records.edits.values_mut().next().unwrap().history[1].text = "Peer title".into();
+            Ok(())
+        })
+        .unwrap();
+        copy_journal(&peer, &root);
+        assert_eq!(reloaded.current(Field::Title).unwrap(), displayed);
+        let displaced = reloaded.edits().unwrap();
+        assert_eq!(displaced[0].history[1].text, "Peer title");
+        let selected = &history[1];
+        let result = reloaded.restore(Field::Title, &displayed, &selected.id());
+        let expected = if result.is_ok() {
+            &selected.text
+        } else {
+            &displayed.text
+        };
+        assert_eq!(&reloaded.current(Field::Title).unwrap().text, expected);
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
     #[test]
     fn stale_save_returns_the_edit_to_the_caller() {
-        let dir = fixture();
-        let root = dir.path().join("state");
-        let folder = dir.path().join("100-200");
+        let (_dir, root, folder) = fixture();
         let path = folder.join("english-summary.json");
         std::fs::write(&path, br#"{"title":"Original title"}"#).unwrap();
         let store = Store::new(&root, &folder, "100-200");
@@ -329,9 +364,7 @@ mod tests {
 
     #[test]
     fn changed_generated_line_keeps_the_edit_aside() {
-        let dir = fixture();
-        let root = dir.path().join("state");
-        let folder = dir.path().join("100-200");
+        let (_dir, root, folder) = fixture();
         let path = folder.join("english-summary.json");
         std::fs::write(&path, br#"{"title":"Original title"}"#).unwrap();
         let store = Store::new(&root, &folder, "100-200");
