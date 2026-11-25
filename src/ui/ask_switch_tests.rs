@@ -1982,7 +1982,6 @@ fn retiring_memory_shares_the_wait_between_two_contended_locks() {
     );
 }
 
-/// The dock is centered in the meeting pane and the prompt stays inside it.
 fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     if in_parent(name) {
         return;
@@ -2113,7 +2112,6 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         last[1] + last[3] <= dock[1],
         "the last notes row {last:?} sits under the dock {dock:?}"
     );
-    // The answer adds a panel without introducing a fade.
     rt.update(|s, _| {
         s.saved.messages = ["What did we decide?", "The beta ships on Friday."]
             .iter()
@@ -2340,8 +2338,7 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
-        let dock = rect_of(&rt, "ask-controls");
-        let pane = rect_of(&rt, "meeting-pane");
+        let [dock, pane] = ["ask-controls", "meeting-pane"].map(|key| rect_of(&rt, key));
         assert_eq!(
             (dock[0], dock[2]),
             (pane[0] + (pane[2] - 640.0) / 2.0, 640.0),
