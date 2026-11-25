@@ -426,7 +426,7 @@ Hex is not running. Stop it from Hex if it is recording."
     });
     rt.frame(0.2);
     // Assert the command's capability check so the test needs no running Hex process.
-    rt.update(|s, _| s.hex.caps = Some(Default::default()));
+    rt.update(|s, _| s.hex_apply(hex::Msg::Caps("test".into(), Ok(Default::default()))));
     let unsupported = Some("This Hex build cannot stop. Stop it from Hex.");
     assert!(rt.state.hex.error.is_none());
     tap(&mut rt, "meeting-pause");
