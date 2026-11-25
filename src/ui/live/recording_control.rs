@@ -268,6 +268,7 @@ mod tests {
             let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
             let mut state = State::new();
             crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
+            crate::ui::scene_agents(&mut state, &["codex"]);
             let mut live = Live::scene(Phase::Recording, None);
             live.session = Some(meeting_parts::Meeting {
                 phase: SavedPhase::Recording,
