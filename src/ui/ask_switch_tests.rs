@@ -1441,7 +1441,8 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         );
         let [stop_x, stop_y, stop_w, stop_h] = rect_of(&rt, "hex-stop");
         let [pill_x, pill_y, _, pill_h] = rect_of(&rt, "ask-pill");
-        let [input_x, ..] = rect_of(&rt, "ask-input");
+        let [input_x, _, input_w, _] = rect_of(&rt, "ask-input");
+        assert!(input_w >= 90.0, "{size:?}: Ask input is squeezed");
         assert!(stop_x >= pill_x && stop_x + stop_w <= input_x);
         assert!(stop_y >= pill_y && stop_y + stop_h <= pill_y + pill_h);
         rt.update(|s, _| {
@@ -2327,18 +2328,9 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
-        let (pill, main) = (
-            rect_of(&rt, "meeting-bottom-bar"),
-            rect_of(&rt, "meeting-main"),
-        );
-        assert_eq!(
-            pill[0], main[0],
-            "{size:?}: the Ask bar is off the notes edge"
-        );
-        assert_eq!(
-            pill[2], main[2],
-            "{size:?}: the Ask bar is not the column's width"
-        );
+        let dock = rect_of(&rt, "meeting-bottom-bar");
+        let main = rect_of(&rt, "meeting-main");
+        assert_eq!((dock[0], dock[2]), (main[0], main[2]), "{size:?}");
     }
 }
 

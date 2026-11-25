@@ -82,7 +82,7 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
         .gap(2.0);
     let button = |name, key, glyph| {
         if compact {
-            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(44.0, 44.0)
+            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(28.0, 44.0)
         } else {
             quiet_button(name, key, p).h(44.0)
         }
@@ -124,7 +124,7 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             )
             .key("meeting-pause")
             .label("Pause recording")
-            .size(44.0, 44.0)
+            .size(if compact { 28.0 } else { 44.0 }, 44.0)
             .radius(22.0)
             .hover(p.button_hover)
             .center()

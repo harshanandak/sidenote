@@ -1007,7 +1007,6 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         ),
     );
     if s.transcript_open {
-        let height = transcript_height(s);
         let panel = col()
             .key("meeting-transcript-view")
             .focus_return("meeting-transcript")
@@ -1030,7 +1029,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                     col()
                         .key("meeting-transcript-surface")
                         .w_full()
-                        .h(height)
+                        .h(transcript_height(s))
                         .min_h(0.0)
                         .shrink()
                         .radius(14.0)
