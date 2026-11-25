@@ -1039,6 +1039,11 @@ pub fn overlay_with(
             .self_start()
             .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
     }));
+    let (stack, lead) = if s.on_live() && s.app_w.get() < 380.0 {
+        (stack.children(lead.map(El::self_start)), None)
+    } else {
+        (stack, lead)
+    };
     let pill = pill
         .fill(p.card)
         .focus_within_flat()
