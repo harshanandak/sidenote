@@ -1160,22 +1160,50 @@ fn ask_retry_submits_the_failed_question_once() {
     }
     *core::ask_session::STAND_IN.lock().unwrap() = Some(fake_helper);
     GATE.store(true, SeqCst);
-    let mut rt = page();
-    start_stop_fixture(&mut rt);
-    ask_fixture_progress(
-        &mut rt,
-        AskProgress::Failed {
-            message: "The answer failed.".into(),
-        },
-    );
-    assert!(rt.state.store.load(MEETING).unwrap().messages.is_empty());
-    assert_eq!(rt.state.question.text, STOP_QUESTION);
-    tap(&mut rt, "ask-retry");
-    assert!(rt.state.asks.contains_key(MEETING));
-    assert_eq!(rt.state.saved.messages.len(), 1);
-    assert_eq!(rt.state.saved.messages[0].text, STOP_QUESTION);
-    finish_answer(&mut rt);
-    assert_no_ask_alert(&rt);
+    for (draft, all) in [("", false), ("A newer draft", false), ("", true)] {
+        let mut rt = page();
+        rt.update(|s, _| s.clear_thread());
+        start_stop_fixture(&mut rt);
+        let recording = all || !draft.is_empty();
+        let original = rt.state.saved.messages[0].clone();
+        rt.update(|s, _| {
+            s.hex.status = recording.then(|| Ok(hex_engine_recording()));
+            s.asks.get_mut(MEETING).unwrap().meeting_request = recording;
+            s.question = TextEdit::new(draft);
+            s.set_ask_scope(all);
+        });
+        let message = "The answer failed.".into();
+        ask_fixture_progress(&mut rt, AskProgress::Failed { message });
+        let failed = rt.state.store.load(MEETING).unwrap().messages;
+        assert_eq!(failed.len(), usize::from(recording));
+        assert_eq!(failed.first(), recording.then_some(&original));
+        let visible_draft = if recording { draft } else { STOP_QUESTION };
+        assert_eq!(rt.state.question.text, visible_draft);
+        assert_eq!(
+            rt.state.ask_key(),
+            if all { core::ALL_KEY } else { MEETING }
+        );
+        assert_eq!(rt.find("ask-retry").is_some(), !all);
+        if !draft.is_empty() {
+            assert!(!element(&rt, "ask-retry").focusable);
+        }
+        rt.update(|s, _| {
+            s.set_ask_scope(false);
+            if recording {
+                s.question = TextEdit::default();
+            }
+        });
+        rt.frame(0.0);
+        tap(&mut rt, "ask-retry");
+        assert!(rt.state.asks.contains_key(MEETING));
+        assert_eq!(rt.state.saved.messages.len(), 1);
+        assert_eq!(rt.state.saved.messages[0].text, STOP_QUESTION);
+        if recording {
+            assert_eq!(rt.state.asks[MEETING].submitted_message_id, original.id);
+        }
+        finish_answer(&mut rt);
+        assert_no_ask_alert(&rt);
+    }
 }
 
 #[test]

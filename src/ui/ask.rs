@@ -432,8 +432,13 @@ fn error_controls(s: &State, id: &str, error: &str, p: Palette) -> El {
             let question = question.clone();
             row = row.child(
                 button("Try again", "ask-retry", ButtonRole::Secondary, p)
-                    .button_disabled(!s.question.text.is_empty() && s.question.text != question)
-                    .on_press_tx(move |s: &mut State, tx| submit(s, &question, tx)),
+                    .button_disabled(
+                        !s.question.text.is_empty() && s.question.text != question.text,
+                    )
+                    .on_press_tx(move |s: &mut State, tx| {
+                        s.send_question(&question.text, question.id.as_deref());
+                        keep_question_focus(s, tx);
+                    }),
             );
         }
         if s.has_agent() {

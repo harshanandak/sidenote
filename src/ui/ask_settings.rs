@@ -30,7 +30,7 @@ pub struct AskSettings {
     pub live_all: bool,
     pub scope_open: bool,
     pub details_open: Option<String>,
-    pub retry_questions: HashMap<String, String>,
+    pub retry_questions: HashMap<String, core::Message>,
     pub saved_all: bool,
     pub loaded_scope: String,
     pub live_chat: String,

@@ -1227,6 +1227,10 @@ impl State {
     }
 
     pub fn send(&mut self, text: &str) {
+        self.send_question(text, None);
+    }
+
+    fn send_question(&mut self, text: &str, retained_id: Option<&str>) {
         let submitted = Instant::now();
         let text = text.trim();
         let id = self.ask_key();
@@ -1259,14 +1263,21 @@ impl State {
                 .insert(id, "Choose a model before asking.".into());
             return;
         };
-        let (saved, submitted_message_id) = match self.store.append_message_identified(
-            &id,
-            Message {
-                role: "user".into(),
-                text: text.to_string(),
-                ..Default::default()
-            },
-        ) {
+        let saved_question = match retained_id {
+            Some(message_id) => self
+                .store
+                .load(&id)
+                .map(|saved| (saved, message_id.to_owned())),
+            None => self.store.append_message_identified(
+                &id,
+                Message {
+                    role: "user".into(),
+                    text: text.to_string(),
+                    ..Default::default()
+                },
+            ),
+        };
+        let (saved, submitted_message_id) = match saved_question {
             Ok(saved) => saved,
             Err(_) => {
                 self.notice = Some(
@@ -1509,34 +1520,32 @@ impl State {
                 },
             ),
             Err(message) => {
-                // Take the unanswered question back out so a retry does not repeat it.
-                let mut taken = None;
+                let mut failed = None;
                 let can_restore = self.ask_key() == id && self.question.text.is_empty();
+                let retain = run.meeting_request && !can_restore;
                 let result = self.store.update(id, |s| {
-                    if run.meeting_request && !can_restore {
-                        return;
-                    }
                     if let Some(at) = s.messages.iter().position(|m| {
                         m.role == "user" && m.id.is_some() && m.id == run.submitted_message_id
                     }) {
-                        taken = Some(s.messages.remove(at));
+                        failed = Some(if retain {
+                            s.messages[at].clone()
+                        } else {
+                            s.messages.remove(at)
+                        });
                     }
                 });
                 // A stop the owner asked for is not a failure: only the question comes back.
                 if message != core::ask::STOPPED {
                     self.ask_errors.insert(id.to_string(), message);
                     if result.is_ok()
-                        && let Some(question) = &taken
+                        && let Some(question) = &failed
                     {
-                        self.ask_settings
-                            .retry_questions
-                            .insert(id.to_string(), question.text.clone());
+                        let mut retry = question.clone();
+                        retry.id = retry.id.filter(|_| retain);
+                        self.ask_settings.retry_questions.insert(id.into(), retry);
                     }
                 }
-                if self.ask_key() == id
-                    && self.question.text.is_empty()
-                    && let Some(m) = taken
-                {
+                if can_restore && let Some(m) = failed {
                     self.question = TextEdit::new(&m.text);
                 }
                 result
