@@ -66,8 +66,7 @@ jobs:
             ~/.cargo/git
             target/x86_64-unknown-linux-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
-          restore-keys: ${{ env.CACHE_PREFIX }}-
+          key: ${{ env.CACHE_PREFIX }}
       - name: Clippy on Stable and Dev ASR test targets
         run: |
           cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
@@ -184,8 +183,7 @@ jobs:
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
-          restore-keys: ${{ env.CACHE_PREFIX }}-
+          key: ${{ env.CACHE_PREFIX }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
@@ -338,8 +336,7 @@ jobs:
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
-          restore-keys: ${{ env.CACHE_PREFIX }}-
+          key: ${{ env.CACHE_PREFIX }}
       - name: Compile Dev test targets without ASR
         run: cargo check --workspace --locked --tests --features dev
       - name: Clippy on Stable and Dev ASR targets
@@ -385,8 +382,7 @@ jobs:
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
-          restore-keys: ${{ env.CACHE_PREFIX }}-
+          key: ${{ env.CACHE_PREFIX }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
