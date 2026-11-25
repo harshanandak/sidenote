@@ -272,7 +272,9 @@ mod tests {
     fn live_recording_shows_elapsed_time_beside_pause() {
         crate::test_paths::isolate();
         for (width, narrow) in [(1334.0, false), (390.0, true), (360.0, true)] {
+            let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
             let mut state = State::new();
+            crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
             let mut live = Live::scene(Phase::Recording, None);
             live.session = Some(meeting_parts::Meeting {
                 phase: SavedPhase::Recording,
@@ -285,6 +287,7 @@ mod tests {
             });
             state.live = Some(live);
             state.live_open = true;
+            assert!(state.on_live());
             let mut rt = Runtime::with_text(
                 state,
                 view,
