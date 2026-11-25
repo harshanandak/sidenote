@@ -757,9 +757,9 @@ fn expired_header_stop_reconciles_each_hex_outcome() {
     }
     fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
         let mut layer = Vec::new();
-        let actions =
+        let (pill, action) =
             crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
-        rune_kit::root(actions, layer)
+        rune_kit::root(rune::row().children(pill).children(action), layer)
     }
     for phase in ["idle", "transcribing", "recording", "timeout"] {
         let (api, mut state, now) = Fixture::start();

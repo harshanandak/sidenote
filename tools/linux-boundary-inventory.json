@@ -421,7 +421,7 @@
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "9b33da24bb6e53590babf1c89c2fb2789c64ac543cc983a8c3fe20456ca0875f",
+  "src/ui/hex/connection/stop_tests.rs": "97a02ee42af695db039db272ee607f2ae6e3953f0b8b73c111d9fa86fa3ac7c3",
 
   "src/ui/hex/connection/stop_tests/api.rs": "56889128466550fc550e3a7afa026ead2fc3810a5f4f5e54801024b78f9b9c72",
 
