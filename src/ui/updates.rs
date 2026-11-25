@@ -816,8 +816,16 @@ mod listener_tests {
     }
     #[test]
     fn install_action_waits_for_a_verified_download() {
+        use sidenote::hex_engine::{HexError, sample_status};
+
         crate::test_paths::isolate();
+        // Missing Hex opens setup and queues a summary load on Windows startup.
+        let detect = hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        state.hex_apply(hex::Msg::ObservedStatus(sample_status(|| {
+            Err(HexError::HexNotRunning)
+        })));
+        hex::SKIP_INSTALL_DETECT.set(detect);
         state.updates.status.phase = Phase::Available;
         let mut rt = rune::Runtime::new(
             state,
