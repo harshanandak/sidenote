@@ -379,46 +379,13 @@ pub fn single_instance() -> io::Result<Option<Instance>> {
         Ok(Some(Instance(handle)))
     }
 }
-/// Gives the window the icon embedded in the exe (resource ID 1, see build.rs) at the title bar
-/// and Alt+Tab sizes. Rune has no window-icon option, and without this the title bar shows the
-/// generic icon. Does nothing when the exe has no icon resource, such as an example binary.
+#[cfg(feature = "desktop")]
+mod window_icon;
+
+/// Called once on window creation to set the title-bar and Alt+Tab icons for its DPI.
 #[cfg(feature = "desktop")]
 pub fn set_window_icon(hwnd: isize) {
-    use windows_sys::Win32::{
-        System::LibraryLoader::GetModuleHandleW,
-        UI::{
-            HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
-            WindowsAndMessaging::{
-                ICON_BIG, ICON_SMALL, IMAGE_ICON, LoadImageW, SM_CXICON, SM_CXSMICON, SM_CYICON,
-                SM_CYSMICON, SendMessageW, WM_SETICON,
-            },
-        },
-    };
-    unsafe {
-        let hwnd = hwnd as *mut std::ffi::c_void;
-        let module = GetModuleHandleW(std::ptr::null());
-        let dpi = match GetDpiForWindow(hwnd) {
-            0 => 96,
-            dpi => dpi,
-        };
-        for (kind, cx, cy) in [
-            (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
-            (ICON_BIG, SM_CXICON, SM_CYICON),
-        ] {
-            let icon = LoadImageW(
-                module,
-                // MAKEINTRESOURCE(1). Not ptr::dangling(): for u16 that is address 2, the wrong resource.
-                std::ptr::without_provenance::<u16>(1),
-                IMAGE_ICON,
-                GetSystemMetricsForDpi(cx, dpi),
-                GetSystemMetricsForDpi(cy, dpi),
-                0,
-            );
-            if !icon.is_null() {
-                SendMessageW(hwnd, WM_SETICON, kind as usize, icon as isize);
-            }
-        }
-    }
+    window_icon::set_window_icon(hwnd);
 }
 /// The client size, in points, that keeps a window of about `want` points inside the work area
 /// of the monitor `hwnd` is on, leaving room for the title bar, the frame and a margin.
