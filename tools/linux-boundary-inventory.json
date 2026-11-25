@@ -391,7 +391,7 @@
 
   "src/sync_owner/mcp.rs": "0f59d5b4431ac3b617b0621351e09005116e2d09492693abc47da3fbf614e724",
 
-  "src/ui/ai_notes.rs": "4f070e124e1f704230aa1f3348b0d5050f9ed795a13320175726fe5e1de039af",
+  "src/ui/ai_notes.rs": "3bef66267f56d436c8348d33915eb599740707e19e2c252386ad0d7355997839",
 
   "src/ui/annotations.rs": "e8913a6e98da0bca092852e5f3b5ff0db4eb1237630594106f084470d7bb146e",
 
@@ -417,7 +417,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "093487676ac0de15845f59e45d6b85a6d09bd4dc3bd946ac38bbd3112f0c19cb",
+  "src/ui/hex.rs": "f9d29fbe3b3a8edceac8f5fce501c15feba89f732a277dabdc687e4706be5f2c",
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
@@ -427,9 +427,9 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
-  "src/ui/hex/settings.rs": "5453190d196df3cd2de221074098053c8b475cb9a2991f4714ffe605682c14bb",
+  "src/ui/hex/settings.rs": "67b631d2cf5c05a3a407cea8ff1cd401124697dfb61d0bb80171eca6d6525288",
 
-  "src/ui/hex/setup.rs": "7ac1dfa48dd3acdf0cab7a10683fe8e672c069a93b4bcf3ef9f9077474d067c8",
+  "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
   "src/ui/idle_cpu.rs": "e0d44a4a2aa72668e127baf5f100e1ad6267971c73ce46230d279701e94b27f0",
 
@@ -461,7 +461,7 @@
 
   "src/ui/tasks_board.rs": "9a13fdf3ac607c2c7a18d6ed93bdbe08c621e33edb3a0595054a1850cfa5118a",
 
-  "src/ui/theme.rs": "779a8fdf6bdc1a0721bd1baae9a07482a1f9dd09412a344c426cfa43eb9ced2e",
+  "src/ui/theme.rs": "ff2fc54717fde98d3628469506c730757ad9a2e8fdf37678ec4bca8355f371f0",
 
   "src/ui/updates.rs": "14d6d6a8d8561cbd4b24dbec339ccbb07883c4daf36b947f385a877900e2f6d2",
 

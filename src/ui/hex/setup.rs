@@ -189,7 +189,7 @@ pub(super) fn card(s: &State, p: Palette) -> Option<El> {
         ),
         (InstallState::Complete, _) => ("Hex is installed", h.install.message()),
         (InstallState::Failed(_), _) => ("Hex setup needs attention", h.install.message()),
-        _ => ("Install Hex", h.install.message()),
+        _ => ("Set up recording", h.install.message()),
     };
     let mut actions = row().w_full().flex_wrap().gap(8.0);
     if matches!(h.installation, Installation::Installed { .. }) && h.stopped() {
