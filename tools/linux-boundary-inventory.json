@@ -209,17 +209,19 @@
 
   "src/core/model_catalog.rs": "871f26ea5f51c7bfa844ceaa6f3db0a9316e162a2fbd6a6f0c276ba0512a3d09",
 
-  "src/core/notes/draft.rs": "3f0c95849bd31a501dcdd577121171bd72cfea0bb5fc42e01277ad8a1c65bf05",
+  "src/core/notes/draft.rs": "ede6ffca10c08d9f5f4f13dffb8559464c9703a93076cf8027df4d74f00b13bd",
 
   "src/core/notes/joined.rs": "27f33b5b99b9fbeb08ddf3868de47026a98cd5e2b9c74e694ec9f2942ab9b481",
 
-  "src/core/notes/queue.rs": "48e4cf0bf8825236073f3b397513645e76455df155035ee2a067cd9dc2f4ccf8",
+  "src/core/notes/queue.rs": "c60265324ad52993d7b33ae2debd99be26f94e6402f48a82005f831e8451282b",
 
   "src/core/notes/status_detail.rs": "8c9c642856258caf225a450469d2649ef2801b749d1baa6cc29e236114558dad",
 
-  "src/core/notes/tests.rs": "4a46185b2448cab3e69cd1c53e98d2b0f8e9d68a58891d6cea9d5d9482ddf65c",
+  "src/core/notes/tests.rs": "0795d8a656d162b7d7e94b041adb045173f0c2f882ab84c320fed82f1de6c7f8",
 
   "src/core/notes/tests/corruption.rs": "22bd6f4b4809efa5810b067bccd89e089ffb3adc5e8806c7d7b768b8aa6c5147",
+
+  "src/core/notes/tests/edited_summary.rs": "b3e319303b903d78c9e1b64966dad9c820e30a17f036f4937965256cf56323fb",
 
   "src/core/notes/tests/english_first.rs": "5f87c7800d042062a8b3329d93a2ef9aa0b33cb1ee77aae095319c75bdbca6cc",
 
@@ -307,9 +309,9 @@
 
   "src/core/store_io.rs": "d46f5e4a16ec08cb3279e1ba72d59c66703875ca229ebd2969dbadb9b168aa37",
 
-  "src/core/summary_edits.rs": "c4447ea4ceb4b5ff6c04f31a50f4f6f1d64cb7027bec3d0b34402f2243c2263b",
+  "src/core/summary_edits.rs": "c10729c41a4c1a0893930a9eaaead0215ef0596daddb5599a09e831ccd3e4e40",
 
-  "src/core/sync_state.rs": "9d4cb37832b92df9c1f0826b1fbd6456d1b79a3a7ec4818f6509371f1e6f44e2",
+  "src/core/sync_state.rs": "80e7562faecc8f1b3a83c209407a5a973fd55cfdab7fa5725f3f6dc037c840eb",
 
   "src/core/tasks.rs": "0071ad0533947f13a2e69faedad2286213197648c5db7fc4540725f7c7b78dec",
 

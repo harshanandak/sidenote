@@ -2057,3 +2057,5 @@ fn resume_while_notes_are_queued_keeps_the_requested_snapshot() {
     session.notes_parts = session.requested_parts;
     assert!(session.stale());
 }
+
+mod edited_summary;

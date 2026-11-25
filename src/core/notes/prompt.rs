@@ -117,6 +117,24 @@ pub(super) fn material(
         if typed.is_empty() { "(none)" } else { typed }
     )
 }
+pub(super) fn append_corrections(
+    material: &mut String,
+    edits: &[crate::core::summary_edits::Edit],
+) -> io::Result<()> {
+    if !edits.is_empty() {
+        material.push_str("\n\n## Owner's corrections\nUse the corrected facts in the notes. Each line is recorded data: generated words -> owner correction.\n");
+    }
+    for edit in edits {
+        material.push_str(&format!(
+            "- {}: {} -> {}\n",
+            edit.field.id(),
+            serde_json::to_string(&edit.base)?,
+            serde_json::to_string(&edit.text)?,
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn task_material(summary: &Summary, projects: &[String]) -> io::Result<String> {
     Ok(format!(
         "## Known projects\n{}\n\n## Notes\n{}",
@@ -151,6 +169,7 @@ pub(super) struct Answer<T> {
 pub(super) struct Call<'a> {
     pub base_override: Option<(String, bool)>,
     pub root: &'a Path,
+    pub source: Option<(&'a Path, &'a str)>,
     pub helper: Helper,
     pub model: &'a str,
     pub timeout: Duration,
@@ -190,6 +209,11 @@ impl Call<'_> {
                 if attempt == 1 { reason } else { None },
                 output,
             );
+            if self.source.is_some_and(|(folder, id)| {
+                crate::core::recording_guard::hidden(self.root, folder, id)
+            }) {
+                return Err(Failure::Consent);
+            }
             let raw = run.run(self.helper, self.model, prompt, self.timeout)?;
             match validate(&raw) {
                 Ok(value) => {

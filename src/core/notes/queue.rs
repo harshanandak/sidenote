@@ -227,12 +227,32 @@ fn complete(folder: &Path) -> bool {
     manifest(folder).is_ok_and(|m| m["status"] == "complete")
 }
 
+pub(super) fn regenerate_in(
+    root: &Path,
+    meetings: &Path,
+    id: &str,
+    settings: &NotesSettings,
+) -> io::Result<()> {
+    enqueue_request(root, meetings, id, Some(Request::TryAgain), settings, true)
+}
+
 pub(crate) fn enqueue_in(
     root: &Path,
     meetings: &Path,
     id: &str,
     mode: Option<Request>,
     settings: &NotesSettings,
+) -> io::Result<()> {
+    enqueue_request(root, meetings, id, mode, settings, false)
+}
+
+fn enqueue_request(
+    root: &Path,
+    meetings: &Path,
+    id: &str,
+    mode: Option<Request>,
+    settings: &NotesSettings,
+    confirmed_regeneration: bool,
 ) -> io::Result<()> {
     let _update_activity = crate::updates::activity()?;
     let Some(_recycle) = core::meeting_delete::claim_write(root, id)? else {
@@ -313,7 +333,8 @@ pub(crate) fn enqueue_in(
             .as_ref()
             .is_some_and(|job| job.input_revision.as_ref() != Some(&revision))
             || (previous.is_none() && core::recording_source::input_changed(root, id, &revision)));
-    let replace_summary = (core::meeting_parts::read(root, id)?.is_some() && mode.is_some())
+    let replace_summary = confirmed_regeneration
+        || (core::meeting_parts::read(root, id)?.is_some() && mode.is_some())
         || changed
         || previous
             .as_ref()
@@ -663,12 +684,17 @@ fn process(
             },
         );
     }
+    let edits = core::summary_edits::Store::new(root, &folder, id);
     let (summary, fallback) = if sort_only {
-        let raw = text(
-            &folder.join("english-summary.json"),
-            file_reads::SUMMARY_MAX,
-        )?;
-        (existing_summary(&raw)?, false)
+        let mut summary = edits.generated()?;
+        let replacement = job.sorting_pending && job.replace_summary;
+        if !replacement {
+            edits.overlay(&mut summary)?;
+        }
+        (
+            existing_summary(summary)?,
+            replacement && job.instructions == "default-fallback",
+        )
     } else {
         if !folder.join("quick-title.json").exists() {
             stage(root, id, job, JobStage::Title)?;
@@ -701,7 +727,7 @@ fn process(
         let title = core::read_quick_title(&folder)
             .or_else(|| m["title"].as_str().map(str::to_owned))
             .unwrap_or_else(|| "not provided".into());
-        let material = prompt::material(
+        let mut material = prompt::material(
             prompt::Details {
                 title: &title,
                 started_ms: started.unwrap_or(0),
@@ -713,7 +739,17 @@ fn process(
             &teams,
             &glossary,
         );
+        if job.replace_summary {
+            match edits.generated() {
+                Ok(previous) => {
+                    prompt::append_corrections(&mut material, &edits.corrections(&previous)?)?
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
         let call = prompt::Call {
+            source: Some((&folder, id)),
             base_override: crate::core::UiPrefs::load(root)
                 .meeting_summary_templates
                 .get(id)
@@ -761,7 +797,7 @@ fn process(
         );
         stage(root, id, job, JobStage::Publish)?;
         match settle.publish_summary(id, &serde_json::from_slice(&bytes)?, !job.replace_summary) {
-            Ok(()) => {}
+            Ok(()) => job.sorting_pending = job.replace_summary,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 return write(
                     root,
@@ -810,6 +846,7 @@ fn process(
     let material = prompt::task_material(&summary, &projects)?;
     let call = prompt::Call {
         base_override: None,
+        source: Some((&folder, id)),
         root,
         helper,
         model,
@@ -986,11 +1023,12 @@ pub(super) fn drain_locked(
                 before.next_try_at = Some(now().saturating_add(1000));
                 before.message = "waiting for transcript revision".into();
             }
-            if meetings.join(&id).join("english-summary.json").is_file()
-                && before.request != Some(Request::RedoTasks)
-                && !before.replace_summary
-            {
-                before.sorting_pending = true;
+            before.sorting_pending |= job.sorting_pending
+                || (!before.replace_summary
+                    && before.request != Some(Request::RedoTasks)
+                    && meetings.join(&id).join("english-summary.json").is_file());
+            if before.replace_summary && job.sorting_pending {
+                before.instructions = job.instructions;
             }
             store_io::write(&job_path(root, &id), &before)?;
             if routing_pending {
@@ -1173,8 +1211,7 @@ pub fn run_pending() -> io::Result<()> {
     )
 }
 
-fn existing_summary(raw: &str) -> io::Result<schema::Summary> {
-    let mut value: serde_json::Value = serde_json::from_str(raw)?;
+fn existing_summary(mut value: serde_json::Value) -> io::Result<schema::Summary> {
     for todo in value["todo"].as_array_mut().into_iter().flatten() {
         if todo.get("title").is_none() {
             todo["title"] = todo["task"].clone();
@@ -1215,11 +1252,13 @@ fn redo_tasks(job: &mut Job, run: &mut impl Run, redo: Redo<'_>) -> io::Result<(
     let raw = text(&path, file_reads::SUMMARY_MAX)?;
     let mut source: serde_json::Value = serde_json::from_str(&raw)?;
     let old: core::Summary = serde_json::from_value(source.clone())?;
+    let mut view = source.clone();
+    core::summary_edits::Store::new(root, folder, id).overlay(&mut view)?;
     let material = format!(
         "Extract the tasks from this meeting. Only redo the tasks.\nTeams: {}\nTranscript:\n{}\nExisting notes:\n{}\nUser notes:\n{}",
         serde_json::to_string(teams)?,
         transcript,
-        raw,
+        view,
         typed
     );
     let helper = settings
@@ -1236,6 +1275,7 @@ fn redo_tasks(job: &mut Job, run: &mut impl Run, redo: Redo<'_>) -> io::Result<(
         helper,
         model,
         timeout: helper::TASKS_TIMEOUT,
+        source: Some((folder, id)),
     };
     stage(root, id, job, JobStage::Tasks)?;
     let answer = match call.ladder_output(run,Agent::Tasks,&material,|raw| {
