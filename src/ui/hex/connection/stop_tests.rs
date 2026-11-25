@@ -759,9 +759,9 @@ fn expired_header_stop_reconciles_each_hex_outcome() {
     }
     fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
         let mut layer = Vec::new();
-        let actions =
+        let (pill, action, _) =
             crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
-        rune_kit::root(actions, layer)
+        rune_kit::root(rune::row().children(pill).children(action), layer)
     }
     for phase in ["idle", "transcribing", "recording", "timeout"] {
         let (api, mut state, now) = Fixture::start();
@@ -1419,14 +1419,11 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
     api.data.lock().unwrap().start_release = Some(wait);
     state.new_meeting();
     let mut runtime =
-        rune::Runtime::new(state, meeting_control, (500.0, 160.0), rune::Env::default());
+        rune::Runtime::new(state, crate::ui::view, (500.0, 160.0), rune::Env::default());
     runtime.frame(0.0);
-    assert!(
-        runtime
-            .elements()
-            .iter()
-            .any(|e| e.text.as_deref() == Some("Checking Hex before New meeting"))
-    );
+    assert!(runtime.elements().iter().any(
+        |e| e.role == "status" && e.text.as_deref() == Some("Checking Hex before New meeting")
+    ));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let event = runtime
@@ -1445,7 +1442,7 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
         runtime
             .elements()
             .iter()
-            .any(|e| e.text.as_deref() == Some("Working")),
+            .any(|e| e.role == "status" && e.text.as_deref() == Some("Working")),
         "busy={} blocked={:?} error={:?}",
         runtime.state.hex_record_busy(),
         start_blocked(&runtime.state),
@@ -1476,10 +1473,10 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
     assert!(!log.contains("hex new_meeting blocked"));
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(target_os = "linux", all(windows, feature = "recorder-ready-proof")))]
 fn meeting_control(state: &State, _: &mut rune::Cx<State>) -> rune::El {
     let mut layer = Vec::new();
-    let button = crate::ui::nav::new_meeting_button(
+    let (button, _) = crate::ui::nav::new_meeting_button(
         state,
         crate::ui::theme::palette(false),
         false,

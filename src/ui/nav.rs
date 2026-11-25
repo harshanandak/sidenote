@@ -2,8 +2,6 @@
 //!
 //! The sidebar holds places and project filters, with one profile button at its foot.
 //! It folds to a recording rail during a call and hides fully otherwise.
-//! The top right holds one primary "New meeting" button, which becomes "Recording 12:34 | Stop"
-//! while Hex records, except on the meeting page that already shows Pause.
 //! Lucide entries live in icons.rs; the app mark keeps its original colours.
 use super::{
     State, hex, icons, roles,
@@ -17,7 +15,7 @@ use sidenote::core::{self, UiPrefs};
 use std::collections::HashMap;
 
 /// The open sidebar, and the rail it folds to, in points.
-pub const WIDE: f32 = 240.0;
+pub const WIDE: f32 = 230.0;
 pub const RAIL: f32 = 56.0;
 /// A window this wide or narrower starts with the sidebar folded.
 pub const COLLAPSE_AT: f32 = 820.0;
@@ -221,7 +219,7 @@ fn icon_device(c: Color) -> El {
 }
 // ---- the sidebar ------------------------------------------------------------------------------
 
-const MAIN_H: f32 = 32.0;
+const MAIN_H: f32 = 34.0;
 const PAD: f32 = 8.0;
 const RAIL_ITEM_W: f32 = 36.0;
 const SIGNAL_D: f32 = 6.0;
@@ -250,7 +248,7 @@ fn place_name(name: &str, active: bool, p: Palette) -> El {
     }
 }
 
-/// One of the places in the open sidebar: an icon and a name on a 32-point row.
+/// One of the places in the open sidebar: an icon and a name.
 fn main_row(place: Place, icon: El, p: Palette) -> El {
     let mut r = row()
         .w_full()
@@ -294,7 +292,7 @@ fn rail_item(place: Place, icon: El, p: Palette) -> El {
         .on_press(place.press)
 }
 
-fn toggle(s: &State, p: Palette) -> El {
+pub(super) fn toggle(s: &State, p: Palette) -> El {
     let open = s.sidebar_is_open();
     let name = if open {
         "Hide sidebar (Ctrl+\\)"
@@ -395,8 +393,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
             },
         });
     }
-    // The Diary is read every day like the other places, so it sits with them, not in the
-    // footer with the tools.
+    let secondary_start = places.len();
     if features.daily_check && features.memory {
         places.push(Place {
             key: "view-check",
@@ -415,7 +412,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
             },
         });
     }
-    places.extend(features.annotations.then(|| Place {
+    let annotations = features.annotations.then(|| Place {
         key: "nav-annotations",
         name: "Annotations",
         help: "Annotations".into(),
@@ -423,7 +420,10 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         icon: |c, _| icons::draw(&icons::ANNOTATIONS, icons::ROW, c),
         flag: None,
         press: |s| s.open_annotations(),
-    }));
+    });
+    if let Some(annotations) = annotations {
+        places.insert(secondary_start, annotations);
+    }
     let peers = (features.other_devices && s.nav.peers > 0).then(|| Place {
         key: "nav-peers",
         name: "Other devices",
@@ -439,6 +439,19 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
     (places, peers)
 }
 
+pub(super) fn search(p: Palette) -> El {
+    super::widgets::icon_button(
+        &icons::SEARCH,
+        "Search (/ or Ctrl+K)",
+        "nav-search",
+        super::widgets::ButtonRole::Ghost,
+        p,
+    )
+    .size(28.0, 28.0)
+    .px(6.0)
+    .on_press(|s: &mut State| s.toggle_finder())
+}
+
 /// The sidebar. `wide` is the open sidebar; otherwise the rail of icons.
 pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     if !wide && !s.hex_recording() {
@@ -446,52 +459,14 @@ pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     }
     let (places, peers) = places(s, p);
 
-    let header = row().w_full().h(48.0).gap(10.0).items_center();
-    let header = if wide {
-        header
-            .child(logo())
-            .pl(PAD)
-            .child(roles::COMPACT_SECTION.line("Sidenote", p.ink).grow(1.0))
-            .child(toggle(s, p))
-    } else {
-        col()
-            .w_full()
-            .h(48.0)
-            .gap(2.0)
-            .center()
-            .child(logo())
-            .child(toggle(s, p))
-    };
-
-    let search = pressable(
-        row()
-            .w(if wide { WIDE - 2.0 * PAD } else { RAIL_ITEM_W })
-            .h(30.0)
-            .gap(10.0)
-            .items_center()
-            .px(if wide { PAD } else { 10.0 })
-            .child(icons::draw(&icons::SEARCH, icons::ROW, p.faint))
-            .children(wide.then(|| roles::NAV.line("Search", p.faint).grow(1.0)))
-            .children(wide.then(|| {
-                roles::META
-                    .line("Ctrl K", p.faint)
-                    .px(6.0)
-                    .radius(5.0)
-                    .border(1.0, p.line)
-            })),
-    )
-    .key("nav-search")
-    .label("Search (/ or Ctrl+K)")
-    .help("Search (/ or Ctrl+K)")
-    .radius(8.0)
-    .fill(p.chip)
-    .hover(p.chip)
-    .on_press(|s: &mut State| s.toggle_finder());
     let mut top = col().w_full().gap(1.0).items_center();
+    let mut secondary = false;
     for place in places {
         let icon = place.icon(p);
+        let starts_group = matches!(place.key, "nav-annotations" | "view-check") && !secondary;
+        secondary |= starts_group;
         top = top.child(if wide {
-            main_row(place, icon, p)
+            main_row(place, icon, p).mt(if starts_group { 12.0 } else { 0.0 })
         } else {
             rail_item(place, icon, p)
         });
@@ -530,8 +505,7 @@ pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
         .min_h(0.0)
         .fill(p.side)
         .px(PAD)
-        .child(header)
-        .child(search.mb(8.0))
+        .pt(10.0)
         .child(top)
         .children(devices)
         .child(middle)
@@ -562,13 +536,14 @@ fn shown_live(s: &State) -> Option<&super::live::Live> {
 }
 
 fn meeting_shows_pause(s: &State) -> bool {
-    shown_live(s).is_some_and(|live| {
-        (s.on_live() && live.phase == super::live::Phase::Recording)
-            || live
-                .session
-                .as_ref()
-                .is_some_and(|session| session.phase == core::meeting_parts::Phase::Recording)
-    })
+    let Some(live) = shown_live(s) else {
+        return false;
+    };
+    let recording = live
+        .session
+        .as_ref()
+        .filter(|session| session.phase == core::meeting_parts::Phase::Recording);
+    (s.on_live() && live.phase == super::live::Phase::Recording) || recording.is_some()
 }
 
 fn recording_status(s: &State) -> super::live::RecordingStatus {
@@ -582,64 +557,59 @@ fn recording_status(s: &State) -> super::live::RecordingStatus {
     super::live::RecordingStatus::for_phase(s, phase)
 }
 
-/// "New meeting", or while Hex records, the recording actions outside the active meeting.
-pub fn actions(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
+pub(super) fn actions(
+    s: &State,
+    p: Palette,
+    narrow: bool,
+    layer: &mut Vec<El>,
+) -> (Option<El>, Option<El>, Option<&'static str>) {
     if s.annotations.open {
-        return super::annotations::new_button(s, p);
+        return (None, Some(super::annotations::new_button(s, p)), None);
     }
     if recording_status(s) == super::live::RecordingStatus::Paused {
-        return recording_pill(s, p, narrow);
+        return (Some(recording_pill(s, p, narrow)), None, None);
     }
-    if s.hex_recording() {
-        if meeting_shows_pause(s) {
-            return if s.hex_status_unknown() {
-                new_meeting_button(s, p, narrow, layer)
-            } else {
-                el()
-            };
-        }
-        let recording = recording_pill(s, p, narrow);
-        return if s.hex_status_unknown() {
-            row()
-                .gap(8.0)
-                .items_center()
-                .child(recording)
-                .child(new_meeting_button(s, p, narrow, layer))
-        } else {
-            recording
-        };
+    let recording = s.hex_recording();
+    let pill = (recording && !meeting_shows_pause(s)).then(|| recording_pill(s, p, narrow));
+    if !recording || s.hex_status_unknown() {
+        let (button, blocked) = new_meeting_button(s, p, narrow, layer);
+        (pill, Some(button), blocked)
+    } else {
+        (pill, None, None)
     }
-    new_meeting_button(s, p, narrow, layer)
 }
 
-pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    let new = if narrow { "+ New" } else { "+ New meeting" };
-    use super::widgets::ButtonRole;
-    let button = |label, role| super::widgets::button(label, "new-meeting", role, p);
-    if let Some(error) = super::updates::listener_problem(s) {
-        return super::updates::listener_popover(
-            s,
-            button(new, ButtonRole::Primary),
-            error,
-            p,
-            layer,
-        );
-    }
-    let blocked = hex::start_blocked(s);
+pub(super) fn new_meeting_button(
+    s: &State,
+    p: Palette,
+    narrow: bool,
+    layer: &mut Vec<El>,
+) -> (El, Option<&'static str>) {
+    let listener_problem = super::updates::listener_problem(s);
+    let blocked = match listener_problem {
+        Some(_) => None,
+        None => hex::start_blocked(s),
+    };
     let progress = match blocked {
         Some(hex::CHECKING) => Some(hex::CHECKING),
         Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
         _ => None,
     };
-    if let Some(label) = progress
-        && let Some(reason) = blocked
-    {
-        return button(label, ButtonRole::Secondary)
-            .label(format!("New meeting ({reason})"))
-            .help(reason)
-            .disabled(true);
+    let b = super::widgets::button(
+        progress.unwrap_or(if narrow { "+" } else { "+ New meeting" }),
+        "new-meeting",
+        super::widgets::ButtonRole::Secondary,
+        p,
+    )
+    .h(28.0)
+    .px(if narrow { 8.0 } else { 10.0 })
+    .radius(14.0);
+    if let Some(error) = listener_problem {
+        return (
+            super::updates::listener_popover(s, b, error, p, layer),
+            None,
+        );
     }
-    let b = button(new, ButtonRole::Primary);
     let action = match blocked {
         None => b
             .label("New meeting")
@@ -648,35 +618,27 @@ pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mu
         Some(reason) => b
             .label(format!("New meeting ({reason})"))
             .help(reason)
-            .opacity(0.5)
+            .opacity(if progress.is_some() { 1.0 } else { 0.5 })
             .disabled(true),
     };
-    if cfg!(target_os = "linux") {
-        return action;
-    }
-    col()
-        .items_end()
-        .gap(if narrow { 6.0 } else { 2.0 })
-        .child(action)
-        .children(blocked.map(|reason| {
-            roles::META
-                .wrap(reason, p.soft)
-                .max_w(if narrow { 300.0 } else { 440.0 })
-                .role("status")
-        }))
+    let notice = if cfg!(target_os = "linux") || progress.is_some() {
+        None
+    } else {
+        blocked
+    };
+    (action, notice)
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
-    use super::live::RecordingStatus;
     let status = recording_status(s);
-    if status == RecordingStatus::Paused {
+    if status == super::live::RecordingStatus::Paused {
         return status.label().into();
     }
-    if status == RecordingStatus::Unknown {
+    if status == super::live::RecordingStatus::Unknown {
         return if narrow {
             "Status unknown"
         } else {
-            status.label()
+            "Recording status unknown"
         }
         .into();
     }
@@ -692,51 +654,73 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
         .or_else(|| hex::recording_clock(s));
     match (&clock, narrow) {
         (Some(c), true) => c.clone(),
-        (Some(c), false) => format!("{} {c}", status.label()),
-        (None, _) => status.label().into(),
+        (Some(c), false) => format!("Recording {c}"),
+        (None, _) => "Recording".into(),
     }
 }
 
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
-    let color = match recording_status(s) {
-        super::live::RecordingStatus::Paused => None,
-        super::live::RecordingStatus::Recording => Some(p.danger),
-        super::live::RecordingStatus::Unknown => Some(p.warn),
+    use super::live::RecordingStatus;
+    let status = recording_status(s);
+    let title = s
+        .hex
+        .status
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|state| state.recording.as_ref())
+        .and_then(|r| r.title.as_deref());
+    let display = match (status, title.filter(|t| !t.trim().is_empty())) {
+        (RecordingStatus::Recording, Some(title)) if narrow => title.to_owned(),
+        (RecordingStatus::Recording, Some(title)) => format!("{title} \u{b7} {words}"),
+        (RecordingStatus::Unknown, _) if narrow => "Unknown".into(),
+        _ => words.clone(),
     };
-    let open = super::widgets::button(
-        "",
-        "recording-open",
-        super::widgets::ButtonRole::Secondary,
-        p,
-    )
-    .gap(0.0)
-    .child(
-        row()
-            .gap(8.0)
-            .items_center()
-            .children(color.map(|color| dot(8.0, color).key("recording-live-dot")))
-            .child(roles::CONTROL.wrap(words.clone(), p.soft)),
-    )
-    .label(format!("{words}. Open the live meeting"))
-    .help("Open the live meeting")
-    .on_press(|s: &mut State| s.open_live());
+    let dot = match status {
+        RecordingStatus::Paused => None,
+        RecordingStatus::Recording => Some(
+            dot(8.0, p.danger)
+                .key("recording-live-dot")
+                .looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0)),
+        ),
+        RecordingStatus::Unknown => Some(dot(8.0, p.warn).key("recording-live-dot")),
+    };
+    let open = super::widgets::button("", "recording-open", super::widgets::ButtonRole::Ghost, p)
+        .h(26.0)
+        .px(8.0)
+        .gap(0.0)
+        .child(
+            row().gap(6.0).items_center().children(dot).child(
+                roles::CONTROL
+                    .line(display, p.soft)
+                    .truncate()
+                    .max_w(if narrow { 70.0 } else { 230.0 }),
+            ),
+        )
+        .label(format!("{words}. Open the live meeting"))
+        .help("Open the live meeting")
+        .on_press(|s: &mut State| s.open_live());
     if s.on_live()
         || s.live
             .as_ref()
             .and_then(|l| l.session.as_ref())
             .is_some_and(|m| s.selected.as_ref() == Some(&m.id))
     {
-        return open;
+        return open.fill(p.card).radius(13.0);
     }
     let expected_id = hex::recording_id(s);
     let why = hex::stop_blocked(s);
-    let stop = super::widgets::button("Stop", "hex-stop", super::widgets::ButtonRole::Secondary, p);
+    let stop = super::widgets::icon_button(
+        &icons::STOP,
+        "Stop recording",
+        "hex-stop",
+        super::widgets::ButtonRole::Ghost,
+        p,
+    )
+    .size(24.0, 24.0)
+    .px(4.0);
     let stop = match why {
-        None => stop
-            .label("Stop recording")
-            .help("Stop this recording part. Generate notes from the meeting page.")
-            .on_press(move |s: &mut State| s.hex_record_stop(expected_id.clone())),
+        None => stop.on_press(move |s: &mut State| s.hex_record_stop(expected_id.clone())),
         Some(reason) => stop
             .label(format!("Stop ({reason})"))
             .help(reason)
@@ -745,13 +729,15 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     };
     row()
         .key("recording-pill")
-        .gap(8.0)
+        .radius(14.0)
+        .fill(p.card)
+        .border(1.0, p.line)
         .items_center()
         .child(open)
         .child(stop)
 }
 
-fn logo() -> El {
+pub(super) fn logo() -> El {
     const SIZE: f32 = 18.0;
     let mut mark = el().size(SIZE, SIZE);
     static PART_0: rune::Icon = rune::Icon {
@@ -1016,56 +1002,106 @@ pub fn meetings_home(s: &State) -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
-    #[test]
-    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
+    fn new_meeting_runtime(width: f32, listener_preparing: bool) -> rune::Runtime<State> {
         use crate::ui::theme;
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
         let mut state = State::new();
+        state.go_home();
         crate::ui::updates::settings_fixture(&mut state);
         state.listener_probed(
             Some(sidenote::updates::ListenerStatus {
-                ready: true,
-                preparing: false,
+                ready: !listener_preparing,
+                preparing: listener_preparing,
                 error: None,
             }),
             None,
         );
         let mut rt = Runtime::with_text(
             state,
-            |s: &State, _: &mut rune::Cx<State>| {
-                let mut layer = Vec::new();
-                let action = new_meeting_button(s, theme::palette(true), true, &mut layer);
-                col().child(action).children(layer)
-            },
-            (360.0, 200.0),
+            crate::ui::view,
+            (width, 900.0),
             Env::default(),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
         );
+        rt.settle_all();
         rt.frame(0.0);
-        let elements = rt.elements();
+        rt
+    }
+
+    #[test]
+    fn blocked_new_meeting_keeps_status_below_native_titlebar() {
+        let reason = if cfg!(target_os = "linux") {
+            "Recording is not available on Linux yet."
+        } else {
+            "Checking the meeting listener"
+        };
+        let label = format!("New meeting ({reason})");
+        for width in [390.0, 1334.0] {
+            let elements = new_meeting_runtime(width, true).elements();
+            let find = |key| {
+                elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("missing {key} at width {width}"))
+            };
+            let bar = find("top-bar");
+            let button = find("new-meeting");
+            assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
+            assert!(button.path.starts_with(&bar.path));
+            assert!(button.rect[1] + button.rect[3] <= bar.rect[1] + bar.rect[3]);
+            assert_eq!(button.label.as_deref(), Some(label.as_str()));
+            assert!(!button.focusable);
+            let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
+            if cfg!(target_os = "linux") {
+                assert!(status.is_none());
+            } else {
+                let status = status.expect("visible start-blocked reason");
+                assert_eq!(status.role, "status");
+                assert!(!status.path.starts_with(&bar.path));
+                assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn narrow_new_meeting_gives_blocked_reason_its_own_line() {
+        let elements = new_meeting_runtime(360.0, true).elements();
         let button = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("new-meeting"))
             .unwrap();
         let checking = elements
             .iter()
-            .find(|e| e.text.as_deref() == Some("Checking for Hex"))
+            .find(|e| e.text.as_deref() == Some("Checking the meeting listener"))
             .expect("short checking message");
-        let inside = |r: [f32; 4]| {
-            r[0] >= button.rect[0] - 0.5
-                && r[1] >= button.rect[1] - 0.5
-                && r[0] + r[2] <= button.rect[0] + button.rect[2] + 0.5
-                && r[1] + r[3] <= button.rect[1] + button.rect[3] + 0.5
-        };
-        assert!(inside(checking.rect), "progress shows inside the button");
-        assert_eq!(
-            elements
-                .iter()
-                .filter(|e| e.text.as_deref() == Some("Checking for Hex"))
-                .count(),
-            1,
+        assert!(checking.rect[1] >= button.rect[1] + button.rect[3] + 5.0);
+        assert_eq!(checking.rect[3], roles::META.lh);
+        let button_right = button.rect[0] + button.rect[2];
+        let checking_right = checking.rect[0] + checking.rect[2];
+        assert!((button_right - checking_right).abs() < 0.5);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
+        let elements = new_meeting_runtime(360.0, false).elements();
+        let button = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("new-meeting"))
+            .unwrap();
+        let mut labels = elements
+            .iter()
+            .filter(|e| e.text.as_deref() == Some("Checking for Hex"));
+        let [x, y, w, h] = labels.next().expect("short checking message").rect;
+        let [bx, by, bw, bh] = button.rect;
+        assert!(
+            x >= bx - 0.5 && y >= by - 0.5 && x + w <= bx + bw + 0.5 && y + h <= by + bh + 0.5,
+            "progress shows inside the button"
+        );
+        assert!(
+            labels.next().is_none(),
             "no separate status line below the button"
         );
         assert_eq!(
@@ -1115,10 +1151,10 @@ mod tests {
 
         let (places, _) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
-        let expected = "Meetings, Tasks, People, Memory, Diary, Annotations";
+        let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
-            (32.0, 240.0, expected)
+            (34.0, 230.0, expected)
         );
     }
 

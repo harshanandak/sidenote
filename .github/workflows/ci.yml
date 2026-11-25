@@ -257,6 +257,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --lib -- \
             platform::windows::tests:: updates::implementation:: hex_install:: meeting_icon:: \
             platform::windows::close_tests:: core::annotations::notebook_tests:: \
+            platform::windows::window_icon::tests:: \
             approval_seals_reviewed_bytes_and_send_pins_the_same_files core::config::tests:: \
             core::daily_check::background_tests:: core::meeting_evidence::speech_host_tests:: \
             preparation_file_io_fails_without_retry_and_preserves_content_free_os_diagnostic \
@@ -287,6 +288,8 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --bin sidenote -- \
             install_hooks_tests:: ui::models::dev40_ ui::models::provisioning_review_ \
             ui::window::close_tests:: \
+            ui::nav::tests::blocked_new_meeting_keeps_status_below_native_titlebar \
+            ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
             ui::live::recording_control::tests:: \
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \
