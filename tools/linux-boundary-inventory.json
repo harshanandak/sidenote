@@ -403,9 +403,9 @@
 
   "src/ui/area_scene.rs": "ed9d0a3291369f5ab6a8a3e2c0da8a04bb05ba7155a065cd2604c9da7b1bf160",
 
-  "src/ui/ask_settings.rs": "4a6a176b172b02fb9c11f048eb8f94aceb6ffe6c651d8e7aa61ed42fe48ab0b2",
+  "src/ui/ask_settings.rs": "f8e21b67c997f2184192ccc3897d23639eed1044598e51f1f653b963ecbd20f5",
 
-  "src/ui/ask_switch_tests.rs": "44cbf71d5a0604ce501b19b9c6d766ab1dce3273bf91f4436e04678d5eceb34d",
+  "src/ui/ask_switch_tests.rs": "9416d9c7a6e5a5dfc46d424ed722987eef55856864cebcad63bede77f5966f32",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -435,7 +435,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "62c3c70bb5c62a0ec9423bb94657caa226deb3c3738e35cc058d79fa6b7704dd",
+  "src/ui/live.rs": "b6960326a5546bc42c1c1ec9a44ee4e8a9e47df35490ce687fadbbb48c3bb69b",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "fb3bf9b91c32284e5ea7cee1bd09870f596b8533a2fbb8ac46ccbf3be658bc40",
+  "src/ui/mod.rs": "31e30f46a785840674d7437051f2b51981e6e912c8256a22034db391b88ea21d",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
