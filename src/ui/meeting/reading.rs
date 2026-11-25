@@ -957,6 +957,14 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // The wide grid already sets the notes 44 points in from its edge, so its column has no
     // gutter of its own; below the grid's width the notes keep the page gutter.
     let side = super::gutter(s);
+    let overlay_thread =
+        super::phone(s) && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
+    let bottom_pad = 16.0
+        + if overlay_thread {
+            s.overlay_h.get()
+        } else {
+            0.0
+        };
     // With no gutter and the tasks stacked, their rows hang 8 either side of the column, so the
     // scroll area is 8 wider each side there, as the tasks column's is on the wide grid.
     let hang = if strip && !wide { 8.0 } else { 0.0 };
@@ -1006,7 +1014,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 doc.max_w(COLUMN + 2.0 * (side + hang))
                     .px(side + hang)
                     .pt(6.0)
-                    .pb(16.0),
+                    .pb(bottom_pad),
                 "meeting-scroll",
             )
             .grow(1.0),
@@ -1056,21 +1064,23 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 ),
         );
     }
-    main = main.child(
-        col()
-            .key("meeting-bottom-bar")
-            .w_full()
-            .px(side)
-            .child(ask::overlay_with(
-                s,
-                k,
-                p,
-                narrow,
-                layer,
-                crate::ui::live::parts_control(s, p),
-                None,
-            )),
-    );
+    let dock = col()
+        .key("meeting-bottom-bar")
+        .w_full()
+        .child(ask::overlay_with(
+            s,
+            k,
+            p,
+            narrow,
+            layer,
+            crate::ui::live::parts_control(s, p),
+            None,
+        ));
+    main = main.child(if overlay_thread {
+        dock.pin(Some(0.0), None, Some(0.0), Some(0.0))
+    } else {
+        dock
+    });
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
         columns = columns.pr(EDGE);
