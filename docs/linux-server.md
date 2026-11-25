@@ -8,8 +8,11 @@ cargo clippy --locked --target x86_64-unknown-linux-gnu --no-default-features --
 ```
 
 `desktop` is on by default. It owns Rune and wgpu. `ui-kit` requires `desktop`.
-The Linux desktop is not qualified in this lane. Its launch returns
-`UNAVAILABLE_ON_PLATFORM`. Windows retains its desktop and ASR builds. The checked-in
+A Full-role device built with `desktop` can open the Linux UI in a supported graphical
+session. See [Linux desktop launch](linux-desktop.md) for build and runtime requirements.
+If execution reaches the desktop entry in a build without `desktop`, it reports
+`UNAVAILABLE_ON_PLATFORM`. The desktop entry also rejects non-Full roles.
+Windows retains its desktop and ASR builds. The checked-in
 Cargo target remains Windows GNU; select `--target x86_64-unknown-linux-gnu` when building on Linux.
 Windows build and packaging scripts select `stable-x86_64-pc-windows-gnu` and
 `--target x86_64-pc-windows-gnu` explicitly; the root toolchain retains the Windows GNU pin. Set `RUSTUP_TOOLCHAIN=stable` on Linux.
@@ -36,7 +39,7 @@ The local configuration and `local/` must stay excluded from file synchronizatio
 
 | Role | Service | Desktop | Processing |
 | --- | --- | --- | --- |
-| Full | Windows dev.19 listener; no relay/journal duties | Windows desktop | Configured backends |
+| Full | Windows dev.19 listener; no relay/journal duties | Windows or Linux with a desktop build and session | Configured backends |
 | Server | Ordinary launch or `--server` | Never | Configured backends |
 | Hub | Ordinary launch or `--server` | Never | Disabled |
 
@@ -68,8 +71,9 @@ for isolated Windows work. Explicit meeting and peer directory overrides take pr
 Linux writes use private files, pinned directory descriptors, no-follow opens, atomic replacement and nonblocking `flock`.
 
 Linux supports encrypted relay identities, bounded sync/notes/routing subprocesses and
-native CLI executable discovery. Legacy PowerShell scripts, updates and desktop operations
-return `UNAVAILABLE_ON_PLATFORM`. Syncthing remains an external transport.
+native CLI executable discovery. Legacy PowerShell scripts and automatic updates remain
+unavailable on Linux. The [desktop guide](linux-desktop.md) lists the supported UI
+operations and platform limits. Syncthing remains an external transport.
 
 ## Linux step 2: identity and workers
 
