@@ -1372,49 +1372,32 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
 }
 
 #[test]
-fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
-    if in_parent("ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor") {
+fn meeting_ticks_keep_the_all_meetings_chat() {
+    if in_parent("meeting_ticks_keep_the_all_meetings_chat") {
         return;
     }
-    for size in [DEFAULT_SIZE, (390.0, 844.0)] {
-        let mut rt = page_at(size);
-        rt.update(|s, _| {
-            scene_agents(s, ALL_AGENTS);
-            s.ask_open = true;
-        });
-        rt.frame(0.0);
-        assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
-        let chip = |rt: &Runtime<State>| element(rt, "ask-options").label.unwrap();
-        assert_eq!(rt.state.ask_key(), MEETING);
-        assert_eq!(chip(&rt), "Ask options, What did we decide?");
-        rt.update(|s, _| s.set_ask_scope(true));
-        rt.frame(0.0);
-        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
-        rt.update(|s, _| s.go_home());
-        rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options, List my tasks");
-        rt.update(|s, _| s.question = TextEdit::new("A draft"));
-        rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
-        rt.update(|s, _| {
-            s.question = TextEdit::default();
-            scene_live(s, "", &[], false);
-            s.hex.status = Some(Ok(hex_engine_recording()));
-        });
-        rt.frame(0.0);
-        assert!(rt.state.ask_current_live());
-        assert_eq!(chip(&rt), "Ask options, What did I miss");
-        rt.update(|s, _| {
-            s.asks
-                .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
-        });
-        rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
-        rt.update(|s, _| s.go_home());
-        rt.frame(0.0);
-        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
-        assert_eq!(chip(&rt), "Ask options, List my tasks");
-    }
+    let mut rt = page_with_tasks(DEFAULT_SIZE);
+    let all = core::ALL_KEY;
+    let global = Message {
+        role: "user".into(),
+        text: "Across meetings".into(),
+        ..Default::default()
+    };
+    rt.update(|s, _| {
+        s.meeting_ui.tabs = true;
+        s.store.append_message(all, global.clone()).unwrap();
+    });
+    rt.frame(0.0);
+    tap(&mut rt, "tick-0");
+    wait_for_tick(&mut rt, 0, true);
+    let checked = element(&rt, "tick-0").fill;
+    rt.update(|s, _| s.set_ask_scope(true));
+    rt.frame(0.0);
+    assert_eq!(element(&rt, "tick-0").fill, checked);
+    tap(&mut rt, "tick-0");
+    wait_for_tick(&mut rt, 0, false);
+    assert_eq!(rt.state.ask_key(), all);
+    assert_eq!(rt.state.saved.messages, [global]);
 }
 
 #[test]
