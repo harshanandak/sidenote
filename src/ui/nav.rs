@@ -968,6 +968,7 @@ mod tests {
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
         let mut state = State::new();
+        state.go_home();
         crate::ui::updates::settings_fixture(&mut state);
         state.listener_probed(
             Some(sidenote::updates::ListenerStatus {
@@ -1003,7 +1004,7 @@ mod tests {
                 elements
                     .iter()
                     .find(|e| e.key.as_deref() == Some(key))
-                    .unwrap()
+                    .unwrap_or_else(|| panic!("missing {key} at width {width}"))
             };
             let bar = find("top-bar");
             let button = find("new-meeting");
