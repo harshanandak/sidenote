@@ -826,7 +826,7 @@ pub fn keycap(s: impl Into<String>, p: Palette) -> El {
         .border(1.0, p.line)
 }
 
-/// A short confirmation, pinned near the top of the window. It slides in and fades; Rune
+/// A short confirmation, pinned above the bottom controls. It slides in and fades; Rune
 /// shortens that to a fade when the system asks for reduced motion.
 pub fn toast(text_: &str, p: Palette) -> El {
     toast_with_action(text_, None, p)
@@ -834,7 +834,8 @@ pub fn toast(text_: &str, p: Palette) -> El {
 pub fn toast_with_action(text_: &str, action: Option<El>, p: Palette) -> El {
     col()
         .key("toast")
-        .pin(Some(0.0), Some(62.0), Some(0.0), None)
+        .pin(Some(0.0), None, Some(0.0), Some(96.0))
+        .px(12.0)
         .items_center()
         .child(
             row()
