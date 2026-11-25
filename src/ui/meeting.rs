@@ -24,7 +24,6 @@ pub struct ReadingUi {
     pub tabs: bool,
     pub templates: std::collections::BTreeMap<String, String>,
     pub time_open: bool,
-    pub recording_hover: bool,
     pub status_open: bool,
     pub(super) rail: reading::RailVisit,
     sections: std::cell::RefCell<sections::Visit>,
@@ -43,7 +42,6 @@ impl ReadingUi {
             tabs: prefs.meeting_tabs,
             templates: prefs.meeting_summary_templates.clone(),
             time_open: false,
-            recording_hover: false,
             status_open: false,
             rail: reading::RailVisit::default(),
             sections: Default::default(),
@@ -489,7 +487,6 @@ fn transcript_lines(s: &State, m: &Meeting, p: Palette) -> (El, usize) {
     let has_time = m.timed();
     let mut out = col().w_full().px(6.0).pb(16.0);
     let mut shown = 0;
-    let mut previous_speaker = None;
     let session = s
         .live
         .as_ref()
@@ -525,7 +522,6 @@ fn transcript_lines(s: &State, m: &Meeting, p: Palette) -> (El, usize) {
     };
     for para in paragraphs {
         if boundaries.contains(&para.first) {
-            previous_speaker = None;
             out = out.child(
                 row().w_full().justify_center().py(8.0).child(
                     roles::META
@@ -580,10 +576,9 @@ fn transcript_lines(s: &State, m: &Meeting, p: Palette) -> (El, usize) {
             .min_w(0.0);
         if !s.meeting_ui.tabs {
             let mut words = col().grow(1.0).min_w(0.0).gap(3.0);
-            if !line.who.is_empty() && previous_speaker != Some(line.who.as_str()) {
+            if !line.who.is_empty() {
                 words = words.child(roles::GROUP.wrap(&line.who, speaker_ink(m, &line.who, p)));
             }
-            previous_speaker = Some(line.who.as_str());
             if s.transcript_original && !line.language.is_empty() {
                 words = words.child(roles::META.wrap(&line.language, p.faint));
             }
@@ -600,7 +595,7 @@ fn transcript_lines(s: &State, m: &Meeting, p: Palette) -> (El, usize) {
                 .child(body)
                 .padding(10.0)
                 .radius(10.0)
-                .max_w((s.app_w.get() - super::nav::width(s)).max(240.0) * 0.65)
+                .max_w((page_w(s) - 2.0 * gutter(s)).min(COLUMN) * 0.86)
                 .fill(if hit {
                     p.hit
                 } else if near || you {
@@ -676,6 +671,7 @@ fn transcript_key(s: &mut State, e: &rune::KeyEvent, tx: &mut Tx) -> bool {
         tx.blur();
     } else {
         s.close_transcript_sheet();
+        tx.focus("meeting-transcript", true);
     }
     true
 }
@@ -687,7 +683,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
         .plain()
         .placeholder("Search the transcript")
         .label("Search the transcript")
-        .height(36.0)
+        .height(44.0)
         .on_edit(|s: &mut State| &mut s.transcript_filter)
         .on_key(transcript_key)
         .build(k)
@@ -697,7 +693,13 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
         .fill(p.bg)
         .grow(1.0)
         .min_w(0.0);
-    let mut tools = row().w_full().gap(8.0).px(14.0).pb(8.0).child(search);
+    let mut tools = row()
+        .w_full()
+        .flex_wrap()
+        .gaps(8.0, 8.0)
+        .px(14.0)
+        .py(8.0)
+        .child(search.min_w(124.0));
     if m.routed.is_some() {
         tools = tools.child(
             quiet_button(
@@ -709,6 +711,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
                 "transcript-language-view",
                 p,
             )
+            .h(44.0)
             .on_press(|s: &mut State| {
                 s.transcript_original = !s.transcript_original;
                 s.highlight = None;
@@ -722,7 +725,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
                 .plain()
                 .placeholder("Go to 14:22")
                 .label("Go to a time")
-                .height(36.0)
+                .height(44.0)
                 .width(Some(104.0))
                 .on_edit(|s: &mut State| &mut s.transcript_jump)
                 .on_submit(|s: &mut State, tx| s.jump_to_typed(tx))
@@ -752,6 +755,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
                 "transcript-time-toggle",
                 p,
             )
+            .h(44.0)
             .on_press(|s: &mut State| s.meeting_ui.time_open = !s.meeting_ui.time_open),
         );
     }

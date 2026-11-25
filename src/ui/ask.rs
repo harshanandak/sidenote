@@ -401,6 +401,8 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
     // The thread floats over the meeting, so it takes at most about half the pane.
     let max_h = if s.on_live() {
         (super::live::limits(s).thread - 44.0).max(0.0)
+    } else if s.transcript_open && !s.meeting_ui.tabs {
+        (s.pane_h.get() * 0.22).clamp(96.0, 220.0)
     } else {
         (s.pane_h.get() * 0.5).clamp(180.0, 460.0)
     };
@@ -785,7 +787,12 @@ pub fn overlay_with(
     } else {
         16.0
     };
-    let gutter = if s.companies.open { 0.0 } else { inset };
+    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live())
+    {
+        0.0
+    } else {
+        inset
+    };
     let mut stack = col()
         .w_full()
         .max_w(COLUMN + 2.0 * gutter)
@@ -1045,7 +1052,7 @@ fn with_note(stack: El, p: Palette) -> El {
 }
 
 fn place(s: &State, stack: El) -> El {
-    if s.on_live() {
+    if s.on_live() || (s.selected.is_some() && !s.meeting_ui.tabs && !s.companies.open) {
         col()
             .key("ask-overlay")
             .w_full()

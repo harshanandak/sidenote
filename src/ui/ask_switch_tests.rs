@@ -1939,7 +1939,7 @@ fn retiring_memory_shares_the_wait_between_two_contended_locks() {
     );
 }
 
-/// The dock is centered in the meeting pane and the prompt stays inside it.
+/// The dock lines up with the notes column and its prompt sits above it.
 fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     if in_parent(name) {
         return;
@@ -1958,14 +1958,16 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
             .0
     };
     let (pane, dock, chip, pill) = (
-        rect("meeting-pane"),
+        rect("meeting-title"),
         rect("meeting-bottom-bar"),
-        rect("ask-options"),
+        rect("ask-prompt"),
         rect("ask-pill"),
     );
-    assert!((dock[0] + dock[2] / 2.0 - pane[0] - pane[2] / 2.0).abs() < 1.0);
+    assert_eq!(pill[0], pane[0]);
+    assert!(pill[2] <= dock[2]);
     assert_eq!(pill[3], 70.0);
-    assert!(chip[0] > pill[0] && chip[0] + chip[2] < pill[0] + pill[2]);
+    assert_eq!(chip[0], pill[0]);
+    assert!(chip[1] + chip[3] <= pill[1]);
 }
 
 #[test]
@@ -2010,7 +2012,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     // The header's title and controls are in the notes column.
     let head = rect(&rt, "meeting-header");
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
-    assert_eq!(rect(&rt, "ask-pill")[2], 840.0, "Ask bar");
+    assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
     // The transcript sheet rises inside the notes column.
     rt.update(|s, _| s.transcript_open = true);
@@ -2911,4 +2913,51 @@ fn suppression_failure_during_ui_apply_retries_unchanged_catalog() {
     assert!(before == refresh::metadata());
     state.apply_event(snapshot());
     assert_eq!(state.meetings[0].id, MEETING);
+}
+
+#[test]
+fn live_transcript_stays_above_the_dock_at_short_heights() {
+    if in_parent("live_transcript_stays_above_the_dock_at_short_heights") {
+        return;
+    }
+    for width in [1334.0, 390.0] {
+        for height in [600.0, 720.0, 900.0] {
+            let mut rt = page_at((width, height));
+            for phase in ["transcript", "paused"] {
+                rt.update(|s, _| {
+                    s.selected = None;
+                    super::live::parts_scene(s, phase);
+                    scene_agents(s, ALL_AGENTS);
+                    s.saved.messages.clear();
+                    s.live.as_mut().unwrap().panel_open = false;
+                });
+                rt.settle_all();
+                rt.frame(0.0);
+                let closed = rect_of(&rt, "ask-pill");
+                rt.update(|s, _| s.live.as_mut().unwrap().panel_open = true);
+                for answer in [false, true] {
+                    if answer {
+                        rt.update(|s, _| {
+                            s.saved.messages.push(Message {
+                                role: "assistant".into(),
+                                text: "An answer.\n\n".repeat(40),
+                                ..Default::default()
+                            })
+                        });
+                    }
+                    rt.settle_all();
+                    rt.frame(0.0);
+                    let panel = rect_of(&rt, "live-panel");
+                    let dock = rect_of(&rt, "ask-controls");
+                    let pill = rect_of(&rt, "ask-pill");
+                    assert!(
+                        panel[1] + panel[3] <= dock[1] + 0.5,
+                        "{width}×{height} {phase}, answer {answer}"
+                    );
+                    assert_eq!((panel[0], panel[2]), (pill[0], pill[2]));
+                    assert_eq!(closed, pill);
+                }
+            }
+        }
+    }
 }
