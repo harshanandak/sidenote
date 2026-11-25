@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "e3d7d15685324eaabcac74df1fde82aa44c6a6d7dab6fd86839422f434bc23d3",
 
-  "src/ui/ask_switch_tests.rs": "78959f62f3660218883a03a497d88d7585085ba159ab00faf9ad69f128a96d75",
+  "src/ui/ask_switch_tests.rs": "0cb5c36791923c108ab8b8a234fd24f1f809ff253271888e838b2741455aac71",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -413,7 +413,7 @@
 
   "src/ui/cloud_ask.rs": "0b3cd72ff4fabf3bfdf64e0017c44851bef8113df24feede14e991364312e0ae",
 
-  "src/ui/edit_worker.rs": "52185a1bb4f6996668831827ef6bc030fc42020d04aac5b710f94d6f4943f5bc",
+  "src/ui/edit_worker.rs": "87c4fe72d8b55837ba984b994de1a424ad247a1c98e5179defc32ce400f62c6c",
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
