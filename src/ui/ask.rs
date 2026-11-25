@@ -537,7 +537,11 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
 
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
     let (prompt, more) = prompts(s);
-    let gutter = if chip { 67.0 } else { 6.0 };
+    let gutter = if chip {
+        6.0 + PROMPT_HEIGHT + PROMPT_GAP + (PILL_HEIGHT - DOCK_BUTTON) / 2.0
+    } else {
+        6.0
+    };
     let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let trigger = pressable(
         row()
@@ -547,8 +551,8 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     .key("ask-options")
     .label("Ask options")
     .description("Choose the question scope, model or a suggested prompt.")
-    .size(44.0, 44.0)
-    .radius(22.0)
+    .size(DOCK_BUTTON, DOCK_BUTTON)
+    .radius(DOCK_BUTTON / 2.0)
     .hover(p.button_hover)
     .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
@@ -788,12 +792,18 @@ fn runner_choice(
     menu.build(&kit, layer).min_w(0.0)
 }
 
-const ACTION: f32 = 44.0;
+pub(super) const DOCK_BUTTON: f32 = 32.0;
+const PILL_HEIGHT: f32 = 48.0;
+const PROMPT_HEIGHT: f32 = 28.0;
+const PROMPT_GAP: f32 = 4.0;
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
 fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
-    let slot = col().key("ask-action").size(ACTION, ACTION).shrink();
+    let slot = col()
+        .key("ask-action")
+        .size(DOCK_BUTTON, DOCK_BUTTON)
+        .shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
     if pending {
         let run = s.asks.get(&s.ask_key());
@@ -808,8 +818,8 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
                 p,
             )
             .help(format!("Stop {who}"))
-            .size(ACTION, ACTION)
-            .radius(22.0)
+            .size(DOCK_BUTTON, DOCK_BUTTON)
+            .radius(DOCK_BUTTON / 2.0)
             .focus_ring(1.0, 1.0, p.faint)
             .preserve_focus_on_press(true)
             .transition(replace)
@@ -829,8 +839,8 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
             super::widgets::ButtonRole::Primary,
             p,
         )
-        .size(ACTION, ACTION)
-        .radius(22.0)
+        .size(DOCK_BUTTON, DOCK_BUTTON)
+        .radius(DOCK_BUTTON / 2.0)
         .focus_ring(1.0, 1.0, p.faint)
         .preserve_focus_on_press(true)
         .transition(replace)
@@ -840,40 +850,6 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
             submit(s, &q, tx);
         }),
     )
-}
-
-/// What the pill says when no agent CLI is on this machine.
-fn no_agent(s: &State, p: Palette) -> El {
-    let mut note = col().min_w(0.0).gap(2.0).child(roles::CONTROL.wrap(
-        "Ask works with Claude Code, Codex or OpenCode. Meeting summaries need Claude Code.",
-        p.ink,
-    ));
-    if s.agents_rechecked {
-        note = note.child(roles::META.wrap(
-            "Still not found. If you just installed one, press Check again, or restart Sidenote if it still fails.",
-            p.faint,
-        ));
-    }
-    let (content, note) = if s.app_w.get() < 600.0 {
-        (col().items_start(), note.w_full())
-    } else {
-        (row().items_center(), note.grow(1.0))
-    };
-    content
-        .key("ask-pill")
-        .w_full()
-        .gap(10.0)
-        .px(20.0)
-        .py(10.0)
-        .radius(22.0)
-        .child(note)
-        .child(
-            crate::ui::widgets::action("Check again", p)
-                .key("ask-recheck")
-                .on_press(|s: &mut State| {
-                    s.refresh_ai_notes();
-                }),
-        )
 }
 
 /// Pinned to the bottom of the meeting pane or the home page, over what is behind it.
@@ -951,25 +927,44 @@ pub fn overlay_with(
                 .border(1.0, p.line),
         );
     }
+    let pill = row()
+        .key("ask-pill")
+        .w_full()
+        .max_w(COLUMN)
+        .h(PILL_HEIGHT)
+        .min_h(PILL_HEIGHT)
+        .gap(if compact { 2.0 } else { 4.0 })
+        .items_center()
+        .pl(if compact { 8.0 } else { 22.0 })
+        .pr(if compact { 6.0 } else { 10.0 })
+        .radius(PILL_HEIGHT / 2.0);
+    let dock = col().key("ask-controls").w_full().gap(PROMPT_GAP);
     if !s.has_agent() && !pending && s.runner_error.is_none() {
+        let pill = pill.children(lead);
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
-            raised(
+            pill.child(
                 super::widgets::action("Ask anything", p)
                     .key("ask-open")
-                    .px(20.0)
-                    .py(10.0)
+                    .h(DOCK_BUTTON)
                     .on_press(|s: &mut State| s.ai_notes.ask_setup_open = true),
-                p,
             )
         } else {
-            raised(no_agent(s, p), p)
+            let status = if s.agents_rechecked {
+                "Still no AI tool"
+            } else {
+                "No AI tool found"
+            };
+            pill.child(roles::CONTROL.line(status, p.ink).grow(1.0))
+                .child(
+                    super::widgets::action("Check again", p)
+                        .key("ask-recheck")
+                        .h(DOCK_BUTTON)
+                        .description("Ask works with Claude Code, Codex or OpenCode. Meeting summaries need Claude Code.")
+                        .help("If you just installed an AI tool, check again or restart Sidenote.")
+                        .on_press(|s: &mut State| s.refresh_ai_notes()),
+                )
         };
-        let (stack, lead) = if compact {
-            (stack.children(lead.map(El::self_start)), None)
-        } else {
-            (stack, lead)
-        };
-        return place(s, stack.children(lead).child(pill));
+        return place(s, stack.child(dock.child(raised(pill, p))));
     }
     let empty = s.question.text.trim().is_empty();
     let input = TextInput::new(&s.question)
@@ -991,7 +986,7 @@ pub fn overlay_with(
         } else {
             "Ask about your meetings"
         })
-        .height(44.0)
+        .height(DOCK_BUTTON)
         .text_style(rune::TextStyle::new(13.5, 400.0).lh(20.0))
         .on_edit(|s: &mut State| &mut s.question)
         .on_submit(|s: &mut State, tx| {
@@ -1033,32 +1028,18 @@ pub fn overlay_with(
             .role("alert")
     }));
     let show_prompt = empty && !pending;
-    let dock = col()
-        .key("ask-controls")
-        .w_full()
-        .gap(4.0)
-        .children(show_prompt.then(|| {
-            let prompt = prompts(s).0;
-            quiet_button(prompt, "ask-prompt", p)
-                .label(format!("Ask options, {prompt}"))
-                .h(44.0)
-                .radius(22.0)
-                .border(1.0, p.line)
-                .fill(p.card)
-                .self_start()
-                .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
-        }));
-    let pill = row()
-        .key("ask-pill")
-        .w_full()
-        .max_w(COLUMN)
-        .h(70.0)
-        .min_h(70.0)
-        .gap(if compact { 2.0 } else { 4.0 })
-        .items_center()
-        .pl(if compact { 8.0 } else { 22.0 })
-        .pr(if compact { 6.0 } else { 10.0 })
-        .radius(35.0)
+    let dock = dock.children(show_prompt.then(|| {
+        let prompt = prompts(s).0;
+        quiet_button(prompt, "ask-prompt", p)
+            .label(format!("Ask options, {prompt}"))
+            .h(PROMPT_HEIGHT)
+            .radius(PROMPT_HEIGHT / 2.0)
+            .border(1.0, p.line)
+            .fill(p.card)
+            .self_start()
+            .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
+    }));
+    let pill = pill
         .fill(p.card)
         .focus_within_flat()
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))

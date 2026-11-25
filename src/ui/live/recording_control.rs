@@ -1,5 +1,8 @@
 use super::*;
-use crate::ui::widgets::{ButtonDisabled, dot};
+use crate::ui::{
+    ask::DOCK_BUTTON,
+    widgets::{ButtonDisabled, dot},
+};
 use sidenote::core::{
     self,
     meeting_parts::{self, Phase as SavedPhase},
@@ -82,9 +85,9 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
         .gap(2.0);
     let button = |name, key, glyph| {
         if compact {
-            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(44.0, 44.0)
+            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(DOCK_BUTTON, DOCK_BUTTON)
         } else {
-            quiet_button(name, key, p).h(44.0)
+            quiet_button(name, key, p).h(DOCK_BUTTON)
         }
     };
     if live {
@@ -121,8 +124,8 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
                 )
                 .key("meeting-pause")
                 .label("Pause recording")
-                .size(44.0, 44.0)
-                .radius(22.0)
+                .size(DOCK_BUTTON, DOCK_BUTTON)
+                .radius(DOCK_BUTTON / 2.0)
                 .hover(p.button_hover)
                 .center()
                 .button_disabled(s.hex_record_busy())
