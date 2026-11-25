@@ -589,7 +589,7 @@ impl State {
                         self.tasks
                             .checked
                             .insert(id.clone(), view.value.checked.clone());
-                        if self.selected.as_deref() == Some(&id) {
+                        if self.ask_key() == id {
                             self.saved = view.value;
                         }
                         self.rebuild_tasks();
@@ -630,7 +630,7 @@ impl State {
                         self.tasks
                             .checked
                             .insert(id.clone(), view.value.checked.clone());
-                        if self.selected.as_deref() == Some(&id) {
+                        if self.ask_key() == id {
                             self.saved = view.value;
                         }
                     }

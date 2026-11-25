@@ -29,6 +29,8 @@ pub struct AskSettings {
     pub fallback_notice: Option<String>,
     pub live_all: bool,
     pub scope_open: bool,
+    pub saved_all: bool,
+    pub loaded_scope: String,
     pub live_chat: String,
     pub chat: Thinking,
     pub models: BTreeMap<String, String>,
@@ -67,6 +69,8 @@ impl AskSettings {
             fallback_notice: None,
             live_all: false,
             scope_open: false,
+            saved_all: false,
+            loaded_scope: String::new(),
             live_chat: core::live_ask_key(&chrono::Local::now().timestamp_millis().to_string()),
             chat: prefs.ask_chat_thinking,
             models: prefs.ask_models.clone(),
@@ -87,13 +91,22 @@ impl AskSettings {
 }
 impl State {
     pub fn live_scope_available(&self) -> bool {
-        self.ask_live_meeting() && self.selected.is_none() && !self.companies.open
+        self.on_live() && self.ask_live_meeting()
     }
     pub fn ask_current_live(&self) -> bool {
         self.live_scope_available() && !self.ask_settings.live_all
     }
-    pub fn set_live_scope(&mut self, all: bool) {
-        self.ask_settings.live_all = all;
+    pub fn ask_meeting_id(&self) -> Option<&str> {
+        self.selected
+            .as_deref()
+            .filter(|_| !self.ask_settings.saved_all)
+    }
+    pub fn set_ask_scope(&mut self, all: bool) {
+        if self.selected.is_some() {
+            self.ask_settings.saved_all = all;
+        } else if self.live_scope_available() {
+            self.ask_settings.live_all = all;
+        }
         self.ask_settings.scope_open = false;
         self.ask_settings.warm_signature.clear();
         self.load_saved();
@@ -955,6 +968,11 @@ mod tests {
         state.selected = None;
         state.ask_settings.recording = true;
         state.meeting_agent_transition();
+        state.live = Some(crate::ui::live::Live::scene(
+            crate::ui::live::Phase::Recording,
+            None,
+        ));
+        state.live_open = true;
         assert!(state.ask_current_live());
         let live_key = state.ask_key();
         assert_ne!(live_key, core::ALL_KEY);
@@ -970,10 +988,10 @@ mod tests {
             )
             .unwrap();
         state.question = TextEdit::new("Keep the draft while changing scope");
-        state.set_live_scope(true);
+        state.set_ask_scope(true);
         assert_eq!(state.ask_key(), core::ALL_KEY);
         assert!(!state.ask_current_live());
-        state.set_live_scope(false);
+        state.set_ask_scope(false);
         assert_eq!(state.ask_key(), live_key);
         assert_eq!(
             state.saved.messages.last().unwrap().text,

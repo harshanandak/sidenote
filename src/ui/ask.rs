@@ -1,8 +1,4 @@
-//! The Ask bar, floating at the bottom of a meeting or the home page: one quiet pill with the
-//! question box, the model's name and a send button that fades in once there is text. The
-//! box shows a few suggestion chips while it has focus, and Esc folds them away. While a question
-//! runs the arrow becomes Stop and a muted line counts the seconds. The thread of answers sits
-//! above the pill. On the home page it asks across every meeting, and its answers cite meetings.
+//! The Ask pill keeps its place while prompts, scope, models and answers open above it.
 //!
 //! The panel and thread use Rune's shared motion tokens and follow the system's reduced motion setting.
 use super::{
@@ -100,7 +96,7 @@ fn message(s: &State, k: &Kit, i: usize, m: &Message, p: Palette) -> El {
         roles::TITLE.wrap(&m.text, p.ink)
     } else {
         let origin = key.clone();
-        let all = s.selected.is_none() && !s.ask_current_live();
+        let all = s.ask_meeting_id().is_none() && !s.ask_current_live();
         Markdown::new(if all {
             link_citations(&m.text, &s.meetings)
         } else {
@@ -194,8 +190,8 @@ pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
         || tx.focused().is_some_and(|key| {
             matches!(
                 key,
-                "ask-model" | "ask-endpoint-settings" | "ask-all-prompts" | "ask-send" | "ask-stop"
-            ) || key.starts_with("suggest-")
+                "ask-model" | "ask-endpoint-settings" | "ask-options" | "ask-send" | "ask-stop"
+            ) || key.starts_with("ask-options-")
         });
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
@@ -242,6 +238,7 @@ fn progress(run: &AskRun, k: &Kit, p: Palette) -> El {
     };
     row()
         .key("ask-progress")
+        .transition(rise(4.0))
         .w_full()
         .gap(8.0)
         .items_center()
@@ -287,7 +284,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         );
     }
     let asked = s.saved.messages.iter().filter(|m| m.role == "user").count();
-    let about = if s.selected.is_some() || s.ask_current_live() {
+    let about = if s.ask_meeting_id().is_some() || s.ask_current_live() {
         "this meeting"
     } else {
         "all your meetings"
@@ -420,87 +417,98 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
     Some(panel.child(hairline(p)).child(list))
 }
 
-fn recipe(i: usize, prompt: &'static str, p: Palette) -> El {
-    pressable(
-        row()
-            .gap(6.0)
-            .items_center()
-            .child(icons::draw(&icons::MESSAGE_SQUARE, 14.0, p.soft))
-            .child(roles::CONTROL.line(prompt, p.soft)),
-    )
-    .key(format!("suggest-{i}"))
-    .label(prompt)
-    .h(28.0)
-    .px(10.0)
-    .radius(14.0)
-    .border(1.0, p.line)
-    .hover(p.card)
-    .focus_ring(1.0, 1.0, p.faint)
-    .preserve_focus_on_press(true)
-    .motion(SNAP)
-    .transition(Transition::opacity().springs(pair::SETTLE))
-    .enter_delay(i as f32 * 0.03)
-    .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
-}
-
 /// Gutter of the notes column at normal widths. The saved meeting page's Ask bar uses it, so the bar
 /// lines up with the notes text; at 390 wide the Ask panel keeps its 16 point gutter.
 const NOTES_GUTTER: f32 = 24.0;
 
-/// Prompts for the current page, with room reserved for the library link.
-fn suggestions(s: &State, narrow: bool, room: f32, p: Palette) -> El {
-    let list: &[&str] = if s.companies.open {
-        &[
+fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
+    let (prompt, more) = if s.companies.open {
+        (
             "Where do things stand?",
-            "What are they waiting on from us?",
-            "Prep my next call",
-        ]
-    } else if s.selected.is_some() || s.ask_current_live() {
-        SUGGESTIONS
+            &["What are they waiting on from us?", "Prep my next call"][..],
+        )
+    } else if s.ask_current_live() {
+        ("What did I miss", SUGGESTIONS)
+    } else if s.ask_meeting_id().is_some() {
+        ("What did we decide?", SUGGESTIONS)
     } else {
-        ask_all::SUGGESTIONS
+        ("List my tasks", ask_all::SUGGESTIONS)
     };
-    let mut r = row()
-        .key("ask-suggestions")
-        .transition(slide(6.0, pair::SETTLE))
-        .w_full()
-        .h(40.0)
-        .px(2.0)
-        .items_center()
-        .gap(6.0);
-    let room = room - if narrow { 62.0 } else { 118.0 };
-    let mut used = 0.0;
-    let mut shown = 0;
-    for text in list {
-        let width = text.chars().count() as f32 * 5.5 + 42.0;
-        if used + width > room {
-            continue;
-        }
-        used += width;
-        r = r.child(recipe(shown, text, p));
-        shown += 1;
-        if shown == if narrow { 2 } else { 3 } {
-            break;
+    let trigger = pressable(
+        row()
+            .items_center()
+            .gap(5.0)
+            .child(roles::CONTROL.medium().line("/", p.soft))
+            .children(chip.then(|| roles::CONTROL.line(prompt, p.ink))),
+    )
+    .key("ask-options")
+    .label(if chip {
+        format!("Ask options, {prompt}")
+    } else {
+        "Ask options".into()
+    })
+    .h(30.0)
+    .px(if chip { 10.0 } else { 8.0 })
+    .radius(15.0)
+    .border(if chip { 1.0 } else { 0.0 }, p.line)
+    .max_w(154.0)
+    .hover(p.button_hover)
+    .focus_ring(1.0, 1.0, p.faint)
+    .preserve_focus_on_press(true)
+    .on_press(|s: &mut State| {
+        s.ask_settings.scope_open = !s.ask_settings.scope_open;
+        s.runner_open = false;
+    });
+    let mut menu = Menu::new("ask-options")
+        .trigger(trigger)
+        .open(s.ask_settings.scope_open)
+        .placement(Placement::TopEnd)
+        .min_width(220.0)
+        .on_close(|s: &mut State| s.ask_settings.scope_open = false);
+    if chip {
+        for prompt in std::iter::once(prompt).chain(more.iter().copied().filter(|p| *p != prompt)) {
+            menu = menu.item(
+                MenuItem::new(prompt).on_select_tx(move |s: &mut State, tx| {
+                    s.ask_settings.scope_open = false;
+                    submit(s, prompt, tx);
+                }),
+            );
         }
     }
-    r.child(el().grow(1.0)).child(
-        super::widgets::link(
-            if narrow {
-                "All \u{203a}"
-            } else {
-                "All prompts \u{203a}"
-            },
-            p,
-        )
-        .key("ask-all-prompts")
-        .label("All prompts")
-        .focus_ring(1.0, 1.0, p.faint)
-        .on_press(|s: &mut State| {
-            s.open_hex();
-            s.hex.section = super::hex::Section::PromptLibrary;
-            super::scene_scroll(s, "agent-instructions");
-        }),
-    )
+    menu = menu.item(MenuItem::new("All prompts").on_select(|s: &mut State| {
+        s.ask_settings.scope_open = false;
+        s.open_hex();
+        s.hex.section = super::hex::Section::PromptLibrary;
+        super::scene_scroll(s, "agent-instructions");
+    }));
+    if !s.companies.open {
+        let this = s.ask_current_live() || s.ask_meeting_id().is_some();
+        menu = menu
+            .group_label("Ask scope")
+            .item(
+                MenuItem::new("This meeting")
+                    .checked(this)
+                    .disabled(s.selected.is_none() && !s.live_scope_available())
+                    .on_select(|s: &mut State| s.set_ask_scope(false)),
+            )
+            .item(
+                MenuItem::new("All meetings")
+                    .checked(!this)
+                    .on_select(|s: &mut State| s.set_ask_scope(true)),
+            );
+    }
+    if !s.ask_settings.connection.settings.enabled && s.runner_error.is_none() {
+        menu = menu.item(
+            MenuItem::new("Model")
+                .description(picker_label(s))
+                .on_select(|s: &mut State| {
+                    s.ask_settings.scope_open = false;
+                    s.runner_open = true;
+                    s.reload_runners();
+                }),
+        );
+    }
+    menu.build(k, layer).min_w(0.0).shrink()
 }
 
 /// "Claude Sonnet (answer only)" reads as "Sonnet": the picker stays small. What the
@@ -558,11 +566,7 @@ fn choice_label(s: &State, name: Option<&str>, model: Option<&str>) -> String {
 /// before the first question of a new chat.
 fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let shown = picker_label(s);
-    let caption = if narrow {
-        roles::CONTROL.wrap(&shown, p.soft).wrap_anywhere().shrink()
-    } else {
-        roles::CONTROL.line(&shown, p.soft)
-    };
+
     let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let trigger = super::widgets::pressable(row().items_center())
         .key("ask-model")
@@ -572,7 +576,7 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
         .gap(4.0)
         .hover(p.button_hover)
         .press(p.button_pressed)
-        .child(caption)
+        .children((!narrow).then(|| roles::CONTROL.line(&shown, p.soft)))
         .child(rune::icon(k.glyph.chevron_down, 14.0).color(p.faint))
         .role("combobox")
         .label(format!("Model: {shown}"))
@@ -670,47 +674,6 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
         );
     }
     menu.build(k, layer).min_w(0.0).shrink()
-}
-
-fn scope_choice(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
-    let current = if s.ask_settings.live_all {
-        "All meetings"
-    } else {
-        "This meeting"
-    };
-    let trigger = pressable(
-        row()
-            .gap(6.0)
-            .items_center()
-            .child(roles::META.wrap(current, p.soft))
-            .child(rune::icon(k.glyph.chevron_down, 12.0).color(p.faint)),
-    )
-    .key("ask-scope")
-    .role("combobox")
-    .label(format!("Ask scope: {current}"))
-    .preserve_focus_on_press(true)
-    .px(10.0)
-    .py(5.0)
-    .radius(8.0)
-    .hover(p.chip)
-    .on_press(|s: &mut State| s.ask_settings.scope_open = !s.ask_settings.scope_open);
-    Menu::new("ask-scope-menu")
-        .trigger(trigger)
-        .open(s.ask_settings.scope_open)
-        .placement(Placement::TopEnd)
-        .min_width(180.0)
-        .on_close(|s: &mut State| s.ask_settings.scope_open = false)
-        .item(
-            MenuItem::new("This meeting")
-                .checked(!s.ask_settings.live_all)
-                .on_select(|s: &mut State| s.set_live_scope(false)),
-        )
-        .item(
-            MenuItem::new("All meetings")
-                .checked(s.ask_settings.live_all)
-                .on_select(|s: &mut State| s.set_live_scope(true)),
-        )
-        .build(k, layer)
 }
 
 const ACTION: f32 = 28.0;
@@ -874,7 +837,6 @@ pub fn overlay_with(
         stack = stack.child(panel);
     }
     let thread = thread(s, k, &id, p);
-    let showing_thread = thread.is_some() && !s.thread_hidden;
     if let Some(panel) = thread {
         stack = stack.child(panel);
     }
@@ -984,7 +946,7 @@ pub fn overlay_with(
         })
         .label(if s.companies.open {
             "Ask about this company"
-        } else if s.selected.is_some() || s.ask_current_live() {
+        } else if s.ask_meeting_id().is_some() || s.ask_current_live() {
             "Ask about this meeting"
         } else {
             "Ask about your meetings"
@@ -1008,7 +970,9 @@ pub fn overlay_with(
             if e.key != Key::Escape {
                 return false;
             }
-            if s.runner_open {
+            if s.ask_settings.scope_open {
+                s.ask_settings.scope_open = false;
+            } else if s.runner_open {
                 s.runner_open = false;
                 s.ask_settings.thinking_open = false;
             } else if s.on_live()
@@ -1062,24 +1026,16 @@ pub fn overlay_with(
         .pr(8.0)
         .radius(22.0)
         .fill(p.card)
-        .border(1.0, if focused { p.faint } else { p.line })
-        .shadow(3.0, 16.0, p.shadow)
         .focus_within_flat()
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
         .child(input)
         .children(model)
+        .child(ask_options(s, k, p, empty && !pending, layer))
         .children((focused || pending).then(|| action(s, p, ready, pending)));
-    if s.live_scope_available() {
-        stack = stack.child(
-            row()
-                .w_full()
-                .justify_end()
-                .child(scope_choice(s, k, p, layer)),
-        );
-    }
     // Narrow and focused: the lead holds Pause, Resume and Generate notes, so it
     // moves above the panel instead of disappearing.
-    let (stack, lead) = if compact && focused {
+    let live_compact = s.on_live() && s.app_w.get() - super::nav::width(s) < 410.0;
+    let (stack, lead) = if compact && (focused || live_compact) {
         (stack.children(lead.map(El::self_start)), None)
     } else if compact {
         let glide = |control: El| control.transition(Transition::opacity().springs(pair::GLIDE));
@@ -1087,38 +1043,10 @@ pub fn overlay_with(
     } else {
         (stack, lead)
     };
-    let show_chips = focused && empty && !pending && !showing_thread;
-    let room = ((s.app_w.get() - super::nav::width(s)) - 2.0 * gutter).min(COLUMN)
-        - if lead.is_some() { 64.0 } else { 0.0 };
     let panel = col()
         .key("ask-panel")
-        .motion(if show_chips { GLIDE } else { GLIDE_EXIT })
         .w_full()
         .padding(6.0)
-        .radius(28.0)
-        .border(
-            1.0,
-            if focused {
-                p.line
-            } else {
-                rune::Color::TRANSPARENT
-            },
-        )
-        .fill(if focused {
-            p.chip
-        } else {
-            rune::Color::TRANSPARENT
-        })
-        .shadow(
-            8.0,
-            28.0,
-            if focused {
-                p.shadow
-            } else {
-                rune::Color::TRANSPARENT
-            },
-        )
-        .children(show_chips.then(|| suggestions(s, compact, room, p)))
         .child(if compact { pill.width_leads() } else { pill });
     let panel = if compact { panel.width_leads() } else { panel };
     place(s, with_note(beside(stack, lead, panel), p), p)

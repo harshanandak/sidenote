@@ -680,14 +680,12 @@ impl State {
         {
             return core::company_ask_key(id);
         }
-        self.selected
-            .clone()
-            .unwrap_or_else(|| core::ALL_KEY.to_string())
+        self.ask_meeting_id().unwrap_or(core::ALL_KEY).to_string()
     }
 
     /// The element key of message `i` in the Ask thread on this page.
     pub fn msg_key(&self, i: usize) -> String {
-        if self.selected.is_some() {
+        if self.ask_meeting_id().is_some() {
             format!("msg-{i}")
         } else {
             format!("all-msg-{i}")
@@ -695,7 +693,13 @@ impl State {
     }
 
     fn load_saved(&mut self) {
-        self.saved = match self.store.load(&self.ask_key()) {
+        let scope = self.ask_key();
+        self.saved = match self.store.load(&scope) {
+            Ok(saved) if self.selected.as_ref() == Some(&scope) => {
+                let checked = &mut self.tasks.checked;
+                checked.insert(scope.clone(), saved.checked.clone());
+                saved
+            }
             Ok(saved) => saved,
             Err(_) => {
                 self.notice = Some(
@@ -704,6 +708,7 @@ impl State {
                 Saved::default()
             }
         };
+        self.ask_settings.loaded_scope = scope;
         self.show_latest_question();
     }
 
@@ -828,6 +833,7 @@ impl State {
         self.more_menu = None;
         self.meeting_ui.status_open = false;
         if self.selected.take().is_some() {
+            self.ask_settings.saved_all = false;
             self.transcript_open = false;
             self.meeting_tab = meeting::Tab::Summary;
             self.highlight = None;
@@ -858,6 +864,7 @@ impl State {
             return;
         }
         self.selected = Some(id.to_string());
+        self.ask_settings.saved_all = false;
         self.meeting_ui.rail = meeting::reading::RailVisit::default();
         self.meeting_ui.status_open = false;
         self.transcript_open = false;
@@ -1374,7 +1381,7 @@ impl State {
                 ),
                 "Reading this meeting...",
             )
-        } else if self.selected.is_some() {
+        } else if self.ask_meeting_id().is_some() {
             let rx = core::ask::spawn_with_options(
                 id.clone(),
                 history,
@@ -2008,6 +2015,10 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
         *now = clock;
     }
     let (mut changed, _) = apply_pending(s, headless);
+    if !headless && s.ask_key() != s.ask_settings.loaded_scope {
+        s.load_saved();
+        changed = true;
+    }
     changed |= s.apply_recycle_result(tx);
     #[cfg(windows)]
     if window::meeting_icon::poll(s) {
@@ -3802,7 +3813,7 @@ pub fn spec() -> AppSpec<State> {
             }),
             ("meeting-agent-all-scope", |s| {
                 scene_live(s, SCENE_NOTES, SCENE_LINES, true);
-                s.set_live_scope(true);
+                s.set_ask_scope(true);
                 s.saved.messages.push(Message {
                     role: "user".into(),
                     text: "What did we decide?".into(),
