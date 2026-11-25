@@ -604,7 +604,7 @@ fn hexannotation_duplicate_keeps_legacy_saved_note_readable() {
     let hex_root = Temp::new();
     let legacy = fixture();
     let root = legacy.parent().unwrap().to_owned();
-    let initial = scan_roots(&[root.clone()]);
+    let initial = scan_roots(std::slice::from_ref(&root));
     let capture = initial.captures.into_iter().next().unwrap();
     let review = [media::ReviewFrame {
         index: 1,
