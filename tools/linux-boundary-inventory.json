@@ -421,7 +421,7 @@
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "fdd298ac9c29715312cdf47060f45673792ab819699758bf00a59d3ff29bf45c",
+  "src/ui/hex/connection/stop_tests.rs": "3de9647f5b6fefa0ee074c9ef04ab3fcbedb1deb873a568531f6ec2cedb82507",
 
   "src/ui/hex/connection/stop_tests/api.rs": "95bdf13bde99c05d3f7c33e692d98a3a866daa3e22e58e4ebeb2d20dad853673",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "0c3fef2235176c6c5f1fe7be63663ec50c738c730b5569b64f175407efb941f9",
+  "src/ui/mod.rs": "b8bdf637fe0cfca7b25b889432524d1ecbb8d1a68143cc703536ae5ba4c46788",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -453,7 +453,7 @@
 
   "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
 
-  "src/ui/recording_state_tests.rs": "724641313ec0e43831ce4c8b91b667bbae152998dc717c9a00be89845a0fb8a0",
+  "src/ui/recording_state_tests.rs": "79d154be30ef78ffe22c5a8089fe658ad7000b8fdff2b8aaeacc0bc8501b3640",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 
