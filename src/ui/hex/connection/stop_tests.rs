@@ -917,6 +917,68 @@ fn newer_watcher_status_supersedes_delayed_stop_snapshots() {
 }
 
 #[test]
+fn superseded_stop_refusal_keeps_transcribing_meeting_pending() {
+    if isolated_api_test("superseded_stop_refusal_keeps_transcribing_meeting_pending") {
+        return;
+    }
+    use crate::ui::live::Phase;
+
+    let (api, mut state, _) = Fixture::start();
+    let part = sidenote::core::meetings_dir().join("100-1");
+    std::fs::create_dir_all(&part).unwrap();
+    std::fs::write(part.join("manifest.json"), r#"{"status":"recording"}"#).unwrap();
+    state.hex_apply(Msg::ObservedStatus(command_status_sample(&state)));
+    assert!(state.live.as_ref().unwrap().session.is_some());
+    {
+        let mut data = api.data.lock().unwrap();
+        data.id = None;
+        data.meeting_state = Some("transcribing");
+    }
+    state.meeting_pause();
+    assert!(state.hex_stop_pending());
+
+    // Hold the real Stop reply until a later watcher observation has been applied.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let refusal = loop {
+        let event = state
+            .events_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("Stop refusal");
+        if let Event::Hex(msg @ Msg::Done(Action::Stop(..), _)) = event {
+            break msg;
+        }
+    };
+    let Msg::Done(Action::Stop(_, Some(preflight)), Err(HexError::Failed { code, .. })) = &refusal
+    else {
+        panic!("expected Stop refusal with a preflight status");
+    };
+    assert_eq!(code.as_deref(), Some("recording-changed"));
+    assert_eq!(preflight.1.as_ref().unwrap().meeting_state, "transcribing");
+    let watcher = sample_status(|| state.hex.engine.status());
+    assert!(watcher.0 > preflight.0);
+    let watcher_sent = watcher.0;
+    state.hex_apply(Msg::ObservedStatus(watcher));
+    assert_eq!(state.hex.last_status_request, Some(watcher_sent));
+    assert_eq!(state.hex.state().unwrap().meeting_state, "transcribing");
+    state.hex_apply(refusal);
+
+    assert!(state.hex_stop_pending());
+    assert_eq!(
+        recorder_start_block_reason(&state),
+        Some("Check that Hex has finished the previous recording.")
+    );
+    state.meeting_resume();
+    state.new_meeting();
+    let live = state.live.as_ref().unwrap();
+    assert_eq!(live.phase, Phase::Recording);
+    assert!(live.session.as_ref().unwrap().pending_start_ms.is_none());
+    assert!(!state.hex.record_busy);
+    assert_eq!(api.data.lock().unwrap().starts, 0);
+    Fixture::stop_status(&mut state);
+    assert!(state.hex_stop_pending());
+}
+
+#[test]
 fn late_status_replies_do_not_renew_recording_freshness() {
     if isolated_api_test("late_status_replies_do_not_renew_recording_freshness") {
         return;

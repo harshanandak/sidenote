@@ -62,10 +62,10 @@ impl State {
             || matches!(error, HexError::Failed { code: Some(code), .. }
                 if matches!(code.as_str(), "recording-changed" | "not-recording"));
         let status = self.hex.status.as_ref().and_then(|r| r.as_ref().ok());
-        if applied && status.is_some_and(terminal) {
+        if status.is_some_and(terminal) {
             self.hex_complete_stop(recording);
             self.hex.error = Some("The recording already ended in Hex.");
-        } else if applied && matches!(status, Some(s) if s.meeting_state == "transcribing") {
+        } else if matches!(status, Some(s) if s.meeting_state == "transcribing") {
             self.hex.error = Some(FINISHING);
             self.hex_check_stop();
         } else if refused || !checked {

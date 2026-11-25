@@ -415,9 +415,9 @@
 
   "src/ui/hex.rs": "093487676ac0de15845f59e45d6b85a6d09bd4dc3bd946ac38bbd3112f0c19cb",
 
-  "src/ui/hex/connection/stop.rs": "e97d5c7249ba1409eaff094923db153760703af841d4908f7338aee6f0e0a981",
+  "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "9bb73552d193b205ad26182cc3ce64b973f97e62e920f29114c54f407d6a4178",
+  "src/ui/hex/connection/stop_tests.rs": "9b33da24bb6e53590babf1c89c2fb2789c64ac543cc983a8c3fe20456ca0875f",
 
   "src/ui/hex/connection/stop_tests/api.rs": "56889128466550fc550e3a7afa026ead2fc3810a5f4f5e54801024b78f9b9c72",
 
