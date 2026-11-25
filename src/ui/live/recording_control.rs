@@ -78,14 +78,18 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
     let m = session(s);
     let recording = is_recording(s, &m);
     let live = s.on_live();
+    let icons_only = recording || m.as_ref().is_some_and(|m| m.phase == SavedPhase::Paused);
     let compact = s.app_w.get() - crate::ui::nav::width(s) < 600.0;
     let mut control = row()
         .key("meeting-recording-control")
         .items_center()
-        .gap(2.0);
+        .gap(if icons_only { 8.0 } else { 2.0 })
+        .mr(if icons_only { 8.0 } else { 0.0 });
     let button = |name, key, glyph| {
-        if compact {
-            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(DOCK_BUTTON, DOCK_BUTTON)
+        if icons_only || compact {
+            icon_button(glyph, name, key, ButtonRole::Ghost, p)
+                .size(DOCK_BUTTON, DOCK_BUTTON)
+                .help_above()
         } else {
             quiet_button(name, key, p).h(DOCK_BUTTON)
         }
@@ -97,43 +101,46 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
         } else {
             "Show transcript"
         };
-        control = control.child(
-            button("Transcript", "meeting-transcript", &icons::AUDIO_LINES)
-                .label(label)
-                .help(label)
-                .on_press(|s: &mut State| s.live_toggle_panel()),
-        );
+        let mut transcript = button("Transcript", "meeting-transcript", &icons::AUDIO_LINES)
+            .label(label)
+            .help(label)
+            .on_press(|s: &mut State| s.live_toggle_panel());
+        if icons_only {
+            transcript = transcript.expanded(open);
+            if open {
+                transcript = transcript.fill(p.button_pressed);
+            }
+        }
+        control = control.child(transcript);
     }
     if !recording && !live && m.as_ref().is_none_or(|m| m.phase == SavedPhase::Ended) {
         return None;
     }
     if recording {
-        // Two bars distinguish Pause here from Stop on other pages.
-        let bar = |key: &'static str| el().key(key).w(3.0).h(9.0).radius(1.0).fill(p.ink);
-        control = control
-            .children((live && !s.narrow.get()).then(|| recording_status(s, p)))
-            .child(
-                pressable(
-                    row()
-                        .key("meeting-pause-bars")
-                        .gap(2.0)
-                        .items_center()
-                        .justify_center()
-                        .child(bar("meeting-pause-bar-0"))
-                        .child(bar("meeting-pause-bar-1")),
-                )
-                .key("meeting-pause")
-                .label("Pause recording")
-                .size(DOCK_BUTTON, DOCK_BUTTON)
-                .radius(DOCK_BUTTON / 2.0)
-                .hover(p.button_hover)
-                .center()
+        let known =
+            RecordingStatus::for_phase(s, Some(Phase::Recording)) == RecordingStatus::Recording;
+        let pause = button("Pause recording", "meeting-pause", &icons::CIRCLE_PAUSE).children(
+            known.then(|| {
+                crate::ui::nav::live_recording_dot(6.0, p)
+                    .key("dock-recording-dot")
+                    .pin(None, Some(2.0), Some(2.0), None)
+                    .inert()
+            }),
+        );
+        let unavailable =
+            super::super::hex::stop_blocked(s).filter(|_| !s.hex_running() && !s.hex_recording());
+        control = control.child(if let Some(reason) = unavailable {
+            pause.help_row(reason).disabled(true).dim(0.5)
+        } else {
+            pause
                 .button_disabled(s.hex_record_busy())
-                .on_press(|s: &mut State| s.meeting_pause()),
-            );
+                .on_press(|s: &mut State| s.meeting_pause())
+        });
     } else if m.as_ref().is_some_and(|m| m.phase != SavedPhase::Ended) {
         control = control.child(
-            button("Resume", "meeting-resume", &icons::MIC)
+            button("Resume", "meeting-resume", &icons::PLAY)
+                .label("Resume recording")
+                .help("Resume recording")
                 .button_disabled(s.hex_record_busy())
                 .on_press(|s: &mut State| s.meeting_resume()),
         );
@@ -157,42 +164,11 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
-    if recording
-        && (live
-            || s.live
-                .as_ref()
-                .and_then(|l| l.session.as_ref())
-                .is_some_and(|m| s.selected.as_deref() == Some(m.id.as_str())))
-    {
-        let expected = super::super::hex::recording_id(s);
-        let reason = super::super::hex::stop_blocked(s);
-        let stop = button("Stop", "hex-stop", &icons::STOP);
-        control = control.child(
-            stop.label(
-                reason.map_or_else(|| "Stop recording".into(), |why| format!("Stop ({why})")),
-            )
-            .help(
-                reason.unwrap_or("Stop this recording part. Generate notes from the meeting page."),
-            )
-            .button_disabled(reason.is_some())
-            .on_press(move |s: &mut State| s.hex_record_stop(expected.clone())),
-        );
-    }
     Some(control)
 }
 
-fn recording_status(s: &State, p: Palette) -> El {
-    roles::META
-        .line(crate::ui::nav::recording_words(s, false), p.ink)
-        .key("live-recording-status")
-}
-
 pub(in crate::ui) fn status(s: &State, p: Palette) -> Option<El> {
-    let session = session(s);
-    if s.on_live() && s.narrow.get() && is_recording(s, &session) {
-        return Some(recording_status(s, p));
-    }
-    let m = session?;
+    let m = session(s)?;
     if m.phase == SavedPhase::Ended {
         return None;
     }
@@ -244,7 +220,7 @@ mod tests {
     use rune::{Env, Runtime, text::TextSystem};
 
     #[test]
-    fn live_recording_shows_elapsed_time_beside_pause() {
+    fn live_recording_shows_elapsed_time_in_the_header_and_a_dot_in_the_dock() {
         crate::test_paths::isolate();
         for (width, narrow) in [(1334.0, false), (390.0, true), (360.0, true)] {
             let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
@@ -263,6 +239,8 @@ mod tests {
             });
             state.live = Some(live);
             state.live_open = true;
+            let mut hex = crate::ui::ask_switch_tests::hex_engine_recording();
+            hex.recording.as_mut().unwrap().title = Some("Supplier review".into());
             assert!(state.on_live());
             let mut rt = Runtime::with_text(
                 state,
@@ -273,6 +251,15 @@ mod tests {
             );
             rt.settle_all();
             rt.frame(0.0);
+            let (field, _) = rt.presented("ask-input").unwrap();
+            assert!(
+                field[2] >= 90.0,
+                "Ask is squeezed at {width} px without the rail"
+            );
+
+            rt.update(|s, _| s.hex.status = Some(Ok(hex)));
+            rt.settle_all();
+            rt.frame(0.0);
             let elements = rt.elements();
             let keyed = |key| {
                 elements
@@ -280,23 +267,33 @@ mod tests {
                     .find(|element| element.key.as_deref() == Some(key))
                     .unwrap_or_else(|| panic!("missing {key} at {width} px"))
             };
-            let status = keyed("live-recording-status");
+            let status = keyed("recording-open");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
             assert_eq!(pause.label.as_deref(), Some("Pause recording"));
+            assert_eq!(pause.help.as_deref(), Some("Pause recording"));
             assert!(rt.find("meeting-generate").is_none());
-            assert_eq!(status.text.as_deref(), Some("Recording 12:34"));
-            assert_eq!(h, roles::META.lh, "one line at {width} px");
-            assert!(x >= 0.0 && x + w <= width);
-            if narrow {
-                assert!(y + h <= pause.rect[1]);
+            let clock = if narrow { "12:34" } else { "Recording 12:34" };
+            assert_eq!(
+                status.label,
+                Some(format!("{clock}. Open the live meeting"))
+            );
+            assert!(
+                elements
+                    .iter()
+                    .any(|e| e.path.starts_with(&status.path) && e.text.as_deref() == Some(clock))
+            );
+            assert!(x >= 0.0 && x + w <= width && y + h <= 48.0);
+            if width >= 390.0 {
                 assert!(
                     keyed("ask-input").rect[2] >= 90.0,
                     "Ask is squeezed at {width} px"
                 );
-            } else {
-                assert!(x + w <= pause.rect[0]);
             }
+            assert!(rt.find("live-recording-status").is_none());
+            let dot = keyed("dock-recording-dot");
+            assert!(dot.path.starts_with(&pause.path));
+            assert_eq!((dot.rect[2], dot.rect[3]), (6.0, 6.0));
         }
     }
 }

@@ -1459,14 +1459,14 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert!(rt.state.ask_current_live());
         assert_eq!(chip(&rt), "Ask options, What did I miss");
         assert_eq!(
-            element(&rt, "hex-stop").label.as_deref(),
-            Some("Stop recording")
+            element(&rt, "meeting-pause").label.as_deref(),
+            Some("Pause recording")
         );
-        let [stop_x, stop_y, stop_w, stop_h] = rect_of(&rt, "hex-stop");
+        let [pause_x, pause_y, pause_w, pause_h] = rect_of(&rt, "meeting-pause");
         let [pill_x, pill_y, _, pill_h] = rect_of(&rt, "ask-pill");
         let [input_x, ..] = rect_of(&rt, "ask-input");
-        assert!(stop_x >= pill_x && stop_x + stop_w <= input_x);
-        assert!(stop_y >= pill_y && stop_y + stop_h <= pill_y + pill_h);
+        assert!(pause_x >= pill_x && pause_x + pause_w <= input_x);
+        assert!(pause_y >= pill_y && pause_y + pause_h <= pill_y + pill_h);
         rt.update(|s, _| {
             s.asks
                 .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
@@ -2385,7 +2385,7 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
 }
 
 /// What Hex reports while it records the invented meeting.
-fn hex_engine_recording() -> sidenote::hex_engine::EngineState {
+pub(super) fn hex_engine_recording() -> sidenote::hex_engine::EngineState {
     sidenote::hex_engine::EngineState {
         running: true,
         version: "test".into(),
@@ -3011,17 +3011,43 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
                 rt.frame(0.0);
                 let closed = rect_of(&rt, "ask-pill");
                 assert_eq!(closed[3], 48.0);
-                let actions = if phase == "paused" {
-                    ["meeting-transcript", "meeting-resume", "meeting-generate"]
+                let paused = phase == "paused";
+                let (action, label) = if paused {
+                    ("meeting-resume", "Resume recording")
                 } else {
-                    ["meeting-transcript", "meeting-pause", "hex-stop"]
+                    ("meeting-pause", "Pause recording")
                 };
-                for key in actions {
-                    let [_, y, width, height] = rect_of(&rt, key);
-                    assert!(width >= 24.0, "{key} at {width}");
-                    assert_eq!(height, 32.0, "{key}");
-                    assert!(y >= closed[1] && y + height <= closed[1] + closed[3]);
+                let keys = ["meeting-transcript", action]
+                    .into_iter()
+                    .chain(paused.then_some("meeting-generate"));
+                let controls = element(&rt, "meeting-recording-control").path;
+                let elements = rt.elements();
+                let buttons = elements
+                    .iter()
+                    .filter(|e| e.role == "button" && e.path.starts_with(&controls));
+                assert!(buttons.filter_map(|e| e.key.as_deref()).eq(keys.clone()));
+                let mut right = closed[0] - 8.0;
+                for key in keys {
+                    let [x, y, w, h] = rect_of(&rt, key);
+                    assert_eq!((w, h), (32.0, 32.0), "{key} at {width}");
+                    assert!(x - right >= 8.0, "{key} at {width}");
+                    assert!(y >= closed[1] && y + h <= closed[1] + closed[3]);
+                    right = x + w;
                 }
+                assert!(rect_of(&rt, "ask-input")[0] - right >= 8.0);
+                assert_eq!(
+                    rt.elements()
+                        .iter()
+                        .any(|e| e.key.as_deref() == Some("dock-recording-dot")),
+                    !paused
+                );
+                let action = element(&rt, action);
+                assert_eq!(action.label.as_deref(), Some(label));
+                assert_eq!(action.help.as_deref().unwrap().lines().next(), Some(label));
+                let toggle = element(&rt, "meeting-transcript");
+                assert_eq!(toggle.expanded, Some(false));
+                assert_eq!(toggle.label.as_deref(), Some("Show transcript"));
+                assert_eq!(toggle.help.as_deref(), Some("Show transcript"));
                 rt.update(|s, _| s.live.as_mut().unwrap().panel_open = true);
                 for answer in [false, true] {
                     if answer {
@@ -3044,6 +3070,11 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
                     );
                     assert_eq!((panel[0], panel[2]), (pill[0], pill[2]));
                     assert_eq!(closed, pill);
+                    let open = element(&rt, "meeting-transcript");
+                    assert_eq!(open.expanded, Some(true));
+                    assert_eq!(open.label.as_deref(), Some("Hide transcript"));
+                    assert_eq!(open.help.as_deref(), Some("Hide transcript"));
+                    assert_ne!(open.fill, toggle.fill);
                 }
             }
         }

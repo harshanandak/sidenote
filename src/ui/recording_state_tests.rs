@@ -258,8 +258,8 @@ fn the_recorded_caption_is_hidden_while_recording_and_back_on_pause_on_both_page
 }
 
 #[test]
-fn recording_pill_is_only_needed_on_the_other_meeting() {
-    if in_parent("recording_pill_is_only_needed_on_the_other_meeting") {
+fn recording_clock_stays_visible_on_the_live_page() {
+    if in_parent("recording_clock_stays_visible_on_the_live_page") {
         return;
     }
     let mut rt = page(SavedPhase::Recording, DEFAULT_SIZE);
@@ -290,7 +290,15 @@ fn recording_pill_is_only_needed_on_the_other_meeting() {
     rt.update(|s, _| s.open_live());
     rt.frame(0.2);
     assert!(rt.find("meeting-pause").is_some());
-    assert!(rt.find("recording-open").is_none());
+    let clock = element(&rt, "recording-open");
+    assert_eq!(
+        clock.label.as_deref(),
+        Some("Recording 12:04. Open the live meeting")
+    );
+    assert!(
+        rt.find("recording-pill").is_none(),
+        "the live title adds its own Stop"
+    );
     rt.update(|s, _| {
         s.go_home();
         s.set_sidebar(false);
@@ -354,37 +362,39 @@ fn the_live_dot_in_the_top_right_is_danger_red_not_amber() {
 }
 
 #[test]
-fn pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard() {
-    if in_parent("pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard") {
+fn pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard() {
+    if in_parent("pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard") {
         return;
     }
-    // The test environment draws the dark theme.
-    let p = theme::palette(true);
     let mut rt = page(SavedPhase::Recording, DEFAULT_SIZE);
     hex_records(&mut rt);
-    // The control is chip filled; the button is 28 round on the page colour, with two 3 x 9 bars.
-    assert_eq!(element(&rt, "meeting-recording-control").fill, p.chip);
     let pause = element(&rt, "meeting-pause");
+    assert_eq!((pause.rect[2], pause.rect[3]), (32.0, 32.0));
     assert_eq!(
-        (pause.rect[2], pause.rect[3], pause.radius),
-        (28.0, 28.0, 14.0)
+        (pause.role, pause.label.as_deref(), pause.help.as_deref()),
+        ("button", Some("Pause recording"), Some("Pause recording"))
     );
-    assert_eq!(pause.fill, p.bg);
+    let dot = element(&rt, "dock-recording-dot");
+    assert!(dot.path.starts_with(&pause.path));
+    assert_eq!(dot.fill, theme::palette(true).danger);
+    rt.update(|s, _| s.hex.status = None);
+    rt.frame(0.0);
+    let unavailable = element(&rt, "meeting-pause");
+    assert_eq!(unavailable.label.as_deref(), Some("Pause recording"));
     assert_eq!(
-        (pause.role, pause.label.as_deref()),
-        ("button", Some("Pause recording"))
+        unavailable.help.as_deref(),
+        Some(
+            "Pause recording
+Hex is not running. Stop it from Hex if it is recording."
+        )
     );
-    for key in ["meeting-pause-bar-0", "meeting-pause-bar-1"] {
-        let bar = element(&rt, key);
-        assert_eq!((bar.rect[2], bar.rect[3]), (3.0, 9.0), "{key}");
-        assert!(
-            bar.path.starts_with(&pause.path),
-            "{key} sits in the button"
-        );
-    }
-    assert!(rt.find("meeting-pause-square").is_none());
-    // Stop is a different control with a different name, and it is on the other pages.
-    assert!(rt.find("hex-stop").is_none());
+    assert!(!unavailable.focusable);
+    tap(&mut rt, "meeting-pause");
+    assert!(
+        rt.state.hex.error.is_none(),
+        "disabled Pause handled a click"
+    );
+    hex_records(&mut rt);
     rt.update(|s, _| {
         s.selected = Some(OTHER.into());
         s.load_saved();
@@ -394,18 +404,19 @@ fn pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard() {
     let stop_name = stop.label.unwrap();
     assert!(stop_name.starts_with("Stop"), "{stop_name}");
     assert!(!stop_name.contains("Pause"), "{stop_name}");
-    assert!(rt.find("meeting-pause").is_none() && rt.find("meeting-pause-bar-0").is_none());
+    assert!(rt.find("meeting-pause").is_none() && rt.find("dock-recording-dot").is_none());
     rt.update(|s, _| {
         s.selected = Some(MEETING.into());
         s.load_saved();
     });
     rt.frame(0.2);
-    // Mouse: a press reaches the pause command, which asks Hex and is told it is not running.
+    // Assert the command's capability check so the test needs no running Hex process.
+    rt.update(|s, _| s.hex.caps = Some(Default::default()));
+    let unsupported = Some("This Hex build cannot stop. Stop it from Hex.");
     assert!(rt.state.hex.error.is_none());
-    rt.update(|s, _| s.hex.status = None);
     tap(&mut rt, "meeting-pause");
-    assert!(
-        rt.state.hex.error.is_some(),
+    assert_eq!(
+        rt.state.hex.error, unsupported,
         "mouse press did not reach Pause"
     );
     // Keyboard: the button takes focus with a visible ring and Space presses it. Enter presses
@@ -416,5 +427,5 @@ fn pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard() {
     let pause = element(&rt, "meeting-pause");
     assert!(pause.focusable && pause.focused && pause.focus_visible);
     press(&mut rt, Key::Text(" ".into()));
-    assert!(rt.state.hex.error.is_some(), "Space did not reach Pause");
+    assert_eq!(rt.state.hex.error, unsupported, "Space did not reach Pause");
 }
