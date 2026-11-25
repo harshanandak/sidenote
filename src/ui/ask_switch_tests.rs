@@ -1439,7 +1439,11 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
             element(&rt, "hex-stop").label.as_deref(),
             Some("Stop recording")
         );
-        assert!(rect_of(&rt, "hex-stop")[0] < rect_of(&rt, "ask-pill")[0]);
+        let [stop_x, stop_y, stop_w, stop_h] = rect_of(&rt, "hex-stop");
+        let [pill_x, pill_y, _, pill_h] = rect_of(&rt, "ask-pill");
+        let [input_x, ..] = rect_of(&rt, "ask-input");
+        assert!(stop_x >= pill_x && stop_x + stop_w <= input_x);
+        assert!(stop_y >= pill_y && stop_y + stop_h <= pill_y + pill_h);
         rt.update(|s, _| {
             s.asks
                 .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
