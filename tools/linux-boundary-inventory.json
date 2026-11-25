@@ -37,7 +37,7 @@
 
   "src/core/annotations/media.rs": "60c22e79537d36dfbc24a577c042e3ce8679e4a38212d95c4e602dc631315b7a",
 
-  "src/core/annotations/mod.rs": "e683781d9b72091137dd405ebca91d9d0b1d5ec3d86704b623b5c4748a7f09f9",
+  "src/core/annotations/mod.rs": "43a5826728ee08fa3c54cede459ad6c04222478f86daf8aac97484a7681f55d1",
 
   "src/core/annotations/note.rs": "fd948e045a966d55b23c427f6e63181935d5caefde9a4080ce792b0b55899ff3",
 
@@ -47,7 +47,7 @@
 
   "src/core/annotations/share.rs": "f2fb84ec62413ca2c3994e410a0186366ecd91934aded9dd1791579b9cc68307",
 
-  "src/core/annotations/tests.rs": "556d2e459e10cecaf6fd4ca60487a5bf53f9420c84059c8bdf8d4aeebbfbb34c",
+  "src/core/annotations/tests.rs": "1fe7771cc26f506267f9dd22b650440b6e7a9d4fdee7d1b63550fe4f7e2f2a75",
 
   "src/core/area_ops.rs": "7e9116623a9e190a24827f7d1b5be4480ada18959e22ff84c4df9bee087c314d",
 

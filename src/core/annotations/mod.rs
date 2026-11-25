@@ -384,7 +384,7 @@ pub fn scan(folder: &Path) -> Scan {
 fn preferred(candidate: &Capture, existing: &Capture) -> bool {
     let candidate_hex = is_hex_package(&candidate.folder);
     let existing_hex = is_hex_package(&existing.folder);
-    (candidate_hex && !existing_hex)
+    (!candidate_hex && existing_hex)
         || (candidate_hex == existing_hex && candidate.folder < existing.folder)
 }
 fn dedupe(captures: Vec<Capture>) -> Vec<Capture> {

@@ -582,19 +582,51 @@ fn hexannotation_future_format_is_skipped_with_a_clear_error() {
 }
 
 #[test]
-fn hexannotation_duplicate_id_wins_over_scrawl_across_roots() {
+fn hexannotation_duplicate_id_keeps_the_legacy_capture() {
     let legacy_root = Temp::new();
     let hex_root = Temp::new();
-    legacy_root.bundle("legacy", r#"{"id":"duplicate","createdAtMs":2}"#);
-    let hex = hex_root.hex_bundle(
+    let legacy = legacy_root.bundle("legacy", r#"{"id":"duplicate","createdAtMs":2}"#);
+    hex_root.hex_bundle(
         "hex",
         r#"{"formatVersion":1,"annotation":{"id":"duplicate","createdAtMs":1}}"#,
     );
-    let scan = scan_roots(&[legacy_root.0.clone(), hex_root.0.clone()]);
+    let scan = scan_roots(&[hex_root.0.clone(), legacy_root.0.clone()]);
     assert_eq!(scan.captures.len(), 1);
-    assert_eq!(scan.captures[0].folder, hex);
-    assert_eq!(scan.captures[0].data.created_at_ms, 1);
+    assert_eq!(scan.captures[0].folder, legacy);
+    assert_eq!(scan.captures[0].data.created_at_ms, 2);
     assert!(scan.errors.is_empty());
+}
+
+#[test]
+fn hexannotation_duplicate_keeps_legacy_saved_note_readable() {
+    use super::{media, note, notebook};
+    let store = Temp::new();
+    let hex_root = Temp::new();
+    let legacy = fixture();
+    let root = legacy.parent().unwrap().to_owned();
+    let initial = scan_roots(&[root.clone()]);
+    let capture = initial.captures.into_iter().next().unwrap();
+    let review = [media::ReviewFrame {
+        index: 1,
+        included: true,
+        masks: Vec::new(),
+    }];
+    let approved = media::approve(&capture, &review, &store.0).unwrap();
+    let saved = note::synthetic_note(&approved);
+    note::save(&approved.folder, &saved).unwrap();
+    media::publish_latest(&store.0, &approved).unwrap();
+    hex_root.hex_bundle(
+        "hex",
+        r#"{"formatVersion":1,"annotation":{"id":"synthetic","createdAtMs":1}}"#,
+    );
+    let scan = scan_roots(&[hex_root.0.clone(), root]);
+    assert_eq!(scan.captures.len(), 1);
+    assert_eq!(scan.captures[0].folder, legacy);
+    let (approved, loaded) = notebook::load_capture_note(&store.0, &scan.captures[0])
+        .unwrap()
+        .unwrap();
+    note::validate(&loaded, &approved).unwrap();
+    assert_eq!(loaded, saved);
 }
 
 #[test]
