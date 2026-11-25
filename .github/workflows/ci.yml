@@ -301,9 +301,10 @@ jobs:
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \
             ui::ask_switch_tests::suppression_failure_during_ui_apply_retries_unchanged_catalog \
             ui::ask_switch_tests::meeting_ticks_keep_the_all_meetings_chat \
+            ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
+            ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
-            ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::meeting::reading::tests::opening_go_to_time_leaves_transcript_room_on_a_short_phone \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
