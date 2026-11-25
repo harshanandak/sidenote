@@ -359,7 +359,7 @@
 
   "src/platform/user_runner.rs": "f5c10133b9d4110ccc88c021306a56c6aeb8b6fc96d50243999d5b553f7b1bf2",
 
-  "src/platform/windows.rs": "804df1739422f039613f3ea8fa4067c3b5df069aa9e8b767cf1beb9f58922492",
+  "src/platform/windows.rs": "6277e4206aeef357ac7d90593bbce14154c2ee18ee29e8b7334a998a505794ff",
 
   "src/platform/windows/job_process.rs": "b0f03992270107af88f15010bad4779d55149d8605dc2ed4c6f06efaf5bc945f",
 
