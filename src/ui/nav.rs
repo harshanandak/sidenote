@@ -739,48 +739,47 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
 
 pub(super) fn logo() -> El {
     const SIZE: f32 = 18.0;
-    let mut mark = el().size(SIZE, SIZE);
-    static PART_0: rune::Icon = rune::Icon {
-        name: "sidenote-logo-0",
-        view: 20.0,
-        body: r#"<rect x="0" y="0" width="20" height="20" rx="4.5" fill="currentColor"/>"#,
-    };
-    mark = mark.child(
-        rune::icon(&PART_0, SIZE)
-            .color(rune::color::hex("#bcb9b0").expect("logo colour"))
-            .absolute(0.0, 0.0),
-    );
-    static PART_1: rune::Icon = rune::Icon {
-        name: "sidenote-logo-1",
-        view: 20.0,
-        body: r#"<rect x="1" y="1" width="18" height="18" rx="3.5" fill="currentColor"/>"#,
-    };
-    mark = mark.child(
-        rune::icon(&PART_1, SIZE)
-            .color(rune::color::hex("#1e1e1c").expect("logo colour"))
-            .absolute(0.0, 0.0),
-    );
-    static PART_2: rune::Icon = rune::Icon {
-        name: "sidenote-logo-2",
-        view: 20.0,
-        body: r#"<path d="M5 6 H7 V7 H5 Z M4 7 H8 V8 H4 Z M3 8 H5 V9 H3 Z M7 8 H9 V9 H7 Z M3 9 H5 V10 H3 Z M7 9 H9 V10 H7 Z M3 10 H5 V11 H3 Z M8 10 H10 V11 H8 Z M3 11 H5 V12 H3 Z M8 11 H10 V12 H8 Z M12 11 H15 V12 H12 Z M3 12 H5 V13 H3 Z M9 12 H15 V13 H9 Z M10 13 H13 V14 H10 Z M11 14 H13 V15 H11 Z" fill="currentColor"/>"#,
-    };
-    mark = mark.child(
-        rune::icon(&PART_2, SIZE)
-            .color(rune::color::hex("#fcfbf8").expect("logo colour"))
-            .absolute(0.0, 0.0),
-    );
-    static PART_3: rune::Icon = rune::Icon {
-        name: "sidenote-logo-3",
-        view: 20.0,
-        body: r#"<path d="M15 11 H17 V12 H15 Z M15 12 H17 V13 H15 Z" fill="currentColor"/>"#,
-    };
-    mark = mark.child(
-        rune::icon(&PART_3, SIZE)
-            .color(rune::color::hex("#e3aa55").expect("logo colour"))
-            .absolute(0.0, 0.0),
-    );
-    mark
+    // The small ink mark from the app icon, drawn as separate colour masks on Rune's device grid.
+    static PARTS: [(rune::Icon, &str); 4] = [
+        (
+            rune::Icon {
+                name: "sidenote-logo-frame",
+                view: 20.0,
+                body: r#"<rect width="20" height="20" rx="5" fill="currentColor"/>"#,
+            },
+            "#bcb9b0",
+        ),
+        (
+            rune::Icon {
+                name: "sidenote-logo-face",
+                view: 20.0,
+                body: r#"<rect x="1" y="1" width="18" height="18" rx="4" fill="currentColor"/>"#,
+            },
+            "#1e1e1c",
+        ),
+        (
+            rune::Icon {
+                name: "sidenote-logo-tip",
+                view: 20.0,
+                body: r#"<path d="M15.8 11.4 H17.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>"#,
+            },
+            "#e3aa55",
+        ),
+        (
+            rune::Icon {
+                name: "sidenote-logo-ink",
+                view: 20.0,
+                body: r#"<path d="M3.4 11.4 C3.4 8.8 4.3 5.1 6.3 5.1 C8 5.1 8 13.9 9.7 13.9 C11.1 13.9 11.7 11.4 13 11.4 H15.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><circle cx="3.4" cy="11.4" r="0.95" fill="currentColor"/>"#,
+            },
+            "#fcfbf8",
+        ),
+    ];
+    el().size(SIZE, SIZE)
+        .children(PARTS.iter().map(|(part, color)| {
+            rune::icon(part, SIZE)
+                .color(rune::color::hex(color).expect("logo colour"))
+                .absolute(0.0, 0.0)
+        }))
 }
 
 fn profile_avatar(name: &str, p: Palette, size: f32) -> El {
