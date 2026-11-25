@@ -1,5 +1,7 @@
 use super::super::*;
 mod api;
+#[cfg(windows)]
+mod recovery;
 use api::Fixture;
 #[cfg(all(windows, feature = "recorder-ready-proof"))]
 mod readiness;

@@ -42,7 +42,9 @@ impl Fixture {
         let current = thread::current();
         assert_eq!(
             std::env::var("SIDENOTE_HEX_API_TEST").ok().as_deref(),
-            current.name().and_then(|name| name.rsplit("::").next()),
+            current
+                .name()
+                .and_then(|name| { name.strip_prefix("ui::hex::connection::stop_tests::") }),
             "use isolated_api_test before starting a loopback Hex API"
         );
         let mut state = State::new();
