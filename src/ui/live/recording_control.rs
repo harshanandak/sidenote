@@ -291,12 +291,10 @@ mod tests {
                     .any(|e| e.path.starts_with(&status.path) && e.text.as_deref() == Some(clock))
             );
             assert!(x >= 0.0 && x + w <= width && y + h <= 48.0);
-            if width >= 390.0 {
-                assert!(
-                    keyed("ask-input").rect[2] >= 90.0,
-                    "Ask is squeezed at {width} px"
-                );
-            }
+            assert!(
+                keyed("ask-input").rect[2] >= 90.0,
+                "Ask is squeezed at {width} px with the recording rail"
+            );
             assert!(rt.find("live-recording-status").is_none());
             let dot = keyed("dock-recording-dot");
             assert!(dot.path.starts_with(&pause.path));
