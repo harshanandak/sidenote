@@ -523,21 +523,38 @@ pub fn scene_all(s: &mut State) {
 
 // ---- the top right ----------------------------------------------------------------------------
 
+fn shown_live(s: &State) -> Option<&super::live::Live> {
+    let live = s.live.as_ref()?;
+    let selected = s.page() == Page::Meetings
+        && !s.meeting_ui.tabs
+        && live
+            .session
+            .as_ref()
+            .is_some_and(|session| s.selected.as_ref() == Some(&session.id))
+        && s.current().is_some();
+    (s.on_live() || selected).then_some(live)
+}
+
 fn meeting_shows_pause(s: &State) -> bool {
-    let Some(live) = &s.live else {
+    let Some(live) = shown_live(s) else {
         return false;
     };
     let recording = live
         .session
         .as_ref()
         .filter(|session| session.phase == core::meeting_parts::Phase::Recording);
-    if s.on_live() {
-        return live.phase == super::live::Phase::Recording || recording.is_some();
-    }
-    s.page() == Page::Meetings
-        && !s.meeting_ui.tabs
-        && recording.is_some_and(|session| s.selected.as_ref() == Some(&session.id))
-        && s.current().is_some()
+    (s.on_live() && live.phase == super::live::Phase::Recording) || recording.is_some()
+}
+
+fn recording_status(s: &State) -> super::live::RecordingStatus {
+    let phase = shown_live(s)
+        .filter(|live| {
+            live.session
+                .as_ref()
+                .is_none_or(|session| session.phase != core::meeting_parts::Phase::Ended)
+        })
+        .map(|live| live.phase);
+    super::live::RecordingStatus::for_phase(s, phase)
 }
 
 pub(super) fn actions(
@@ -548,6 +565,9 @@ pub(super) fn actions(
 ) -> (Option<El>, Option<El>, Option<&'static str>) {
     if s.annotations.open {
         return (None, Some(super::annotations::new_button(s, p)), None);
+    }
+    if recording_status(s) == super::live::RecordingStatus::Paused {
+        return (Some(recording_pill(s, p, narrow)), None, None);
     }
     let recording = s.hex_recording();
     let pill = (recording && !meeting_shows_pause(s)).then(|| recording_pill(s, p, narrow));
@@ -565,8 +585,18 @@ pub(super) fn new_meeting_button(
     narrow: bool,
     layer: &mut Vec<El>,
 ) -> (El, Option<&'static str>) {
+    let listener_problem = super::updates::listener_problem(s);
+    let blocked = match listener_problem {
+        Some(_) => None,
+        None => hex::start_blocked(s),
+    };
+    let progress = match blocked {
+        Some(hex::CHECKING) => Some(hex::CHECKING),
+        Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
+        _ => None,
+    };
     let b = super::widgets::button(
-        if narrow { "+" } else { "+ New meeting" },
+        progress.unwrap_or(if narrow { "+" } else { "+ New meeting" }),
         "new-meeting",
         super::widgets::ButtonRole::Secondary,
         p,
@@ -574,13 +604,12 @@ pub(super) fn new_meeting_button(
     .h(28.0)
     .px(if narrow { 8.0 } else { 10.0 })
     .radius(14.0);
-    if let Some(error) = super::updates::listener_problem(s) {
+    if let Some(error) = listener_problem {
         return (
             super::updates::listener_popover(s, b, error, p, layer),
             None,
         );
     }
-    let blocked = hex::start_blocked(s);
     let action = match blocked {
         None => b
             .label("New meeting")
@@ -589,10 +618,10 @@ pub(super) fn new_meeting_button(
         Some(reason) => b
             .label(format!("New meeting ({reason})"))
             .help(reason)
-            .opacity(0.5)
+            .opacity(if progress.is_some() { 1.0 } else { 0.5 })
             .disabled(true),
     };
-    let notice = if cfg!(target_os = "linux") {
+    let notice = if cfg!(target_os = "linux") || progress.is_some() {
         None
     } else {
         blocked
@@ -601,7 +630,11 @@ pub(super) fn new_meeting_button(
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
-    if s.hex_status_unknown() {
+    let status = recording_status(s);
+    if status == super::live::RecordingStatus::Paused {
+        return status.label().into();
+    }
+    if status == super::live::RecordingStatus::Unknown {
         return if narrow {
             "Status unknown"
         } else {
@@ -612,6 +645,7 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
     let clock = s
         .live
         .as_ref()
+        .filter(|live| live.phase == super::live::Phase::Recording)
         .and_then(|live| live.session.as_ref())
         .map(|m| {
             let seconds = m.elapsed_ms() / 1000;
@@ -627,6 +661,8 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
 
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
+    use super::live::RecordingStatus;
+    let status = recording_status(s);
     let title = s
         .hex
         .status
@@ -634,24 +670,27 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         .and_then(|r| r.as_ref().ok())
         .and_then(|state| state.recording.as_ref())
         .and_then(|r| r.title.as_deref());
-    let display = match title.filter(|t| !t.trim().is_empty() && !s.hex_status_unknown()) {
-        Some(title) if narrow => title.to_owned(),
-        Some(title) => format!("{title} \u{b7} {words}"),
-        None if narrow && s.hex_status_unknown() => "Unknown".into(),
-        None => words.clone(),
+    let display = match (status, title.filter(|t| !t.trim().is_empty())) {
+        (RecordingStatus::Recording, Some(title)) if narrow => title.to_owned(),
+        (RecordingStatus::Recording, Some(title)) => format!("{title} \u{b7} {words}"),
+        (RecordingStatus::Unknown, _) if narrow => "Unknown".into(),
+        _ => words.clone(),
     };
-    let dot = dot(8.0, p.danger).key("recording-live-dot");
-    let dot = if s.hex_status_unknown() {
-        dot
-    } else {
-        dot.looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0))
+    let dot = match status {
+        RecordingStatus::Paused => None,
+        RecordingStatus::Recording => Some(
+            dot(8.0, p.danger)
+                .key("recording-live-dot")
+                .looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0)),
+        ),
+        RecordingStatus::Unknown => Some(dot(8.0, p.warn).key("recording-live-dot")),
     };
     let open = super::widgets::button("", "recording-open", super::widgets::ButtonRole::Ghost, p)
         .h(26.0)
         .px(8.0)
         .gap(0.0)
         .child(
-            row().gap(6.0).items_center().child(dot).child(
+            row().gap(6.0).items_center().children(dot).child(
                 roles::CONTROL
                     .line(display, p.soft)
                     .truncate()
@@ -963,7 +1002,7 @@ pub fn meetings_home(s: &State) -> bool {
 mod tests {
     use super::*;
 
-    fn checking_hex(width: f32) -> rune::Runtime<State> {
+    fn new_meeting_runtime(width: f32, listener_preparing: bool) -> rune::Runtime<State> {
         use crate::ui::theme;
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
@@ -972,8 +1011,8 @@ mod tests {
         crate::ui::updates::settings_fixture(&mut state);
         state.listener_probed(
             Some(sidenote::updates::ListenerStatus {
-                ready: true,
-                preparing: false,
+                ready: !listener_preparing,
+                preparing: listener_preparing,
                 error: None,
             }),
             None,
@@ -995,11 +1034,11 @@ mod tests {
         let reason = if cfg!(target_os = "linux") {
             "Recording is not available on Linux yet."
         } else {
-            "Checking for Hex"
+            "Checking the meeting listener"
         };
         let label = format!("New meeting ({reason})");
         for width in [390.0, 1334.0] {
-            let elements = checking_hex(width).elements();
+            let elements = new_meeting_runtime(width, true).elements();
             let find = |key| {
                 elements
                     .iter()
@@ -1027,21 +1066,51 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn narrow_new_meeting_gives_hex_check_its_own_line() {
-        let elements = checking_hex(360.0).elements();
+    fn narrow_new_meeting_gives_blocked_reason_its_own_line() {
+        let elements = new_meeting_runtime(360.0, true).elements();
         let button = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("new-meeting"))
             .unwrap();
         let checking = elements
             .iter()
-            .find(|e| e.text.as_deref() == Some("Checking for Hex"))
+            .find(|e| e.text.as_deref() == Some("Checking the meeting listener"))
             .expect("short checking message");
         assert!(checking.rect[1] >= button.rect[1] + button.rect[3] + 5.0);
         assert_eq!(checking.rect[3], roles::META.lh);
         let button_right = button.rect[0] + button.rect[2];
         let checking_right = checking.rect[0] + checking.rect[2];
         assert!((button_right - checking_right).abs() < 0.5);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
+        let elements = new_meeting_runtime(360.0, false).elements();
+        let button = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("new-meeting"))
+            .unwrap();
+        let mut labels = elements
+            .iter()
+            .filter(|e| e.text.as_deref() == Some("Checking for Hex"));
+        let [x, y, w, h] = labels.next().expect("short checking message").rect;
+        let [bx, by, bw, bh] = button.rect;
+        assert!(
+            x >= bx - 0.5 && y >= by - 0.5 && x + w <= bx + bw + 0.5 && y + h <= by + bh + 0.5,
+            "progress shows inside the button"
+        );
+        assert!(
+            labels.next().is_none(),
+            "no separate status line below the button"
+        );
+        assert_eq!(
+            button.label.as_deref(),
+            Some("New meeting (Checking for Hex)")
+        );
+        assert_eq!(button.help.as_deref(), Some("Checking for Hex"));
+        assert!(!button.focusable, "the button is disabled while checking");
+        assert!(button.rect[0] + button.rect[2] <= 360.0 + 0.5);
     }
 
     #[test]

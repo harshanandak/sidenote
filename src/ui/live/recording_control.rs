@@ -4,6 +4,33 @@ use sidenote::core::{
     self,
     meeting_parts::{self, Phase as SavedPhase},
 };
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui) enum RecordingStatus {
+    Recording,
+    Paused,
+    Unknown,
+}
+
+impl RecordingStatus {
+    pub(in crate::ui) fn for_phase(s: &State, phase: Option<Phase>) -> Self {
+        if phase == Some(Phase::Paused) {
+            Self::Paused
+        } else if s.hex_status_unknown() {
+            Self::Unknown
+        } else {
+            Self::Recording
+        }
+    }
+
+    pub(in crate::ui) fn label(self) -> &'static str {
+        match self {
+            Self::Recording => "Recording",
+            Self::Paused => "Paused",
+            Self::Unknown => "Recording status unknown",
+        }
+    }
+}
+
 fn session(s: &State) -> Option<meeting_parts::Meeting> {
     s.live
         .as_ref()
@@ -24,13 +51,20 @@ fn is_recording(s: &State, m: &Option<meeting_parts::Meeting>) -> bool {
 /// it pauses, so until then they are the last ones.
 pub(in crate::ui) fn recording_note(s: &State, p: Palette) -> Option<El> {
     is_recording(s, &session(s)).then(|| {
+        let unknown =
+            RecordingStatus::for_phase(s, Some(Phase::Recording)) == RecordingStatus::Unknown;
+        let words = if unknown {
+            RecordingStatus::Unknown.label()
+        } else {
+            "Recording. These notes update when you pause."
+        };
         row()
             .key("meeting-recording-note")
             .gap(8.0)
             .items_center()
             .mb(16.0)
-            .child(dot(8.0, p.danger))
-            .child(roles::SMALL.wrap("Recording. These notes update when you pause.", p.faint))
+            .child(dot(8.0, if unknown { p.warn } else { p.danger }))
+            .child(roles::SMALL.wrap(words, p.faint))
     })
 }
 pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
@@ -200,7 +234,7 @@ pub(in crate::ui) fn status(s: &State, p: Palette) -> Option<El> {
     let state = match phase {
         Phase::Starting => "Starting",
         Phase::Recording => "Recording",
-        Phase::Paused => "Paused",
+        Phase::Paused => RecordingStatus::for_phase(s, Some(phase)).label(),
         Phase::Making => "Writing notes",
     };
     let mut c = col().gap(8.0).child(
@@ -231,7 +265,10 @@ mod tests {
     fn live_recording_shows_elapsed_time_beside_pause() {
         crate::test_paths::isolate();
         for (width, narrow) in [(1334.0, false), (390.0, true), (360.0, true)] {
+            let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
             let mut state = State::new();
+            crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
+            crate::ui::scene_agents(&mut state, &["codex"]);
             let mut live = Live::scene(Phase::Recording, None);
             live.session = Some(meeting_parts::Meeting {
                 phase: SavedPhase::Recording,
@@ -244,6 +281,7 @@ mod tests {
             });
             state.live = Some(live);
             state.live_open = true;
+            assert!(state.on_live());
             let mut rt = Runtime::with_text(
                 state,
                 view,
@@ -263,11 +301,17 @@ mod tests {
             let status = keyed("live-recording-status");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
+            assert_eq!(pause.label.as_deref(), Some("Pause recording"));
+            assert!(rt.find("meeting-generate").is_none());
             assert_eq!(status.text.as_deref(), Some("Recording 12:34"));
             assert_eq!(h, roles::META.lh, "one line at {width} px");
             assert!(x >= 0.0 && x + w <= width);
             if narrow {
                 assert!(y + h <= pause.rect[1]);
+                assert!(
+                    keyed("ask-input").rect[2] >= 90.0,
+                    "Ask is squeezed at {width} px"
+                );
             } else {
                 assert!(x + w <= pause.rect[0]);
             }

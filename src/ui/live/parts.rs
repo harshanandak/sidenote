@@ -352,6 +352,10 @@ impl State {
             self.meeting_pause();
             return;
         }
+        self.generate_live_notes();
+    }
+
+    pub(super) fn generate_live_notes(&mut self) {
         let Some(live) = &mut self.live else {
             return;
         };

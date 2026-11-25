@@ -289,8 +289,10 @@ jobs:
             install_hooks_tests:: ui::models::dev40_ ui::models::provisioning_review_ \
             ui::window::close_tests:: \
             ui::nav::tests::blocked_new_meeting_keeps_status_below_native_titlebar \
+            ui::nav::tests::narrow_new_meeting_ \
             ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
+            ui::live::recording_control::tests:: \
             ui::list::tests::meeting_row_uses_the_singular_for_one_task \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
             ui::tasks::tests::empty_tasks_page_offers_to_add_a_task \

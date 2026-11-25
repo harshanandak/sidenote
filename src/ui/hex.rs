@@ -1351,6 +1351,9 @@ pub fn recording_start(s: &State) -> Option<(chrono::DateTime<chrono::Local>, bo
     ))
 }
 
+pub(super) const CHECKING: &str = "Checking for Hex";
+pub(super) const WAIT_FOR_STOP: &str = "Check that Hex has finished the previous recording.";
+
 /// Why a new recording cannot start right now, in words fit for a tooltip.
 pub fn start_blocked(s: &State) -> Option<&'static str> {
     let reason = start_block_reason(s);
@@ -1369,7 +1372,7 @@ fn start_block_reason(s: &State) -> Option<&'static str> {
 fn recorder_start_block_reason(s: &State) -> Option<&'static str> {
     let h = &s.hex;
     if s.hex_stop_pending() {
-        Some("Check that Hex has finished the previous recording.")
+        Some(WAIT_FOR_STOP)
     } else if h.connection.expired() {
         if h.record_busy {
             Some("Checking Hex before New meeting")
@@ -1385,7 +1388,7 @@ fn recorder_start_block_reason(s: &State) -> Option<&'static str> {
     } else if matches!(h.status, Some(Err(HexError::HexNotRunning))) {
         Some("Open Hex, then try New meeting again.")
     } else if h.status.is_none() || h.caps_loading {
-        Some("Checking for Hex")
+        Some(CHECKING)
     } else if !h.running() {
         Some("This version of Hex is not supported.")
     } else if h
@@ -1400,7 +1403,7 @@ fn recorder_start_block_reason(s: &State) -> Option<&'static str> {
     } else if h.lacks(Feature::RecordStart) {
         Some("This Hex build cannot record")
     } else if !h.can(Feature::RecordStart) {
-        Some("Checking for Hex")
+        Some(CHECKING)
     } else {
         None
     }
