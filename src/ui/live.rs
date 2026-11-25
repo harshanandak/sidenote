@@ -1487,7 +1487,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
     } else if starting {
         "Starting the recording. You can start writing now."
     } else {
-        "Your notes save as you type. Generate notes when you are ready."
+        "Your notes save as you type. You can generate notes after pausing."
     };
     let field = rune::text_input(&s.live_notes, roles::READ.style())
         .key("live-notes-input")
@@ -1898,7 +1898,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             roles::SMALL
                 .medium()
                 .wrap(
-                    if unknown { "Recording status unknown. Sidenote is checking Hex. Pause or Generate notes will check the recording before stopping it." } else { "Hex is not answering. The recording may still be running in Hex." },
+                    if unknown { "Recording status unknown. Sidenote is checking Hex. Pause will check the recording before stopping it." } else { "Hex is not answering. The recording may still be running in Hex." },
                     p.warn,
                 )
                 .role("alert"),

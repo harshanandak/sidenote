@@ -182,30 +182,23 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
                 .on_press(|s: &mut State| s.meeting_resume()),
         );
     }
-    let can_generate = recording
-        || m.as_ref()
-            .is_some_and(|m| m.phase != SavedPhase::Ended && !m.parts.is_empty());
-    if can_generate {
-        let label = if m.as_ref().is_some_and(meeting_parts::Meeting::stale) {
-            "Update notes"
-        } else {
-            "Generate notes"
-        };
-        let generate = if recording && s.narrow.get() {
-            let icon = super::super::icons::draw(&super::super::icons::FILE_TEXT, 16.0, p.soft);
-            pressable(el().size(32.0, 28.0).center().child(icon))
-                .key("meeting-generate")
-                .label(label)
-                .help(label)
-                .radius(14.0)
-                .hover(p.bg)
-        } else {
-            quiet_button(label, "meeting-generate", p)
-        };
+    if let Some(m) = m
+        && m.phase != SavedPhase::Ended
+        && !m.parts.is_empty()
+        && !recording
+    {
         control = control.child(
-            generate
-                .button_disabled(s.hex_record_busy() || (recording && !s.hex_recording()))
-                .on_press(|s: &mut State| s.meeting_generate()),
+            quiet_button(
+                if m.stale() {
+                    "Update notes"
+                } else {
+                    "Generate notes"
+                },
+                "meeting-generate",
+                p,
+            )
+            .button_disabled(s.hex_record_busy())
+            .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
     if let Some(status) = above {
@@ -307,10 +300,8 @@ mod tests {
             let status = keyed("live-recording-status");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
-            assert_eq!(
-                keyed("meeting-generate").label.as_deref(),
-                Some("Generate notes")
-            );
+            assert_eq!(pause.label.as_deref(), Some("Pause recording"));
+            assert!(rt.find("meeting-generate").is_none());
             assert_eq!(status.text.as_deref(), Some("Recording 12:34"));
             assert_eq!(h, roles::META.lh, "one line at {width} px");
             assert!(x >= 0.0 && x + w <= width);

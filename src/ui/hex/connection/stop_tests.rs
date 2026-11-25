@@ -1609,6 +1609,9 @@ fn generate_after_stop_keeps_recording_meeting(beta_ended: bool) {
         &state,
     ))));
     state.open_live();
+    // The paused control can still request notes while Hex reports an active recording.
+    state.parts_paused();
+    assert!(state.hex_recording());
     api.data.lock().unwrap().stop_state = Some("transcribing");
 
     let mut ui = rune::Runtime::with_text(
