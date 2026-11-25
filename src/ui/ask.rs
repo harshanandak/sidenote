@@ -1034,7 +1034,8 @@ pub fn overlay_with(
         .children((focused || pending).then(|| action(s, p, ready, pending)));
     // Narrow and focused: the lead holds Pause, Resume and Generate notes, so it
     // moves above the panel instead of disappearing.
-    let (stack, lead) = if compact && (focused || s.on_live() && s.app_w.get() < 380.0) {
+    let pane_w = s.app_w.get() - super::nav::width(s);
+    let (stack, lead) = if compact && (focused || pane_w < 410.0) {
         (stack.children(lead.map(El::self_start)), None)
     } else if compact {
         let glide = |control: El| control.transition(Transition::opacity().springs(pair::GLIDE));
