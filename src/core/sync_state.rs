@@ -169,6 +169,7 @@ fn supported(store: &str) -> bool {
             "projects.json"
                 | "companies.json"
                 | "task-overrides.json"
+                | super::summary_edits::FILE
                 | "tasks-settings.json"
                 | "agent-instructions.json"
                 | "memory/records.json"
@@ -1004,6 +1005,9 @@ fn validate_legacy(store: &str, value: &Value) -> io::Result<()> {
         "task-overrides.json" => {
             serde_json::from_value::<super::Overrides>(value.clone())?;
         }
+        super::summary_edits::FILE => {
+            serde_json::from_value::<super::summary_edits::Records>(value.clone())?;
+        }
         "tasks-settings.json" => {
             serde_json::from_value::<super::TasksSettings>(value.clone())?;
         }
@@ -1152,6 +1156,7 @@ fn flatten(store: &str, value: Value) -> io::Result<Items> {
                 }
             }
             ("projects.json", "aliases" | "merges" | "meeting_projects")
+            | (super::summary_edits::FILE, "edits")
             | ("checks/triage.json", "findings")
             | ("memory/legacy.json", "documents") => {
                 for (key, item) in value

@@ -63,6 +63,7 @@ mod memory_migration;
 pub(crate) mod store_io;
 #[cfg(target_os = "linux")]
 pub use store_io::UiLockBudget;
+pub mod summary_edits;
 mod sync_state;
 pub use daily_check::{apply_action, company_memory, latest_check, list_checks, load_check};
 pub use device::DeviceSettings;

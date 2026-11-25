@@ -285,7 +285,7 @@
 
   "src/core/runners.rs": "86e63974051cbfcbd525bd7dcc1f415487737c558e4e57f8fc14649a17083fe9",
 
-  "src/core/settle.rs": "d58a9ca058e58814c24c296eb9508638f0ffb37d469758c25d56c770cb27f132",
+  "src/core/settle.rs": "907f9c9cfd26476161250ffb5832a156f7acc403c08037a71f5dd77d7d1cc5ed",
 
   "src/core/settle/tests.rs": "680a3699b5300b3411d2d0ea7f477c85b231478c70dff170c863c6b399378781",
 
@@ -307,7 +307,9 @@
 
   "src/core/store_io.rs": "d46f5e4a16ec08cb3279e1ba72d59c66703875ca229ebd2969dbadb9b168aa37",
 
-  "src/core/sync_state.rs": "e7b60f5ad320eee0c7bac92b39deea2f424d1db2fa3b22d5c6fddb0ce64d7e2e",
+  "src/core/summary_edits.rs": "c4447ea4ceb4b5ff6c04f31a50f4f6f1d64cb7027bec3d0b34402f2243c2263b",
+
+  "src/core/sync_state.rs": "9d4cb37832b92df9c1f0826b1fbd6456d1b79a3a7ec4818f6509371f1e6f44e2",
 
   "src/core/tasks.rs": "0071ad0533947f13a2e69faedad2286213197648c5db7fc4540725f7c7b78dec",
 

@@ -276,6 +276,7 @@ jobs:
             core::notes::tests::translation::producer:: core::relay_preview:: core::speech_host:: \
             listener::pipeline_tests:: listener::notes_environment::tests:: \
             service::tests::exclusively_locked_device_file_falls_back_once \
+            core::summary_edits::tests:: \
             --skip=meeting_icon_capture_affinity_updates_live_windows
           # This test exists only in a build without the ASR feature.
           cargo test --locked --features dev -p sidenote --lib -- \
