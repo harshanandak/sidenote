@@ -1371,6 +1371,35 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
 }
 
 #[test]
+fn meeting_ticks_keep_the_all_meetings_chat() {
+    if in_parent("meeting_ticks_keep_the_all_meetings_chat") {
+        return;
+    }
+    let mut rt = page_with_tasks(DEFAULT_SIZE);
+    let all = core::ALL_KEY;
+    let global = Message {
+        role: "user".into(),
+        text: "Across meetings".into(),
+        ..Default::default()
+    };
+    rt.update(|s, _| {
+        s.meeting_ui.tabs = true;
+        s.store.append_message(all, global.clone()).unwrap();
+    });
+    rt.frame(0.0);
+    tap(&mut rt, "tick-0");
+    wait_for_tick(&mut rt, 0, true);
+    let checked = element(&rt, "tick-0").fill;
+    rt.update(|s, _| s.set_ask_scope(true));
+    rt.frame(0.0);
+    assert_eq!(element(&rt, "tick-0").fill, checked);
+    tap(&mut rt, "tick-0");
+    wait_for_tick(&mut rt, 0, false);
+    assert_eq!(rt.state.ask_key(), all);
+    assert_eq!(rt.state.saved.messages, [global]);
+}
+
+#[test]
 fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
     if in_parent("ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor") {
         return;
@@ -1400,12 +1429,8 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
             scene_live(s, "", &[], false);
             s.hex.status = Some(Ok(hex_engine_recording()));
             use sidenote::hex_engine::{Feature, Support};
-            s.hex_apply(hex::Msg::Caps(
-                "test".into(),
-                Ok([(Feature::RecordStop, Support::Supported)]
-                    .into_iter()
-                    .collect()),
-            ));
+            let caps = [(Feature::RecordStop, Support::Supported)].into();
+            s.hex_apply(hex::Msg::Caps("test".into(), Ok(caps)));
         });
         rt.frame(0.0);
         assert!(rt.state.ask_current_live());
