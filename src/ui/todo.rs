@@ -30,8 +30,8 @@ fn checkbox(task: &str, on: bool, index: usize, p: Palette) -> El {
     .on_press(move |s: &mut State| s.toggle_task(&task_owned))
 }
 
-fn item(s: &State, index: usize, t: &Todo, p: Palette) -> El {
-    let on = sidenote::core::todo_done(t, Some(&s.saved.checked));
+fn item(s: &State, id: &str, index: usize, t: &Todo, p: Palette) -> El {
+    let on = sidenote::core::todo_done(t, s.tasks.checked.get(id));
     let owner = t
         .owner
         .as_deref()
@@ -116,7 +116,7 @@ fn item(s: &State, index: usize, t: &Todo, p: Palette) -> El {
 pub fn section(s: &State, m: &Meeting, p: Palette) -> El {
     let mut out = col().key("todo-list").w_full().gap(2.0);
     for (i, t) in m.summary.todo.iter().enumerate() {
-        out = out.child(item(s, i, t, p));
+        out = out.child(item(s, &m.id, i, t, p));
     }
     out.child(
         roles::meta(
