@@ -2079,7 +2079,7 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         let point = |kind: &str, text: &str| serde_json::json!({"type": kind, "text": text});
         let summary = serde_json::json!({
             "title": "Beta launch plan",
-            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions."],
+            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions. ".repeat(24)],
             "topics": [
                 {"title": "Launch date", "points": [
                     point("decided", "Launch in the second week of December, if the copy is done."),
@@ -2098,6 +2098,7 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         std::fs::write(folder.join("english-summary.json"), summary.to_string()).unwrap();
     };
     let mut rt = page_with((1334.0, 900.0), long);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-scroll"));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
