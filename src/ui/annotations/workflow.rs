@@ -117,7 +117,7 @@ pub(super) fn load_note(
     )?)?;
     let approved = ApprovedCapture { folder, approval };
     approved.verify()?;
-    if media::source_fingerprint(c)? != approved.approval.source_fingerprint {
+    if !media::note_fingerprint_matches(c, &approved.approval.source_fingerprint)? {
         return Ok(None);
     }
     let Some(note) = note::load(&approved.folder)? else {

@@ -1217,6 +1217,7 @@ mod tests {
                 ]}
             }))
             .unwrap(),
+            legacy_folder: None,
         };
         let mut mark = Mark {
             description: Some("  Sample mark  ".into()),
@@ -1247,6 +1248,7 @@ mod tests {
                 ]}
             }))
             .unwrap(),
+            legacy_folder: None,
         };
         let mark = Mark {
             description: Some("Materials".into()),

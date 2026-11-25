@@ -35,19 +35,19 @@
 
   "src/core/annotations/generation.rs": "6df3a5b2f6edc7e5a7d35c39458c5e099b8dba53a0681fb1819c153431cfc974",
 
-  "src/core/annotations/media.rs": "60c22e79537d36dfbc24a577c042e3ce8679e4a38212d95c4e602dc631315b7a",
+  "src/core/annotations/media.rs": "aabe86d981f2fbb923f33aec700288e0d3dcf993ad3fd50fe1342b9fe41a1cbc",
 
-  "src/core/annotations/mod.rs": "e683781d9b72091137dd405ebca91d9d0b1d5ec3d86704b623b5c4748a7f09f9",
+  "src/core/annotations/mod.rs": "15caae274605174830e9e9b1b7b5bead7cbf70460f5e5454a5b7308839db197c",
 
   "src/core/annotations/note.rs": "fd948e045a966d55b23c427f6e63181935d5caefde9a4080ce792b0b55899ff3",
 
-  "src/core/annotations/notebook.rs": "ba4c310b2cd034a77111586d36e39c3adab2430442f665bedd709a51b2a7cf23",
+  "src/core/annotations/notebook.rs": "ff0e7de130fce9ebd5fae140f720c3e6b80e288791ce70af1dbe3ff134709c1c",
 
   "src/core/annotations/notebook_tests.rs": "4c93c1e1b5e730b7f1a70722f1554142b5c1a2ca6a510468b0168684103460fc",
 
   "src/core/annotations/share.rs": "f2fb84ec62413ca2c3994e410a0186366ecd91934aded9dd1791579b9cc68307",
 
-  "src/core/annotations/tests.rs": "556d2e459e10cecaf6fd4ca60487a5bf53f9420c84059c8bdf8d4aeebbfbb34c",
+  "src/core/annotations/tests.rs": "5791fe5a431ab96d0f26eba37bae434d897a6c629c6c7ffe9008373e8766df99",
 
   "src/core/area_ops.rs": "7e9116623a9e190a24827f7d1b5be4480ada18959e22ff84c4df9bee087c314d",
 
@@ -393,11 +393,11 @@
 
   "src/ui/ai_notes.rs": "3bef66267f56d436c8348d33915eb599740707e19e2c252386ad0d7355997839",
 
-  "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
+  "src/ui/annotations.rs": "37928cbcdbb25aec79ef242b000c86e1583426e01a619c420f83c4ed521b0848",
 
   "src/ui/annotations/notebooks.rs": "b01a26b59d7c308ea9b6b071ff7c93afab8271d55ddfb4fe616c76411616645d",
 
-  "src/ui/annotations/workflow.rs": "9a115fcd00254b85c056abebb06f4ed3ed984145a979993c243a672fdde77c04",
+  "src/ui/annotations/workflow.rs": "afecf9ab1b7f861168693f7e7aa73d27dfa63481541e77e06f646c151aec3e2f",
 
   "src/ui/area.rs": "98e13ced4fe3ce0b1ad44649aa25e29a25caf7dbfaea88e0f892985f81a3137e",
 

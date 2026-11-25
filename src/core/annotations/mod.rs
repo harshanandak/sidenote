@@ -90,6 +90,7 @@ pub struct Keyframe {
 pub struct Capture {
     pub folder: PathBuf,
     pub data: Scrawl,
+    pub legacy_folder: Option<PathBuf>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -342,6 +343,7 @@ pub fn read_capture(folder: &Path) -> io::Result<Capture> {
     Ok(Capture {
         folder: folder.to_owned(),
         data,
+        legacy_folder: None,
     })
 }
 pub fn scan(folder: &Path) -> Scan {
@@ -387,6 +389,16 @@ fn preferred(candidate: &Capture, existing: &Capture) -> bool {
     (candidate_hex && !existing_hex)
         || (candidate_hex == existing_hex && candidate.folder < existing.folder)
 }
+fn merge_duplicate(winner: &mut Capture, loser: &Capture) {
+    if winner.legacy_folder.is_some() || !is_hex_package(&winner.folder) {
+        return;
+    }
+    winner.legacy_folder = if is_hex_package(&loser.folder) {
+        loser.legacy_folder.clone()
+    } else {
+        Some(loser.folder.clone())
+    };
+}
 fn dedupe(captures: Vec<Capture>) -> Vec<Capture> {
     let mut ids = std::collections::HashMap::new();
     let mut out = Vec::new();
@@ -398,7 +410,10 @@ fn dedupe(captures: Vec<Capture>) -> Vec<Capture> {
         }
         if let Some(&index) = ids.get(&id) {
             if preferred(&capture, &out[index]) {
-                out[index] = capture;
+                let loser = std::mem::replace(&mut out[index], capture);
+                merge_duplicate(&mut out[index], &loser);
+            } else {
+                merge_duplicate(&mut out[index], &capture);
             }
         } else {
             ids.insert(id, out.len());

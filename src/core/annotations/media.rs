@@ -168,7 +168,8 @@ pub fn marked(image: &RgbaImage, marks: &[(usize, BoxNorm)], masks: &[BoxNorm]) 
     bake(&out, masks)
 }
 pub fn capture_key(c: &Capture) -> String {
-    blake3::hash(c.folder.to_string_lossy().as_bytes())
+    let folder = c.legacy_folder.as_ref().unwrap_or(&c.folder);
+    blake3::hash(folder.to_string_lossy().as_bytes())
         .to_hex()
         .to_string()
 }
@@ -190,6 +191,16 @@ pub fn source_fingerprint(c: &Capture) -> io::Result<String> {
         hash.update(&file_reads::read(&c.frame_path(frame)?, IMAGE_MAX_BYTES)?);
     }
     Ok(hash.finalize().to_hex().to_string())
+}
+pub fn note_fingerprint_matches(c: &Capture, expected: &str) -> io::Result<bool> {
+    if source_fingerprint(c)? == expected {
+        return Ok(true);
+    }
+    let Some(folder) = &c.legacy_folder else {
+        return Ok(false);
+    };
+    let legacy = super::read_capture(folder)?;
+    Ok(source_fingerprint(&legacy)? == expected)
 }
 fn save_png(
     folder: &Path,
