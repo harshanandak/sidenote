@@ -777,16 +777,12 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let inset = if s.on_live() {
+    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs) {
+        0.0
+    } else if s.on_live() {
         super::live::gutter(s)
     } else {
         16.0
-    };
-    let reading = s.selected.is_some() && !s.meeting_ui.tabs;
-    let gutter = if s.companies.open || reading {
-        0.0
-    } else {
-        inset
     };
     let mut stack = col()
         .w_full()
