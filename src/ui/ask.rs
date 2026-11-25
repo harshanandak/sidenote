@@ -782,8 +782,8 @@ pub fn overlay_with(
     } else {
         16.0
     };
-    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live())
-    {
+    let reading = s.selected.is_some() && !s.meeting_ui.tabs;
+    let gutter = if s.companies.open || reading {
         0.0
     } else {
         inset
