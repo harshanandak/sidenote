@@ -411,14 +411,8 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
             stick_bottom: false,
         })
         .child(messages);
-    Some(with_note(
-        panel
-            .max_w(840.0)
-            .self_center()
-            .child(hairline(p))
-            .child(list),
-        p,
-    ))
+    let panel = panel.max_w(840.0).self_center();
+    Some(with_note(panel.child(hairline(p)).child(list), p))
 }
 
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
@@ -448,7 +442,7 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
         "Ask options".into()
     })
     .h(30.0)
-    .px(8.0)
+    .px(if chip { 10.0 } else { 8.0 })
     .radius(15.0)
     .border(if chip { 1.0 } else { 0.0 }, p.line)
     .max_w(154.0)
@@ -687,7 +681,7 @@ fn action(s: &State, p: Palette, pending: bool) -> El {
         let run = s.asks.get(&s.ask_key());
         let stopping = run.is_some_and(|r| r.cancel.stopped());
         let who = run.map_or("the answer", |r| short_runner(&r.runner));
-        return slot.child(
+        slot.child(
             super::widgets::icon_button(
                 &super::icons::STOP,
                 "Stop",
@@ -707,26 +701,27 @@ fn action(s: &State, p: Palette, pending: bool) -> El {
                 s.stop_ask();
                 keep_question_focus(s, tx);
             }),
-        );
-    }
-    slot.child(
-        super::widgets::icon_button(
-            &super::icons::ARROW_UP,
-            "Ask (Enter)",
-            "ask-send",
-            super::widgets::ButtonRole::Primary,
-            p,
         )
-        .size(ACTION, ACTION)
-        .radius(14.0)
-        .focus_ring(1.0, 1.0, p.faint)
-        .preserve_focus_on_press(true)
-        .transition(replace)
-        .on_press_tx(|s: &mut State, tx| {
-            let q = s.question.text.clone();
-            submit(s, &q, tx);
-        }),
-    )
+    } else {
+        slot.child(
+            super::widgets::icon_button(
+                &super::icons::ARROW_UP,
+                "Ask (Enter)",
+                "ask-send",
+                super::widgets::ButtonRole::Primary,
+                p,
+            )
+            .size(ACTION, ACTION)
+            .radius(14.0)
+            .focus_ring(1.0, 1.0, p.faint)
+            .preserve_focus_on_press(true)
+            .transition(replace)
+            .on_press_tx(|s: &mut State, tx| {
+                let q = s.question.text.clone();
+                submit(s, &q, tx);
+            }),
+        )
+    }
 }
 
 /// What the pill says when no agent CLI is on this machine.

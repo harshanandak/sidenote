@@ -210,12 +210,16 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
     {
         let expected = super::super::hex::recording_id(s);
         let reason = super::super::hex::stop_blocked(s);
+        use crate::ui::{
+            icons,
+            widgets::{ButtonRole, icon_button},
+        };
         let stop = if s.narrow.get() {
-            super::super::widgets::icon_button(
-                &super::super::icons::STOP,
+            icon_button(
+                &icons::STOP,
                 "Stop recording",
                 "hex-stop",
-                super::super::widgets::ButtonRole::Ghost,
+                ButtonRole::Ghost,
                 p,
             )
             .size(28.0, 28.0)

@@ -334,11 +334,9 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     if let Some(note) = &s.notice {
         pane = pane.child(notice_bar(note, p));
     }
+    let doc = doc.pb(s.overlay_h.get() + 16.0);
     pane.child(scroll(
-        col()
-            .w_full()
-            .items_center()
-            .child(doc.pb(s.overlay_h.get() + 16.0)),
+        col().w_full().items_center().child(doc),
         "list-scroll",
     ))
     .child(ask::overlay(s, k, p, narrow, layer))
