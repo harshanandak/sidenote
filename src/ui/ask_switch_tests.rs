@@ -1410,9 +1410,12 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         let mut rt = page_at(size);
         rt.update(|s, _| {
             scene_agents(s, ALL_AGENTS);
+            super::live::parts_scene(s, "paused");
             s.ask_open = true;
         });
         rt.frame(0.0);
+        assert!(rt.find("meeting-resume").is_some());
+        assert!(rt.find("meeting-generate").is_some());
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
         let chip = |rt: &Runtime<State>| element(rt, "ask-prompt").label.unwrap();
         assert_eq!(rt.state.ask_key(), MEETING);
@@ -2020,7 +2023,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks") {
         return;
     }
-    let mut rt = page_with_tasks((1334.0, 900.0));
+    let mut rt = page_with_tasks((1334.0, 390.0));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
@@ -2049,6 +2052,11 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
     assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
+    rt.frame(0.0);
+    let [x, _, w, _] = rect(&rt, "ask-pill");
+    let [_, y, _, h] = rect(&rt, "meeting-actions");
+    assert!(tasks[0] >= x + w || y + h <= rect(&rt, "ask-overlay")[1]);
     // The transcript sheet rises inside the notes column.
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);

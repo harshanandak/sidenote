@@ -1069,7 +1069,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         // The tasks' rows hang 8 either side of their column, like the mock, so the text gap to the
         // notes is the 40 and the rows' hairlines and check circles are not cut by the scroll area.
         let tasks = scroll(
-            col().px(8.0).pb(24.0).child(
+            col().px(8.0).pb(bottom_pad).child(
                 col()
                     .key("meeting-tasks-column")
                     .w(TASKS)

@@ -160,15 +160,10 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
-    if recording
-        && (live
-            || s.live
-                .as_ref()
-                .and_then(|l| l.session.as_ref())
-                .is_some_and(|m| s.selected.as_deref() == Some(m.id.as_str())))
-    {
-        let expected = super::super::hex::recording_id(s);
-        let reason = super::super::hex::stop_blocked(s);
+    let owner = s.live.as_ref().and_then(|l| l.session.as_ref());
+    if recording && (live || owner.is_some_and(|m| s.selected.as_ref() == Some(&m.id))) {
+        let expected = hex::recording_id(s);
+        let reason = hex::stop_blocked(s);
         let stop = button("Stop", "hex-stop", &icons::STOP);
         control = control.child(
             stop.label(
