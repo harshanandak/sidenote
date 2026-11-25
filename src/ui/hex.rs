@@ -119,7 +119,7 @@ fn plain(e: &HexError) -> &'static str {
             Some("not-ready") => "Hex is not ready yet.",
             Some("busy") => "Hex is busy.",
             Some("recording-changed") => {
-                "Hex's active recording has changed or ended. Stop was not sent. Stop it from Hex."
+                "Hex is recording a different meeting. Stop it from Hex if you meant that one."
             }
             Some("stop-unconfirmed") => {
                 "Could not confirm this recording. Stop was not confirmed. Stop it from Hex."
@@ -143,6 +143,7 @@ pub struct HexState {
     visible: bool,
     /// Latest result, separate from the bounded last-known-good snapshot.
     pub status: Option<Result<EngineState, HexError>>,
+    last_status_request: Option<Instant>,
     pub(super) connection: connection::Connection,
     was_running: bool,
     settings_status_pending: bool,
@@ -202,6 +203,7 @@ impl Default for HexState {
             visibility: None,
             visible: false,
             status: None,
+            last_status_request: None,
             connection: connection::Connection::default(),
             was_running: false,
             settings_status_pending: false,
@@ -558,16 +560,18 @@ impl State {
                 self.hex.record_busy = false;
                 match result {
                     Ok(status) => {
-                        let recording = status.recording.is_some();
                         self.hex_observed_event((sent, Ok(status)));
-                        if recording {
+                        if self.hex_recording() {
                             self.hex.error =
                                 Some("Hex is already recording. No new part was started.");
                         } else {
                             self.meeting_resume();
                         }
                     }
-                    Err(e) => self.hex.error = Some(plain(&e)),
+                    Err(e) => {
+                        self.hex.error = Some(plain(&e));
+                        self.hex_observed_event((sent, Err(e)));
+                    }
                 }
             }
             Msg::RecheckStart((sent, result)) => {
@@ -575,9 +579,8 @@ impl State {
                 self.hex.record_busy = false;
                 match result {
                     Ok(status) => {
-                        let recording = status.recording.is_some();
                         self.hex_observed_event((sent, Ok(status)));
-                        if recording {
+                        if self.hex_recording() {
                             self.hex.error =
                                 Some("Hex is already recording. No new meeting was started.");
                         } else if let Some(reason) = start_blocked(self) {
@@ -658,7 +661,25 @@ impl State {
         }
     }
 
+    fn hex_accept_status(&mut self, (sent, result): &StatusSample) -> bool {
+        if self
+            .hex
+            .last_status_request
+            .is_some_and(|last| *sent < last)
+        {
+            return false;
+        }
+        // A transport failure has no observation to supersede a slow, successful reply.
+        if !matches!(result, Err(HexError::Timeout | HexError::Failed { .. })) {
+            self.hex.last_status_request = Some(*sent);
+        }
+        true
+    }
+
     pub(super) fn hex_observed_event(&mut self, sample: StatusSample) -> bool {
+        if !self.hex_accept_status(&sample) {
+            return false;
+        }
         let (sent, r) = sample;
         let changed = self.hex.status.as_ref() != Some(&r) || self.live.is_some();
         let before = (
@@ -827,7 +848,10 @@ impl State {
             Action::Stop(_, sample) => sample.take().map(|sample| *sample),
             _ => None,
         };
-        if let Some((sent, status)) = sample {
+        let checked = sample.is_some();
+        let observed = sample.filter(|sample| self.hex_accept_status(sample));
+        let applied = observed.is_some();
+        if let Some((sent, status)) = observed {
             self.hex_status_at(status, sent);
         }
         if matches!(action, Action::Start) {
@@ -866,7 +890,7 @@ impl State {
                             _ => plain(&e),
                         });
                         if let Action::Stop(recording, _) = action {
-                            self.hex_stop_failed(recording, &e);
+                            self.hex_stop_failed(recording, &e, checked, applied);
                         }
                     }
                 }

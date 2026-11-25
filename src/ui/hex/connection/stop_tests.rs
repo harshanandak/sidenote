@@ -689,22 +689,31 @@ fn no_id_hex_idle_or_transcribing_does_not_stop_through_ui_and_engine() {
     }
     let (api, mut state, _) = Fixture::start();
     api.data.lock().unwrap().omit_id = true;
-    let status = command_status_sample(&state);
-    state.hex_apply(Msg::ObservedStatus(status));
     for phase in ["idle", "transcribing"] {
+        api.data.lock().unwrap().meeting_state = Some("recording");
+        let status = command_status_sample(&state);
+        state.hex_apply(Msg::ObservedStatus(status));
         api.data.lock().unwrap().meeting_state = Some(phase);
         Fixture::stop(&mut state);
         assert_eq!(api.data.lock().unwrap().stops, 0);
         let message = state.hex.error.unwrap();
         if phase == "idle" {
-            assert_eq!(message, "Hex says no meeting is recording.");
+            assert_eq!(message, "The recording already ended in Hex.");
         } else {
-            assert!(message.contains("Stop it from Hex"));
+            assert_eq!(message, "Recording stopped. Hex is still transcribing.");
+            state.hex_status_at(
+                Err(HexError::Timeout),
+                Instant::now() + Duration::from_secs(11),
+            );
+            assert!(state.hex_status_unknown());
+            Fixture::stop_status(&mut state);
+            assert!(!state.hex_status_unknown());
         }
     }
     api.data.lock().unwrap().meeting_state = Some("idle");
     let idle = command_status_sample(&state);
     state.hex_apply(Msg::ObservedStatus(idle));
+    Fixture::stop_status(&mut state);
     Fixture::stop(&mut state);
     assert_eq!(api.data.lock().unwrap().stops, 0);
     assert_eq!(state.hex.error, Some("Hex says no meeting is recording."));
@@ -736,8 +745,73 @@ fn stale_stop_refuses_replacement_recording_through_ui_and_engine() {
     };
     assert_eq!(stops, 0, "must not send generic Stop for replacement B");
     assert_eq!(id, Some("200-2"), "B must keep recording");
-    assert!(state.hex.error.unwrap().contains("changed or ended"));
-    assert!(state.hex.error.unwrap().contains("Stop it from Hex"));
+    let message = state.hex.error.unwrap();
+    assert!(message.contains("recording a different meeting"));
+    assert!(message.contains("Stop it from Hex"));
+}
+
+#[test]
+fn expired_header_stop_reconciles_each_hex_outcome() {
+    if isolated_api_test("expired_header_stop_reconciles_each_hex_outcome") {
+        return;
+    }
+    fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
+        let mut layer = Vec::new();
+        let actions =
+            crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
+        rune_kit::root(actions, layer)
+    }
+    for phase in ["idle", "transcribing", "recording", "timeout"] {
+        let (api, mut state, now) = Fixture::start();
+        state.hex_status_at(Err(HexError::Timeout), now + Duration::from_secs(11));
+        state.live_open = false;
+        {
+            let mut data = api.data.lock().unwrap();
+            data.meeting_state = Some(phase);
+            data.id = (phase == "recording").then_some("200-2");
+            data.status_timeout = phase == "timeout";
+        }
+        let mut ui = rune::Runtime::new(state, header, (600.0, 160.0), rune::Env::default());
+        ui.frame(0.0);
+        let stop = ui
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("hex-stop"))
+            .unwrap();
+        let [x, y, w, h] = stop.rect;
+        let (x, y) = (x + w / 2.0, y + h / 2.0);
+        assert_eq!(
+            crate::ui::nav::recording_words(&ui.state, false),
+            "Recording status unknown"
+        );
+        ui.pointer_move(x, y);
+        ui.pointer_down(x, y);
+        ui.pointer_up(x, y);
+        ui.frame(0.0);
+        assert!(ui.state.hex.record_busy, "{phase}");
+        ui.update(|state, _| Fixture::finish(state));
+        ui.frame(0.0);
+        let state = &ui.state;
+        let unknown = phase == "timeout";
+        let active = unknown || phase == "recording";
+        assert_eq!(state.hex.connection.expired(), unknown, "{phase}");
+        let words = crate::ui::nav::recording_words(state, false);
+        assert_eq!(words == "Recording status unknown", unknown, "{phase}");
+        assert_eq!(state.ask_live_meeting(), active, "{phase}");
+        assert_eq!(state.hex_stop_pending(), phase == "transcribing");
+        assert_eq!(
+            ui.elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("hex-stop") && e.focusable),
+            active,
+            "{phase}"
+        );
+        assert_eq!(api.data.lock().unwrap().stops, 0, "{phase}");
+        if phase == "recording" {
+            assert_eq!(recording_id(state).as_deref(), Some("200-2"));
+            assert!(words.starts_with("Recording "));
+        }
+    }
 }
 
 #[test]
@@ -814,6 +888,94 @@ fn expired_recording_is_unknown_and_new_meeting_rechecks_then_starts() {
         "New meeting must recheck, then send Start after a confirmed idle reply"
     );
     assert!(state.hex.error.is_none());
+}
+
+#[test]
+fn newer_watcher_status_supersedes_delayed_stop_snapshots() {
+    if isolated_api_test("newer_watcher_status_supersedes_delayed_stop_snapshots") {
+        return;
+    }
+    let (api, mut state, _) = Fixture::start();
+    let old = sample_status(|| state.hex.engine.status());
+    api.data.lock().unwrap().meeting_state = Some("transcribing");
+    state.hex_begin_stop(0, Instant::now());
+    let deadline = state.hex.stop.as_ref().unwrap().deadline.unwrap();
+    state.hex_apply(Msg::ObservedStatus(sample_status(|| {
+        state.hex.engine.status()
+    })));
+    for stale in [
+        Msg::Done(
+            Action::Stop(0, Some(Box::new(old.clone()))),
+            Err(HexError::Timeout),
+        ),
+        Msg::StopStatus(deadline, old),
+    ] {
+        state.hex_apply(stale);
+        assert!(!state.hex_recording());
+        assert!(!state.ask_live_meeting());
+    }
+}
+
+#[test]
+fn superseded_stop_refusal_keeps_transcribing_meeting_pending() {
+    if isolated_api_test("superseded_stop_refusal_keeps_transcribing_meeting_pending") {
+        return;
+    }
+    use crate::ui::live::Phase;
+
+    let (api, mut state, _) = Fixture::start();
+    let part = sidenote::core::meetings_dir().join("100-1");
+    std::fs::create_dir_all(&part).unwrap();
+    std::fs::write(part.join("manifest.json"), r#"{"status":"recording"}"#).unwrap();
+    state.hex_apply(Msg::ObservedStatus(command_status_sample(&state)));
+    assert!(state.live.as_ref().unwrap().session.is_some());
+    {
+        let mut data = api.data.lock().unwrap();
+        data.id = None;
+        data.meeting_state = Some("transcribing");
+    }
+    state.meeting_pause();
+    assert!(state.hex_stop_pending());
+
+    // Hold the real Stop reply until a later watcher observation has been applied.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let refusal = loop {
+        let event = state
+            .events_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("Stop refusal");
+        if let Event::Hex(msg @ Msg::Done(Action::Stop(..), _)) = event {
+            break msg;
+        }
+    };
+    let Msg::Done(Action::Stop(_, Some(preflight)), Err(HexError::Failed { code, .. })) = &refusal
+    else {
+        panic!("expected Stop refusal with a preflight status");
+    };
+    assert_eq!(code.as_deref(), Some("recording-changed"));
+    assert_eq!(preflight.1.as_ref().unwrap().meeting_state, "transcribing");
+    let watcher = sample_status(|| state.hex.engine.status());
+    assert!(watcher.0 > preflight.0);
+    let watcher_sent = watcher.0;
+    state.hex_apply(Msg::ObservedStatus(watcher));
+    assert_eq!(state.hex.last_status_request, Some(watcher_sent));
+    assert_eq!(state.hex.state().unwrap().meeting_state, "transcribing");
+    state.hex_apply(refusal);
+
+    assert!(state.hex_stop_pending());
+    assert_eq!(
+        recorder_start_block_reason(&state),
+        Some("Check that Hex has finished the previous recording.")
+    );
+    state.meeting_resume();
+    state.new_meeting();
+    let live = state.live.as_ref().unwrap();
+    assert_eq!(live.phase, Phase::Recording);
+    assert!(live.session.as_ref().unwrap().pending_start_ms.is_none());
+    assert!(!state.hex.record_busy);
+    assert_eq!(api.data.lock().unwrap().starts, 0);
+    Fixture::stop_status(&mut state);
+    assert!(state.hex_stop_pending());
 }
 
 #[test]

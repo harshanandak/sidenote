@@ -13,6 +13,7 @@ pub(super) struct Data {
     pub id: Option<&'static str>,
     pub omit_id: bool,
     pub meeting_state: Option<&'static str>,
+    pub status_timeout: bool,
     pub stop_changed: bool,
     pub stop_state: Option<&'static str>,
     pub commands: Vec<String>,
@@ -52,6 +53,7 @@ impl Fixture {
             id,
             omit_id: false,
             meeting_state: None,
+            status_timeout: false,
             stop_changed: true,
             stop_state: None,
             commands: Vec::new(),
@@ -105,6 +107,10 @@ impl Fixture {
                 shared.lock().unwrap().commands.push(request["command"].as_str().unwrap().into());
                 let reply = match request["command"].as_str().unwrap() {
                     "status" => {
+                        if shared.lock().unwrap().status_timeout {
+                            let _ = reader.get_mut().write_all(b"HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\n\r\n");
+                            return;
+                        }
                         let delay = shared.lock().unwrap().delay;
                         thread::sleep(delay);
                         let data = shared.lock().unwrap();

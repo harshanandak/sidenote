@@ -317,7 +317,7 @@
 
   "src/core/ui_prefs.rs": "26870e51eebbc5f4a8a405b1dd81b680140ae8191d9bbf626f4ce708d91c4203",
 
-  "src/hex_engine.rs": "3bafd542ba5da8ea6cac5c4bba4cba2eadd46ca0e3762693712ab9cfdc2f1815",
+  "src/hex_engine.rs": "15716eb253dc0c18162be893bf8307b972127754421d89d1ff3309c14b46d578",
 
   "src/hex_engine/audio_retention/tests.rs": "e222ae001e30661415465c8a1c055b135c37ac0821496dbe25c47d1307fa8a77",
 
@@ -413,13 +413,13 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "02e294f2d30d65f03f861c8f7ed8f5fc6c3b8c4aee612c2776eaad2212c5acd7",
+  "src/ui/hex.rs": "093487676ac0de15845f59e45d6b85a6d09bd4dc3bd946ac38bbd3112f0c19cb",
 
-  "src/ui/hex/connection/stop.rs": "9d50d0de84f686db38f61e704c1d848443b92e159c7c0b9a501a83dadce6ea20",
+  "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "bb316bbf37f9bc139bca2db09f273cc17be0c47b5c1e2e7555017ffa5b76b802",
+  "src/ui/hex/connection/stop_tests.rs": "9b33da24bb6e53590babf1c89c2fb2789c64ac543cc983a8c3fe20456ca0875f",
 
-  "src/ui/hex/connection/stop_tests/api.rs": "fdbace0c0b926c5a8520497d841c9180e611c1724a5e1c25464204e0e8285fde",
+  "src/ui/hex/connection/stop_tests/api.rs": "56889128466550fc550e3a7afa026ead2fc3810a5f4f5e54801024b78f9b9c72",
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 

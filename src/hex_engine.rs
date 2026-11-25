@@ -799,27 +799,26 @@ impl HexEngine {
         };
         let sent = Instant::now();
         let current = request("status").map_err(|_| refused("stop-unconfirmed"))?;
-        if current["status"] != "status" {
-            return Err(refused("stop-unconfirmed"));
+        let meeting = &current["meeting"];
+        let refusal = match meeting["state"].as_str() {
+            Some("idle" | "stopped" | "complete" | "finished") => Some("not-recording"),
+            Some("transcribing") => Some("recording-changed"),
+            Some("recording" | "starting") => (!meeting["id"].is_null()
+                && meeting["id"].as_str() != Some(expected_id))
+            .then_some("recording-changed"),
+            _ => return Err(refused("stop-unconfirmed")),
+        };
+        let unsupported = current["capabilities"]["meetings"] == false;
+        let status = self
+            .parse_status(current)
+            .map_err(|_| refused("stop-unconfirmed"))?;
+        *observed = Some((sent, Ok(status)));
+        if let Some(code) = refusal {
+            return Err(refused(code));
         }
-        if current["meeting"]["state"] == "idle" {
-            return Err(refused("not-recording"));
-        }
-        if !matches!(
-            current["meeting"]["state"].as_str(),
-            Some("recording" | "starting")
-        ) || (!current["meeting"]["id"].is_null()
-            && current["meeting"]["id"].as_str() != Some(expected_id))
-        {
-            return Err(refused("recording-changed"));
-        }
-        if current["capabilities"]["meetings"] == false {
+        if unsupported {
             return Err(HexError::Unsupported);
         }
-        *observed = self
-            .parse_status(current)
-            .ok()
-            .map(|status| (sent, Ok(status)));
         // Hex has no atomic ID-scoped stop. This is the caller-requested status-check fallback.
         let reply = request("meeting-stop")?;
         if reply["status"] != "done" {
