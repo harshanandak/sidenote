@@ -101,7 +101,11 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
                 .on_press(|s: &mut State| s.live_toggle_panel()),
         );
     }
-    if !recording && !live && m.as_ref().is_none_or(|m| m.phase == SavedPhase::Ended) {
+    if !recording
+        && !live
+        && m.as_ref()
+            .is_none_or(|m| m.phase == SavedPhase::Ended && m.parts.is_empty())
+    {
         return None;
     }
     if recording {
@@ -128,7 +132,10 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
                 .button_disabled(s.hex_record_busy())
                 .on_press(|s: &mut State| s.meeting_pause()),
             );
-    } else if m.as_ref().is_some_and(|m| m.phase != SavedPhase::Ended) {
+    } else if m
+        .as_ref()
+        .is_some_and(|m| m.phase != SavedPhase::Ended || !m.parts.is_empty())
+    {
         control = control.child(
             button("Resume", "meeting-resume", &icons::MIC)
                 .button_disabled(s.hex_record_busy())
