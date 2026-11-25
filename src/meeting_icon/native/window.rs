@@ -1047,21 +1047,12 @@ impl View {
                             | if live { DT_RIGHT } else { DT_CENTER },
                     );
                 }
-                if !pill {
-                    let brush = CreateSolidBrush(0x00b5c9ed);
-                    let prior = SelectObject(surface.dc, brush);
-                    let pen = SelectObject(surface.dc, GetStockObject(NULL_PEN));
-                    let c = left + height / 2;
-                    let r = self.px(5.0);
-                    Ellipse(surface.dc, c - r, height / 2 - r, c + r, height / 2 + r);
-                    SelectObject(surface.dc, pen);
-                    SelectObject(surface.dc, prior);
-                    DeleteObject(brush);
-                }
             }
             let radius = width.min(height) as f32 / 2.0;
             let border = radius - self.layout.get().scale;
             let opacity = look.map_or(1.0, |look| look.opacity);
+            let bead_radius = 5.0 * self.layout.get().scale;
+            let pixels = surface.pixels();
             for y in 0..height {
                 for x in 0..width {
                     let cx = (x as f32 + 0.5).clamp(left as f32 + radius, width as f32 - radius);
@@ -1070,9 +1061,18 @@ impl View {
                         ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
                     let a = ((radius - distance + 0.5).clamp(0.0, 1.0) * opacity * 255.0).round()
                         as u32;
-                    let p = &mut surface.pixels()[(y * width + x) as usize];
+                    let p = &mut pixels[(y * width + x) as usize];
                     if live && distance > border {
                         *p = nub::BORDER;
+                    }
+                    if !pill && distance < bead_radius + 0.5 {
+                        let ink = (bead_radius - distance + 0.5).min(1.0);
+                        let mix = |shift: u32| {
+                            let background = (*p >> shift & 255u32) as f32;
+                            let bead = (0x00b5c9edu32 >> shift & 255u32) as f32;
+                            (background + (bead - background) * ink).round() as u32
+                        };
+                        *p = (mix(16) << 16) | (mix(8) << 8) | mix(0);
                     }
                     *p = (a << 24)
                         | (((*p >> 16 & 255) * a / 255) << 16)
@@ -1701,36 +1701,84 @@ fn meeting_icon_capture_affinity_updates_live_windows() {
     wait_for(card, WDA_EXCLUDEFROMCAPTURE);
 }
 
+fn sample_recording(view: &View, now: Instant, level: Option<f32>) -> io::Result<Surface> {
+    view.motion.set(nub::Motion::default());
+    view.frame.replace(Frame {
+        recording: true,
+        elapsed: 120,
+        ..Frame::default()
+    });
+    view.advance(now, level);
+    view.advance(now + Duration::from_millis(240), level);
+    let (surface, _) = view.draw_icon()?;
+    Ok(surface)
+}
+
 pub(super) fn render_synthetic() -> io::Result<()> {
-    unsafe {
-        let view = synthetic_view(1.0)?;
-        for notice in [
-            Notice::Writing,
-            Notice::Later,
-            Notice::Failed(crate::core::meeting_job::Cause::Other),
-            Notice::Skipped(SummarySkip::Off),
-            Notice::Skipped(SummarySkip::Short),
-            Notice::Skipped(SummarySkip::Empty),
-            Notice::Unavailable,
-        ] {
-            view.frame.borrow_mut().notice = Some(notice);
-            view.paint_icon()?;
+    let notice_view = synthetic_view(1.0)?;
+    for notice in [
+        Notice::Writing,
+        Notice::Later,
+        Notice::Failed(crate::core::meeting_job::Cause::Other),
+        Notice::Skipped(SummarySkip::Off),
+        Notice::Skipped(SummarySkip::Short),
+        Notice::Skipped(SummarySkip::Empty),
+        Notice::Unavailable,
+    ] {
+        notice_view.frame.borrow_mut().notice = Some(notice);
+        unsafe { notice_view.present_icon()? };
+    }
+    notice_view.frame.replace(Frame {
+        skipped: true,
+        ..Frame::default()
+    });
+    unsafe { notice_view.present_icon()? };
+
+    for (scale, suffix) in [(1.0, ""), (1.25, "-125"), (1.5, "-150"), (2.0, "-200")] {
+        let view = synthetic_view(scale)?;
+        let (mut idle, _) = view.draw_icon()?;
+        idle.save(&format!("floating-icon-idle{suffix}.png"), true);
+        let now = Instant::now();
+        for (name, level) in [("bead", None), ("pill", Some(0.1))] {
+            sample_recording(&view, now, level)?
+                .save(&format!("floating-icon-{name}{suffix}.png"), true);
         }
-        view.frame.borrow_mut().notice = None;
-        for (recording, pill, skipped) in [
-            (true, false, false),
-            (true, true, false),
-            (false, false, true),
-        ] {
-            let mut frame = view.frame.borrow_mut();
-            frame.recording = recording;
-            frame.pill = pill;
-            frame.skipped = skipped;
-            frame.elapsed = 120;
-            drop(frame);
-            view.paint_icon()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn indicator_samples_show_quiet_speech_and_antialiased_idle_at_each_scale() {
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        let view = synthetic_view(scale).unwrap();
+        let (mut idle, _) = view.draw_icon().unwrap();
+        assert!(
+            idle.pixels()
+                .iter()
+                .any(|&p| p > 0xff1f2630 && p < 0xffb5c9ed),
+            "idle edge at {scale}x"
+        );
+
+        let now = Instant::now();
+        let mut quiet = sample_recording(&view, now, None).unwrap();
+        let mut speech = sample_recording(&view, now, Some(0.1)).unwrap();
+        let stride = quiet.width as usize;
+        let meter = view.px(93.0) as usize;
+        assert_eq!((quiet.width, quiet.height), (speech.width, speech.height));
+        let mut changed = 0;
+        for (a, b) in quiet
+            .pixels()
+            .chunks_exact(stride)
+            .zip(speech.pixels().chunks_exact(stride))
+        {
+            changed += a[..meter]
+                .iter()
+                .zip(&b[..meter])
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(a[meter..], b[meter..], "timer at {scale}x");
         }
-        Ok(())
+        assert!(changed > 0, "speech at {scale}x");
     }
 }
 

@@ -347,7 +347,7 @@
 
   "src/meeting_icon/native.rs": "b8057a243e1bd7d1679b65ca9962756722de4601a897ae83a9a25a30b58ff73c",
 
-  "src/meeting_icon/native/window.rs": "0b41c573a4d4c746f38b596a47f3974d5b4507683d0ef777309169265a8930ef",
+  "src/meeting_icon/native/window.rs": "ab18a0f19c775c873fbe2fa3a6aae57372ef4d516a7d06867d749cb1b25361b5",
 
   "src/operations.rs": "0dfc204d0fb7235730bf0e70e8e7f1f4df945e520de7fe05e0954576e31d44f9",
 
@@ -359,7 +359,7 @@
 
   "src/platform/user_runner.rs": "f5c10133b9d4110ccc88c021306a56c6aeb8b6fc96d50243999d5b553f7b1bf2",
 
-  "src/platform/windows.rs": "804df1739422f039613f3ea8fa4067c3b5df069aa9e8b767cf1beb9f58922492",
+  "src/platform/windows.rs": "6277e4206aeef357ac7d90593bbce14154c2ee18ee29e8b7334a998a505794ff",
 
   "src/platform/windows/job_process.rs": "b0f03992270107af88f15010bad4779d55149d8605dc2ed4c6f06efaf5bc945f",
 
