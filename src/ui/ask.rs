@@ -900,7 +900,7 @@ pub fn overlay_with(
         } else {
             (stack, lead)
         };
-        return place(s, beside(stack, lead, pill));
+        return place(s, beside(stack, lead, pill.max_w(840.0)));
     }
     let empty = s.question.text.trim().is_empty();
     let focused = s.ask_open || s.runner_open;
