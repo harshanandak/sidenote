@@ -272,6 +272,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --lib -- \
             platform::windows::tests:: updates::implementation:: hex_install:: meeting_icon:: \
             platform::windows::close_tests:: core::annotations::notebook_tests:: \
+            core::annotations::tests::hexannotation_ \
             platform::windows::window_icon::tests:: \
             approval_seals_reviewed_bytes_and_send_pins_the_same_files core::config::tests:: \
             core::daily_check::background_tests:: core::meeting_evidence::speech_host_tests:: \
