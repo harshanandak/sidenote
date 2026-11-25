@@ -905,7 +905,8 @@ pub fn overlay_with(
         } else {
             (stack, lead)
         };
-        return place(s, stack.children(lead).child(pill));
+        let dock = col().key("ask-controls").w_full().child(pill);
+        return place(s, stack.children(lead).child(dock));
     }
     let empty = s.question.text.trim().is_empty();
     let focused = s.ask_open || s.runner_open;

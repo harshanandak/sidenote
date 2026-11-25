@@ -334,11 +334,9 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     if let Some(note) = &s.notice {
         pane = pane.child(notice_bar(note, p));
     }
-    let doc = doc.pb(s.overlay_h.get() + 16.0);
-    pane.child(scroll(
-        col().w_full().items_center().child(doc),
-        "list-scroll",
-    ))
+    pane.child(
+        scroll(col().w_full().items_center().child(doc), "list-scroll").mb(s.overlay_h.get()),
+    )
     .child(ask::overlay(s, k, p, narrow, layer))
 }
 
@@ -472,7 +470,10 @@ mod tests {
     #[test]
     fn home_last_row_scrolls_clear_of_ask() {
         crate::test_paths::isolate();
+        let detect = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        crate::ui::hex::SKIP_INSTALL_DETECT.set(detect);
+        crate::ui::scene_agents(&mut state, &["codex"]);
         let meeting = fixture();
         state.meetings = (1..=40)
             .map(|suffix| {
