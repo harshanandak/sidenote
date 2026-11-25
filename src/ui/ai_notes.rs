@@ -1363,7 +1363,7 @@ pub fn setup_card(s: &State, p: Palette) -> Option<El> {
         .find(|h| h.offered() && a.found.contains(&(*h, true)));
     let setup = if helper.is_some() {
         roles::SMALL.wrap(
-            "An AI agent is installed. Choose an agent to write meeting summaries.",
+            "Choose which installed AI tool writes meeting summaries.",
             p.soft,
         )
     } else {

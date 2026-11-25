@@ -1363,14 +1363,36 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
         return;
     }
     let mut rt = page();
-    rt.update(|s, _| scene_agents(s, ALL_AGENTS));
+    let executable = rt
+        .state
+        .store
+        .root
+        .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+    std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+    let mut runner = rt
+        .state
+        .runners
+        .iter()
+        .find(|runner| runner.name == "Codex")
+        .unwrap()
+        .clone();
+    runner.program = executable.to_string_lossy().into_owned();
+    std::fs::write(
+        rt.state.store.root.join("runners.json"),
+        serde_json::to_vec(&[runner]).unwrap(),
+    )
+    .unwrap();
+    rt.update(|s, _| s.reload_runners());
     rt.frame(0.0);
-    assert!(rt.find("runner-menu").is_none());
+    assert!(rt.find("ask-options-menu").is_none());
     for context in ["meeting", "new chat", "live screen"] {
         if context == "new chat" {
             rt.update(|s, _| s.selected = None);
         } else if context == "live screen" {
-            rt.update(|s, _| scene_live(s, "", &[], false));
+            rt.update(|s, _| {
+                scene_live(s, "", &[], false);
+                s.reload_runners();
+            });
         }
         rt.frame(0.0);
         tap(&mut rt, "ask-options");
@@ -1387,7 +1409,10 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             })
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
-        assert!(rt.find("runner-menu").is_some(), "{context}");
+        assert!(
+            rt.state.runner_open && rt.find("ask-options-menu").is_some(),
+            "{context}"
+        );
         rt.update(|s, _| s.runner_open = false);
         rt.frame(0.0);
     }
@@ -1448,6 +1473,12 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
         assert_eq!(chip(&rt), "Ask options, List my tasks");
+        rt.update(|s, _| super::live::parts_scene(s, "paused"));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), MEETING);
+        rt.update(|s, _| s.set_ask_scope(true));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
     }
 }
 

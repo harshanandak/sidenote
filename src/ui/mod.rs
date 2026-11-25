@@ -379,7 +379,6 @@ pub struct State {
     /// Height of the floating Ask bar, so the column can scroll its last line above it.
     pub overlay_h: Cell<f32>,
     pub live_document_h: Cell<f32>,
-    pub live_thread_h: Cell<f32>,
     /// A scroll to repeat for a few frames, until the element it names has been laid out.
     pending_scroll: Option<PendingScroll>,
     /// Puts the latest question at the top of the thread once it is laid out.
@@ -612,7 +611,6 @@ impl State {
             app_h: Cell::new(DEFAULT_SIZE.1),
             pane_h: Cell::new(800.0),
             live_document_h: Cell::new(340.0),
-            live_thread_h: Cell::new(140.0),
             overlay_h: Cell::new(78.0),
             pending_scroll: None,
             pending_thread: None,
@@ -1332,9 +1330,9 @@ impl State {
             } else {
                 None
             },
-            live_notes: self
-                .ask_live_meeting()
-                .then(|| self.live_notes.text.clone()),
+            live_notes: (self.ask_live_meeting()
+                || (self.on_live() && self.ask_meeting_id().is_some()))
+            .then(|| self.live_notes.text.clone()),
         };
         let used_model = options.model.clone();
         let requested_model = match &options.connection {
@@ -1346,6 +1344,9 @@ impl State {
         self.question = TextEdit::new("");
         self.ask_errors.remove(&id);
         self.ask_settings.retry_questions.remove(&id);
+        if self.ask_settings.details_open.as_deref() == Some(id.as_str()) {
+            self.ask_settings.details_open = None;
+        }
         self.generation += 1;
         let generation = self.generation;
         let events = self.events_tx.clone();
@@ -2407,15 +2408,15 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(h) = cx.layout_with("live-pane", |r| r[3].round() as i32) {
         s.pane_h.set(h as f32);
     }
-    if s.on_live() {
-        if let Some(h) = cx.layout_with("live", |r| r[3].round() as i32) {
-            s.live_document_h.set(h as f32);
-        }
-        if let Some(h) = cx.layout_with("ask-thread", |r| r[3].round() as i32) {
-            s.live_thread_h.set(h as f32);
-        }
+    if s.on_live()
+        && let Some(h) = cx.layout_with("live", |r| r[3].round() as i32)
+    {
+        s.live_document_h.set(h as f32);
     }
-    if let Some(h) = cx.layout_with("ask-overlay", |r| r[3].round() as i32) {
+    if s.selected.is_some()
+        && s.meeting_ui.tabs
+        && let Some(h) = cx.layout_with("ask-overlay", |r| r[3].round() as i32)
+    {
         s.overlay_h.set(h as f32);
     }
     if let Some(h) = cx.layout_with("app", |r| r[3].round() as i32) {
@@ -2807,6 +2808,26 @@ const SCENE_LINES: &[(u64, bool, &str)] = &[
 ];
 
 /// The live page while recording, with the Ask pill ready and the given notes and lines.
+fn scene_live_dock(s: &mut State, phase: &str, open: bool, answer: bool) {
+    live::parts_scene(s, phase);
+    scene_agents(s, ALL_AGENTS);
+    s.live.as_mut().unwrap().panel_open = open;
+    if answer {
+        s.saved.messages = vec![
+            Message {
+                role: "user".into(),
+                text: "What do we need to confirm?".into(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".into(),
+                text: "Confirm the freight rate and check the handling fee before Friday.".into(),
+                ..Default::default()
+            },
+        ];
+    }
+}
+
 fn scene_live(s: &mut State, notes: &str, lines: &[(u64, bool, &str)], panel: bool) {
     hex::scene(s, true);
     scene_agents(s, ALL_AGENTS);
@@ -4329,6 +4350,42 @@ pub fn spec() -> AppSpec<State> {
                     live.close_failed = true;
                     live.saving = live::Saving::Failed("Could not save your notes or a recovery copy. Keep this text before closing Sidenote.".into());
                 }
+            }),
+            ("u2-recording-open", |s| {
+                scene_live_dock(s, "transcript", true, false)
+            }),
+            ("u2-recording-closed", |s| {
+                scene_live_dock(s, "recording", false, false)
+            }),
+            ("u2-paused-open", |s| {
+                scene_live_dock(s, "paused", true, false)
+            }),
+            ("u2-paused-closed", |s| {
+                scene_live_dock(s, "paused", false, false)
+            }),
+            ("u2-recording-answer", |s| {
+                scene_live_dock(s, "transcript", true, true)
+            }),
+            ("u2-paused-answer", |s| {
+                scene_live_dock(s, "paused", true, true)
+            }),
+            ("u2-ask-error", |s| {
+                scene_agents(s, ALL_AGENTS);
+                let id = s.ask_key();
+                let question = "What did we decide?";
+                s.ask_errors
+                    .insert(id.clone(), "The model did not finish the answer.".into());
+                s.ask_settings.retry_questions.insert(id, question.into());
+                s.question = TextEdit::new(question);
+            }),
+            ("u2-ask-options", |s| {
+                scene_live_dock(s, "recording", false, false);
+                s.ask_settings.scope_open = true;
+            }),
+            ("u2-live-notes-placeholder", |s| {
+                scene_live_dock(s, "paused", true, false);
+                s.live_notes = TextEdit::default();
+                s.live_notes.focused = true;
             }),
             ("meeting-parts-failed", |s| live::parts_scene(s, "failed")),
             ("meeting-parts-recording", |s| {

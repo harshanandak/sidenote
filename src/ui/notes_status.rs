@@ -4,7 +4,7 @@ use super::{
     area::button,
     roles,
     theme::Palette,
-    widgets::{self, BannerKind},
+    widgets::{self, BannerKind, ButtonRole},
 };
 use rune::{El, col, row};
 use sidenote::core::{
@@ -51,7 +51,7 @@ fn running_message_at(started_at: i64, now: i64) -> String {
 }
 fn summary_message(job: &Job, selected: Option<Helper>) -> String {
     let helper = job.helper.or(selected);
-    let name = helper.map(Helper::name).unwrap_or("The agent");
+    let name = helper.map(Helper::name).unwrap_or("The summary tool");
     match &job.state {
         JobState::NoHelper => "Choose Claude Code in Settings, then press Write summary. Your transcript is saved.".into(),
         JobState::NeedsClick => "Sidenote only writes summaries automatically for meetings that end after you turn on Meeting summary. You can write this one now.".into(),
@@ -142,12 +142,12 @@ pub fn label(state: &JobState) -> &'static str {
         JobState::Queued => "Summary queued",
         JobState::Running => "Writing summary",
         JobState::HelperUnavailableOnLinux => "Summaries not available on Linux yet",
-        JobState::HelperMissing => "Agent not found",
+        JobState::HelperMissing => "Summary tool not found",
         JobState::BackendError {
             next_try_ms: Some(_),
             ..
-        } => "Agent failed, retry scheduled",
-        JobState::BackendError { .. } => "Agent failed, retry needed",
+        } => "Summary retry scheduled",
+        JobState::BackendError { .. } => "Summary failed",
         JobState::HelperLimit { .. } => "Agent usage limit reached",
         JobState::HelperAuth { .. } => "Agent sign-in needed",
         JobState::TimedOut => "Agent took too long",
@@ -228,7 +228,7 @@ pub fn list_label(job: &Job) -> Option<&'static str> {
 }
 fn request_button(title: &str, id: &str, mode: Request, key: &str, s: &State, p: Palette) -> El {
     let id = id.to_string();
-    let b = button(title, key, p);
+    let b = widgets::button(title, key, ButtonRole::Secondary, p);
     if s.ai_notes.pending.is_some() {
         b.dim(0.5)
     } else {
@@ -370,8 +370,13 @@ fn banner_with(s: &State, id: &str, job: &Job, p: Palette, show_engine: bool) ->
     match job.state {
         JobState::NoHelper => {
             buttons = buttons.child(
-                button("Choose an agent", "notes-state-setup", p)
-                    .on_press(|s: &mut State| s.open_ai_notes()),
+                widgets::button(
+                    "Choose an AI tool",
+                    "notes-state-setup",
+                    ButtonRole::Secondary,
+                    p,
+                )
+                .on_press(|s: &mut State| s.open_ai_notes()),
             )
         }
         JobState::NeedsClick => {
@@ -389,8 +394,13 @@ fn banner_with(s: &State, id: &str, job: &Job, p: Palette, show_engine: bool) ->
         }
         JobState::HelperMissing => {
             buttons = buttons.child(
-                button("Choose an agent", "notes-state-settings", p)
-                    .on_press(|s: &mut State| s.open_ai_notes()),
+                widgets::button(
+                    "Choose an AI tool",
+                    "notes-state-settings",
+                    ButtonRole::Secondary,
+                    p,
+                )
+                .on_press(|s: &mut State| s.open_ai_notes()),
             )
         }
         JobState::BackendError { .. }
@@ -406,8 +416,13 @@ fn banner_with(s: &State, id: &str, job: &Job, p: Palette, show_engine: bool) ->
                     p,
                 ))
                 .child(
-                    button("Choose an agent", "notes-state-settings", p)
-                        .on_press(|s: &mut State| s.open_ai_notes()),
+                    widgets::button(
+                        "Choose an AI tool",
+                        "notes-state-settings",
+                        ButtonRole::Secondary,
+                        p,
+                    )
+                    .on_press(|s: &mut State| s.open_ai_notes()),
                 )
         }
         JobState::TimedOut | JobState::BadOutput | JobState::ContextTooLong { .. } => {
@@ -446,7 +461,8 @@ fn banner_with(s: &State, id: &str, job: &Job, p: Palette, show_engine: bool) ->
     if let JobState::BackendError { exit: Some(_), .. } = job.state {
         let key = id.to_string();
         buttons = buttons.child(
-            button("Details", "notes-error-details", p)
+            widgets::button("Details", "notes-error-details", ButtonRole::Secondary, p)
+                .expanded(s.ai_notes.details.contains(id))
                 .self_start()
                 .on_press(move |s: &mut State| {
                     if !s.ai_notes.details.remove(&key) {
@@ -461,7 +477,10 @@ fn banner_with(s: &State, id: &str, job: &Job, p: Palette, show_engine: bool) ->
     } = job.state
         && s.ai_notes.details.contains(id)
     {
-        c = c.child(roles::META.wrap(format!("The agent ended with exit code {code}."), p.soft));
+        c = c.child(roles::META.wrap(
+            format!("The summary tool ended with exit code {code}."),
+            p.soft,
+        ));
     }
     if let Some(pending) = s.ai_notes.pending {
         c = c.child(roles::META.wrap(pending, p.soft).role("status"));

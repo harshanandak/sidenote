@@ -327,6 +327,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         panel
             .max_h(super::live::limits(s).thread)
             .min_h(0.0)
+            .shrink()
             .clip_rounded(22.0)
     } else {
         panel
@@ -398,7 +399,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
                 .py(6.0),
         );
     }
-    // The thread floats over the meeting, so it takes at most about half the pane.
+    // Leave room for the document and any open transcript above the dock.
     let max_h = if s.on_live() {
         (super::live::limits(s).thread - 44.0).max(0.0)
     } else if s.transcript_open && !s.meeting_ui.tabs {
@@ -411,6 +412,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         .w_full()
         .max_h(max_h)
         .min_h(0.0)
+        .shrink()
         .scroll(rune::ScrollSpec {
             stick_bottom: false,
         })
@@ -519,7 +521,12 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
             "Where do things stand?",
             &["What are they waiting on from us?", "Prep my next call"][..],
         )
-    } else if s.ask_current_live() {
+    } else if s.on_live()
+        && (s.ask_current_live() || s.ask_meeting_id().is_some())
+        && s.live
+            .as_ref()
+            .is_some_and(|live| live.phase == super::live::Phase::Recording)
+    {
         ("What did I miss", SUGGESTIONS)
     } else if s.ask_meeting_id().is_some() {
         ("What did we decide?", SUGGESTIONS)
@@ -530,6 +537,7 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
 
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
     let (prompt, more) = prompts(s);
+    let gutter = if chip { 67.0 } else { 6.0 };
     let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let trigger = pressable(
         row()
@@ -558,12 +566,20 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
         }
     });
     if s.runner_open && !s.ask_settings.connection.settings.enabled {
-        return runner_choice(s, k, p, trigger, layer);
+        return runner_choice(
+            s,
+            k,
+            p,
+            trigger.label(format!("Model: {}", picker_label(s))),
+            gutter,
+            layer,
+        );
     }
     let mut menu = Menu::new("ask-options")
         .trigger(trigger)
         .open(s.ask_settings.scope_open)
         .placement(Placement::TopEnd)
+        .gutter(gutter)
         .min_width(220.0)
         .on_close(|s: &mut State| s.ask_settings.scope_open = false);
     if chip {
@@ -608,6 +624,7 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
                 model
             })
             .description("Open connection settings")
+            .disabled(s.asks.contains_key(&s.ask_key()))
             .on_select(|s: &mut State| {
                 s.ask_settings.scope_open = false;
                 s.open_connection_settings();
@@ -617,10 +634,13 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
         menu = menu.item(
             MenuItem::new("Model")
                 .description(picker_label(s))
-                .on_select(|s: &mut State| {
+                .on_select_tx(|s: &mut State, tx| {
                     s.ask_settings.scope_open = false;
                     s.runner_open = true;
                     s.reload_runners();
+                    if tx.by_keys() {
+                        tx.focus_when_shown("ask-options-item0", true);
+                    }
                 }),
         );
     }
@@ -676,7 +696,14 @@ fn choice_label(s: &State, name: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
-fn runner_choice(s: &State, k: &Kit, p: Palette, trigger: El, layer: &mut Vec<El>) -> El {
+fn runner_choice(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    trigger: El,
+    gutter: f32,
+    layer: &mut Vec<El>,
+) -> El {
     let overridden = if s.ask_live_meeting() {
         s.ask_settings.meeting_override.is_some()
     } else {
@@ -685,11 +712,12 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, trigger: El, layer: &mut Vec<El
     let (default_runner, default_model) = super::ask_settings::default_choice(s);
     let mut kit = k.clone();
     kit.c.text_weak = p.soft;
-    let mut menu = Menu::new("runner")
+    let mut menu = Menu::new("ask-options")
         .standard()
         .trigger(trigger)
         .open(s.runner_open)
         .placement(Placement::TopEnd)
+        .gutter(gutter)
         .min_width(240.0)
         .on_close(|s: &mut State| s.runner_open = false)
         .item(
@@ -1046,9 +1074,11 @@ fn place(s: &State, stack: El) -> El {
         col()
             .key("ask-overlay")
             .w_full()
+            .min_h(0.0)
+            .shrink()
             .items_center()
             .pb(8.0)
-            .child(stack)
+            .child(stack.min_h(0.0).shrink())
     } else if s.companies.open {
         col().key("company-ask").w_full().min_w(0.0).child(stack)
     } else {
