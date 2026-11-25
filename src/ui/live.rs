@@ -1263,15 +1263,29 @@ fn stamp(seconds: u64) -> String {
     }
 }
 
+fn elapsed_stamp(seconds: u64) -> String {
+    let time = stamp(seconds);
+    format!("+{}", time.strip_prefix('0').unwrap_or(&time))
+}
+
 /// The live transcript above the bar, newest line at the bottom. A scroll area that follows the
 /// end: it keeps following new lines, stops when the reader scrolls up, and follows again once
 /// they are back at the bottom.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PanelLimits {
-    pub space: f32,
+    #[cfg(test)]
+    space: f32,
     pub thread: f32,
     pub transcript: f32,
 }
+pub(super) fn gutter(s: &State) -> f32 {
+    if s.narrow.get() { 16.0 } else { 40.0 }
+}
+
+fn document_height(pane: f32, measured: f32) -> f32 {
+    measured.min(pane * 0.42)
+}
+
 fn panel_limits(
     pane: f32,
     document: f32,
@@ -1280,9 +1294,10 @@ fn panel_limits(
     has_transcript: bool,
     notice: bool,
 ) -> PanelLimits {
-    let space = (pane - document.min((pane - 108.0).max(0.0))).max(0.0);
-    let available = (space - 108.0 - if notice { 46.0 } else { 0.0 }).max(0.0);
-    let transcript_min = if has_transcript && available >= 140.0 {
+    let space = pane - document_height(pane, document);
+    // Pill, prompt row, gaps and bottom inset. Both panels spend only the space left over.
+    let available = (space - 140.0 - if notice { 64.0 } else { 0.0 }).max(0.0);
+    let transcript_min = if has_transcript && available >= 64.0 {
         64.0
     } else {
         0.0
@@ -1303,6 +1318,7 @@ fn panel_limits(
         0.0
     };
     PanelLimits {
+        #[cfg(test)]
         space,
         thread: thread_limit,
         transcript,
@@ -1340,7 +1356,11 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         )
         .child(
             quiet_button("Hide", "live-panel-hide", p)
-                .on_press(|s: &mut State| s.live_toggle_panel()),
+                .label("Hide transcript")
+                .on_press_tx(|s: &mut State, tx| {
+                    s.live_toggle_panel();
+                    tx.focus("meeting-transcript", true);
+                }),
         );
     let note = |text: &str| {
         roles::SMALL
@@ -1374,10 +1394,8 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         c
     } else {
         let mut rows = col().w_full().px(16.0).py(6.0);
-        let mut last: Option<bool> = None;
         for (i, line) in feed.lines.iter().enumerate() {
             if line.text == "Recording resumed" {
-                last = None;
                 rows = rows.child(
                     row().w_full().justify_center().py(8.0).child(
                         roles::META
@@ -1387,8 +1405,6 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                 );
                 continue;
             }
-            let who = (last != Some(line.you)).then_some(line.you);
-            last = Some(line.you);
             rows = rows.child(
                 row()
                     .key(format!("live-line-{i}"))
@@ -1396,19 +1412,19 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                     .gap(10.0)
                     .items_start()
                     .py(3.0)
-                    .child(roles::META.wrap(stamp(line.seconds), p.faint).w(46.0))
+                    .child(
+                        roles::META
+                            .line(elapsed_stamp(line.seconds), p.soft)
+                            .w(44.0),
+                    )
                     .child(
                         roles::META
                             .bold()
                             .wrap(
-                                match who {
-                                    Some(true) => "You",
-                                    Some(false) => "Others",
-                                    None => "",
-                                },
-                                if who == Some(true) { p.ink } else { p.soft },
+                                if line.you { "You" } else { "Others" },
+                                if line.you { p.ink } else { p.soft },
                             )
-                            .w(48.0),
+                            .w(40.0),
                     )
                     .child(roles::SMALL.wrap(&line.text, p.ink).grow(1.0).min_w(0.0)),
             );
@@ -1450,12 +1466,7 @@ fn bar(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El 
         .as_ref()
         .filter(|l| l.panel_open && cap >= 44.0)
         .map(|_| transcript_panel(s, p, cap));
-    let control = parts_control(s, k, p, layer);
-    if let Some(panel) = panel {
-        col().w_full().px(16.0).pb(36.0).child(panel).child(control)
-    } else {
-        ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
-    }
+    ask::overlay_with(s, k, p, narrow, layer, parts_control(s, p), panel)
 }
 
 /// The notes editor: plain text, several lines, under the "Meeting at HH:MM" heading.
@@ -1482,9 +1493,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
                 .pb(6.0),
         );
     }
-    let hint = if s.live.as_ref().is_some_and(|l| l.phase == Phase::Paused) {
-        "Nothing is recorded while paused."
-    } else if starting {
+    let hint = if starting {
         "Starting the recording. You can start writing now."
     } else {
         "Your notes save as you type. You can generate notes after pausing."
@@ -1565,7 +1574,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
                         })),
                 ),
         );
-    } else {
+    } else if !s.live.as_ref().is_some_and(|l| l.phase == Phase::Paused) {
         c = c.child(roles::META.wrap(hint, p.faint));
     }
     c = c.child(
@@ -1887,8 +1896,8 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut doc = col()
         .key("live")
         .w_full()
-        .max_w(720.0)
-        .px(if narrow { 20.0 } else { 40.0 })
+        .max_w(super::meeting::COLUMN + 2.0 * gutter(s))
+        .px(gutter(s))
         .pt(if narrow { 20.0 } else { 40.0 })
         .pb(if phase == Phase::Making { 56.0 } else { 12.0 })
         .items_start()
@@ -1923,9 +1932,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 if phase == Phase::Making || stopping {
                     0.0
                 } else {
-                    s.live_document_h
-                        .get()
-                        .min((s.pane_h.get() - 108.0).max(0.0))
+                    document_height(s.pane_h.get(), s.live_document_h.get())
                 },
             ),
         );
@@ -2011,7 +2018,7 @@ mod writer_tests {
             let answer = panel_limits(pane, document, 150.0, true, true, false);
             assert!(answer.transcript < idle.transcript);
             assert!(answer.transcript + answer.thread.min(150.0) + 128.0 <= answer.space + 0.1);
-            assert!(answer.space + document <= pane + 0.1);
+            assert!(answer.space + document_height(pane, document) <= pane + 0.1);
         }
     }
     #[test]

@@ -1378,7 +1378,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         });
         rt.frame(0.0);
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
-        let chip = |rt: &Runtime<State>| element(rt, "ask-options").label.unwrap();
+        let chip = |rt: &Runtime<State>| element(rt, "ask-prompt").label.unwrap();
         assert_eq!(rt.state.ask_key(), MEETING);
         assert_eq!(chip(&rt), "Ask options, What did we decide?");
         rt.update(|s, _| s.set_ask_scope(true));
@@ -1389,7 +1389,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert_eq!(chip(&rt), "Ask options, List my tasks");
         rt.update(|s, _| s.question = TextEdit::new("A draft"));
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
+        assert!(rt.find("ask-prompt").is_none());
         rt.update(|s, _| {
             s.question = TextEdit::default();
             scene_live(s, "", &[], false);
@@ -1415,7 +1415,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
                 .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
         });
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
+        assert!(rt.find("ask-prompt").is_none());
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);

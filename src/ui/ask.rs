@@ -2,7 +2,9 @@
 //!
 //! The panel and thread use Rune's shared motion tokens and follow the system's reduced motion setting.
 use super::{
-    AskRun, State, roles,
+    AskRun, State, icons,
+    meeting::COLUMN,
+    roles,
     theme::Palette,
     widgets::{ButtonDisabled, hairline, pressable, quiet_button, spaced_caps},
 };
@@ -413,7 +415,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         .child(messages);
     Some(with_note(
         panel
-            .max_w(840.0)
+            .max_w(COLUMN)
             .self_center()
             .child(hairline(p))
             .child(list),
@@ -421,8 +423,8 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
     ))
 }
 
-fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
-    let (prompt, more) = if s.companies.open {
+fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
+    if s.companies.open {
         (
             "Where do things stand?",
             &["What are they waiting on from us?", "Prep my next call"][..],
@@ -433,25 +435,20 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
         ("What did we decide?", SUGGESTIONS)
     } else {
         ("List my tasks", ask_all::SUGGESTIONS)
-    };
+    }
+}
+
+fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
+    let (prompt, more) = prompts(s);
     let trigger = pressable(
         row()
-            .items_center()
-            .gap(5.0)
-            .child(roles::CONTROL.medium().line("/", p.soft))
-            .children(chip.then(|| roles::CONTROL.line(prompt, p.ink))),
+            .center()
+            .child(icons::draw(&icons::MORE, 16.0, p.soft)),
     )
     .key("ask-options")
-    .label(if chip {
-        format!("Ask options, {prompt}")
-    } else {
-        "Ask options".into()
-    })
-    .h(30.0)
-    .px(8.0)
-    .radius(15.0)
-    .border(if chip { 1.0 } else { 0.0 }, p.line)
-    .max_w(154.0)
+    .label("Ask options")
+    .size(44.0, 44.0)
+    .radius(22.0)
     .hover(p.button_hover)
     .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
@@ -676,11 +673,11 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
     menu.build(k, layer).min_w(0.0).shrink()
 }
 
-const ACTION: f32 = 28.0;
+const ACTION: f32 = 44.0;
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
-fn action(s: &State, p: Palette, pending: bool) -> El {
+fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
     let slot = col().key("ask-action").size(ACTION, ACTION).shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
     if pending {
@@ -697,7 +694,7 @@ fn action(s: &State, p: Palette, pending: bool) -> El {
             )
             .help(format!("Stop {who}"))
             .size(ACTION, ACTION)
-            .radius(14.0)
+            .radius(22.0)
             .focus_ring(1.0, 1.0, p.faint)
             .preserve_focus_on_press(true)
             .transition(replace)
@@ -718,10 +715,11 @@ fn action(s: &State, p: Palette, pending: bool) -> El {
             p,
         )
         .size(ACTION, ACTION)
-        .radius(14.0)
+        .radius(22.0)
         .focus_ring(1.0, 1.0, p.faint)
         .preserve_focus_on_press(true)
         .transition(replace)
+        .button_disabled(empty)
         .on_press_tx(|s: &mut State, tx| {
             let q = s.question.text.clone();
             submit(s, &q, tx);
@@ -782,11 +780,15 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let inset = if compact && s.on_live() { 4.0 } else { 16.0 };
+    let inset = if s.on_live() {
+        super::live::gutter(s)
+    } else {
+        16.0
+    };
     let gutter = if s.companies.open { 0.0 } else { inset };
     let mut stack = col()
         .w_full()
-        .max_w(840.0 + 2.0 * gutter + if lead.is_some() { 220.0 } else { 0.0 })
+        .max_w(COLUMN + 2.0 * gutter)
         .px(gutter)
         .gap(6.0);
     if s.back.is_some() && !(s.selected.is_some() && !s.meeting_ui.tabs && s.transcript_open) {
@@ -885,7 +887,7 @@ pub fn overlay_with(
                     .w_full(),
             );
         }
-        stack = stack.child(disclosure.max_w(840.0).self_center());
+        stack = stack.child(disclosure.max_w(COLUMN).self_center());
     }
     if !s.has_agent() && !pending && s.runner_error.is_none() {
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
@@ -905,7 +907,7 @@ pub fn overlay_with(
         } else {
             (stack, lead)
         };
-        return place(s, beside(stack, lead, pill));
+        return place(s, stack.children(lead).child(pill));
     }
     let empty = s.question.text.trim().is_empty();
     let focused = s.ask_open || s.runner_open;
@@ -994,11 +996,28 @@ pub fn overlay_with(
             }
         }
     });
+    let show_prompt = empty && !pending;
+    let dock = col()
+        .key("ask-controls")
+        .w_full()
+        .gap(4.0)
+        .children(show_prompt.then(|| {
+            let prompt = prompts(s).0;
+            quiet_button(prompt, "ask-prompt", p)
+                .label(format!("Ask options, {prompt}"))
+                .h(44.0)
+                .radius(22.0)
+                .border(1.0, p.line)
+                .fill(p.card)
+                .self_start()
+                .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
+        }));
     let pill = row()
         .key("ask-pill")
         .w_full()
-        .max_w(840.0)
+        .max_w(COLUMN)
         .h(70.0)
+        .min_h(70.0)
         .gap(if compact { 2.0 } else { 4.0 })
         .items_center()
         .pl(if compact { 8.0 } else { 22.0 })
@@ -1007,11 +1026,12 @@ pub fn overlay_with(
         .fill(p.card)
         .focus_within_flat()
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
+        .children(lead)
         .child(input)
         .children(model)
-        .child(ask_options(s, k, p, empty && !pending, layer))
-        .children((!empty || pending).then(|| action(s, p, pending)));
-    place(s, beside(stack, lead, pill))
+        .child(ask_options(s, k, p, show_prompt, layer))
+        .child(action(s, p, pending, empty));
+    place(s, stack.child(dock.child(pill)))
 }
 
 fn with_note(stack: El, p: Palette) -> El {
@@ -1029,20 +1049,9 @@ fn place(s: &State, stack: El) -> El {
         col()
             .key("ask-overlay")
             .w_full()
-            .max_h(super::live::limits(s).space)
-            .min_h(0.0)
-            .shrink()
             .items_center()
             .pb(8.0)
-            .child(
-                stack
-                    .max_h((super::live::limits(s).space - 8.0).max(0.0))
-                    .min_h(0.0)
-                    .shrink()
-                    .scroll(rune::ScrollSpec {
-                        stick_bottom: false,
-                    }),
-            )
+            .child(stack)
     } else if s.companies.open {
         col().key("company-ask").w_full().min_w(0.0).child(stack)
     } else {
@@ -1053,19 +1062,6 @@ fn place(s: &State, stack: El) -> El {
             .pb(8.0)
             .child(stack)
     }
-}
-
-fn beside(stack: El, lead: Option<El>, pill: El) -> El {
-    stack.child(
-        row()
-            .key("meeting-bottom-bar")
-            .w_full()
-            .gap(8.0)
-            .items_center()
-            .justify_center()
-            .children(lead)
-            .child(pill.grow(1.0).min_w(0.0)),
-    )
 }
 
 #[cfg(test)]
