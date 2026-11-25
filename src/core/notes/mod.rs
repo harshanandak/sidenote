@@ -95,8 +95,8 @@ impl SummarySkip {
     }
     pub fn detail(self) -> &'static str {
         match self {
-            Self::Short => "Too short to summarise.",
-            Self::Off => "Summaries off.",
+            Self::Short => "Too short to summarize.",
+            Self::Off => "Summaries are off.",
             Self::Empty => "No speech heard.",
         }
     }
