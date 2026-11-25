@@ -934,11 +934,17 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
     .child(crate::ui::memory::settled::meeting_footer(s, m, p).mt(20.0))
 }
 
+pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
+
 pub fn transcript_height(s: &State) -> f32 {
     // Leave room for transcript rows when the time controls wrap on a phone.
     let time_controls =
         super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
-    let minimum = if time_controls { 256.0 } else { 124.0 };
+    let minimum = if time_controls {
+        TIME_CONTROLS_MIN_HEIGHT
+    } else {
+        124.0
+    };
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
@@ -1245,10 +1251,12 @@ mod tests {
                         .unwrap()
                 };
                 let viewport = element(&rt, "meeting-scroll");
+                let dock = element(&rt, "ask-overlay");
                 assert!(last_line.rect[1] >= viewport.rect[1]);
                 assert!(
                     last_line.rect[1] + last_line.rect[3] <= viewport.rect[1] + viewport.rect[3]
                 );
+                assert!(last_line.rect[1] + last_line.rect[3] <= dock.rect[1]);
             }
 
             rt.update(|s, _| s.toggle_transcript());
@@ -1434,6 +1442,7 @@ mod tests {
         crate::test_paths::isolate();
         let folder = core::meetings_dir().join(ID);
         std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("english-summary.json"), b"{}").unwrap();
         std::fs::write(
             folder.join("english-transcript.md"),
             "[00:00:06.000] Maya (English): Ready?\n[00:00:27.000] Tom (English): Start the review.\n",
@@ -1449,7 +1458,9 @@ mod tests {
         rt.settle_all();
         rt.frame(0.0);
 
-        assert!(element(&rt, "transcript-jump").focusable);
+        let is_jump =
+            |e: rune::ElementInfo| e.focusable && e.label.as_deref() == Some("Go to a time");
+        assert!(rt.elements().into_iter().any(is_jump));
         let scroll = element(&rt, "transcript-scroll").rect;
         assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
         let [_, y, _, h] = element(&rt, "transcript-copy").rect;
