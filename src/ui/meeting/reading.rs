@@ -934,11 +934,17 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
     .child(crate::ui::memory::settled::meeting_footer(s, m, p).mt(20.0))
 }
 
+pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
+
 pub fn transcript_height(s: &State) -> f32 {
     // Leave room for transcript rows when the time controls wrap on a phone.
     let time_controls =
         super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
-    let minimum = if time_controls { 256.0 } else { 124.0 };
+    let minimum = if time_controls {
+        TIME_CONTROLS_MIN_HEIGHT
+    } else {
+        124.0
+    };
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
