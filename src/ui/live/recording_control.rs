@@ -201,28 +201,14 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
             .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
-    if recording
-        && (live
-            || s.live
-                .as_ref()
-                .and_then(|l| l.session.as_ref())
-                .is_some_and(|m| s.selected.as_deref() == Some(m.id.as_str())))
-    {
-        let expected = super::super::hex::recording_id(s);
-        let reason = super::super::hex::stop_blocked(s);
-        use crate::ui::{
-            icons,
-            widgets::{ButtonRole, icon_button},
-        };
+    let owner = s.live.as_ref().and_then(|l| l.session.as_ref());
+    if recording && (live || owner.is_some_and(|m| s.selected.as_ref() == Some(&m.id))) {
+        use crate::ui::icons::STOP;
+        use crate::ui::widgets::{ButtonRole, icon_button};
+        let expected = hex::recording_id(s);
+        let reason = hex::stop_blocked(s);
         let stop = if s.narrow.get() {
-            icon_button(
-                &icons::STOP,
-                "Stop recording",
-                "hex-stop",
-                ButtonRole::Ghost,
-                p,
-            )
-            .size(28.0, 28.0)
+            icon_button(&STOP, "Stop recording", "hex-stop", ButtonRole::Ghost, p).size(28.0, 28.0)
         } else {
             quiet_button("Stop", "hex-stop", p)
         };

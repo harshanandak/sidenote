@@ -1006,7 +1006,7 @@ pub fn overlay_with(
         .children(model)
         .child(ask_options(s, k, p, empty && !pending, layer))
         .children((!empty || pending).then(|| action(s, p, pending)));
-    let (stack, lead) = if s.on_live() && s.app_w.get() < 380.0 {
+    let (stack, lead) = if compact {
         (stack.children(lead.map(El::self_start)), None)
     } else {
         (stack, lead)
