@@ -79,7 +79,9 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
     let mut control = row()
         .key("meeting-recording-control")
         .items_center()
-        .gap(2.0);
+        .gap(2.0)
+        .radius(22.0)
+        .fill(if recording { p.chip } else { p.card });
     let button = |name, key, glyph| {
         if compact {
             icon_button(glyph, name, key, ButtonRole::Ghost, p).size(28.0, 44.0)
@@ -124,8 +126,10 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             )
             .key("meeting-pause")
             .label("Pause recording")
-            .size(if compact { 28.0 } else { 44.0 }, 44.0)
-            .radius(22.0)
+            .w(28.0)
+            .h(28.0)
+            .radius(14.0)
+            .fill(p.bg)
             .hover(p.button_hover)
             .center()
             .button_disabled(s.hex_record_busy())
