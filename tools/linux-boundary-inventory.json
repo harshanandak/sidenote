@@ -421,7 +421,7 @@
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "9b33da24bb6e53590babf1c89c2fb2789c64ac543cc983a8c3fe20456ca0875f",
+  "src/ui/hex/connection/stop_tests.rs": "22d957f20c543a8a54f8cc26d631bb42ecb98902ba72d35336f7f2be8627277d",
 
   "src/ui/hex/connection/stop_tests/api.rs": "56889128466550fc550e3a7afa026ead2fc3810a5f4f5e54801024b78f9b9c72",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "3ceefff6b732ce6a7b99aecb84eda589a8deb60b9befbe318b914f56ac4f6641",
+  "src/ui/mod.rs": "b8bdf637fe0cfca7b25b889432524d1ecbb8d1a68143cc703536ae5ba4c46788",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
