@@ -1018,7 +1018,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn narrow_new_meeting_gives_hex_check_its_own_line() {
+    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
         use crate::ui::theme;
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
@@ -1053,11 +1053,28 @@ mod tests {
             .iter()
             .find(|e| e.text.as_deref() == Some("Checking for Hex"))
             .expect("short checking message");
-        assert!(checking.rect[1] >= button.rect[1] + button.rect[3] + 5.0);
-        assert_eq!(checking.rect[3], roles::META.lh);
-        let button_right = button.rect[0] + button.rect[2];
-        let checking_right = checking.rect[0] + checking.rect[2];
-        assert!((button_right - checking_right).abs() < 0.5);
+        let inside = |r: [f32; 4]| {
+            r[0] >= button.rect[0] - 0.5
+                && r[1] >= button.rect[1] - 0.5
+                && r[0] + r[2] <= button.rect[0] + button.rect[2] + 0.5
+                && r[1] + r[3] <= button.rect[1] + button.rect[3] + 0.5
+        };
+        assert!(inside(checking.rect), "progress shows inside the button");
+        assert_eq!(
+            elements
+                .iter()
+                .filter(|e| e.text.as_deref() == Some("Checking for Hex"))
+                .count(),
+            1,
+            "no separate status line below the button"
+        );
+        assert_eq!(
+            button.label.as_deref(),
+            Some("New meeting (Checking for Hex)")
+        );
+        assert_eq!(button.help.as_deref(), Some("Checking for Hex"));
+        assert!(!button.focusable, "the button is disabled while checking");
+        assert!(button.rect[0] + button.rect[2] <= 360.0 + 0.5);
     }
 
     #[test]
