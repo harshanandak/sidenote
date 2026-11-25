@@ -1,5 +1,9 @@
 //! Quiet update notices and the device's Updates settings.
-use super::{Event, State, hex, roles, theme::Palette, widgets::hairline};
+use super::{
+    Event, State, hex, roles,
+    theme::Palette,
+    widgets::{ButtonDisabled, hairline},
+};
 use rune::{El, col, el, row};
 use sidenote::core::{CHANNEL, Channel};
 use sidenote::listener::heartbeat;
@@ -338,10 +342,9 @@ fn install(s: &State, p: Palette, footer: bool) -> El {
             )
         });
     let title = match s.updates.status.phase {
-        Phase::Downloading => format!("Downloading {}%", s.updates.status.progress),
-        Phase::Preparing => "Preparing update".into(),
-        Phase::StoppingListener => "Stopping the listener".into(),
-        _ => "Install and restart".into(),
+        Phase::Preparing => "Preparing update",
+        Phase::StoppingListener => "Stopping the listener",
+        _ => "Install and restart",
     };
     let b = crate::ui::widgets::button(
         title,
@@ -358,15 +361,14 @@ fn install(s: &State, p: Palette, footer: bool) -> El {
     } else {
         "Update progress"
     })
-    .disabled(!ready)
-    .dim(if ready { 1.0 } else { 0.5 });
+    .button_disabled(!ready);
     if ready {
         b.on_press(|s: &mut State| s.install_update())
     } else {
         b.help(if s.updates.status.phase == Phase::Ready {
             "Finish recording, Ask and background jobs before installing."
         } else {
-            "The download must finish first"
+            "Sidenote is getting the update ready to install."
         })
     }
 }
@@ -380,7 +382,12 @@ fn actions(s: &State, p: Palette, footer: bool) -> El {
             | Phase::Preparing
             | Phase::StoppingListener
     ) {
-        actions = actions.child(install(s, p, footer));
+        if !matches!(
+            s.updates.status.phase,
+            Phase::Available | Phase::Downloading
+        ) {
+            actions = actions.child(install(s, p, footer));
+        }
         if !s.updates.applying
             && !matches!(
                 s.updates.status.phase,
@@ -449,13 +456,13 @@ pub fn section(s: &State, p: Palette) -> El {
         .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
         .map_or_else(
             || "Not checked yet".into(),
-            |d| format!("Last checked {}", d.format("%d %b %Y at %H:%M")),
+            |d| format!("Last checked {}", d.format("%-d %b %Y at %H:%M")),
         );
     let mut application = super::hex::settings::panel(p).key("updates-section").child(
         super::hex::settings::setting_row(
             s,
             "update-version",
-            &format!("Sidenote {}", updates::VERSION),
+            &format!("Installed version · Sidenote {}", updates::VERSION),
             &checked,
             if status.phase == Phase::Manual {
                 roles::SMALL.wrap("Updates are off for this manual install", p.soft)
@@ -482,10 +489,7 @@ pub fn section(s: &State, p: Palette) -> El {
         .child(super::hex::settings::setting_row(
             s,
             "update-channel",
-            match s.updates.channel {
-                Channel::Dev => "Update channel · Dev (developer builds)",
-                Channel::Stable => "Update channel · Stable",
-            },
+            &format!("Get updates from · {}", channel_label(s.updates.channel)),
             channel_help,
             super::widgets::button(
                 format!("Switch to {}", channel_label(other)),
@@ -810,6 +814,30 @@ mod listener_tests {
             assert_eq!(updates.listener.error.as_deref(), Some("retry in progress"));
         }
     }
+    #[test]
+    fn install_action_waits_for_a_verified_download() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.updates.status.phase = Phase::Available;
+        let mut rt = rune::Runtime::new(
+            state,
+            |s, _| actions(s, super::super::theme::palette(false), false),
+            (390.0, 180.0),
+            rune::Env::default(),
+        );
+        for phase in [Phase::Available, Phase::Downloading, Phase::Ready] {
+            let ready = phase == Phase::Ready;
+            rt.update(|s, _| s.updates.status.phase = phase);
+            rt.frame(0.0);
+            assert_eq!(rt.find("update-install").is_some(), ready);
+            assert!(rt.find("update-later").is_some());
+        }
+        assert!(rt.elements().iter().any(|e| {
+            e.key.as_deref() == Some("update-install")
+                && e.label.as_deref() == Some("Install update and restart Sidenote")
+        }));
+    }
+
     #[test]
     fn feed_checks_never_clear_a_listener_failure() {
         let mut updates = Updates {
