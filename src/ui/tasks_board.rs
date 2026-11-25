@@ -933,6 +933,7 @@ pub fn layout_toggle(s: &State, k: &Kit, p: Palette) -> El {
     let mut selected = k.clone();
     selected.c.bg_base = p.sel;
     selected.c.border_strong = p.ink;
+    selected.c.text_muted = p.soft;
     SegmentedControl::new(
         &["List", "Board"],
         Some(usize::from(s.tasks.layout == core::TasksLayout::Board)),
