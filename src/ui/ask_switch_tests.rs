@@ -1378,15 +1378,16 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     }
     let mut rt = page_with_tasks(DEFAULT_SIZE);
     let all = core::ALL_KEY;
-    let global = Message {
+    let message = Message {
         role: "user".into(),
         text: "Across meetings".into(),
         ..Default::default()
     };
     rt.update(|s, _| {
         s.meeting_ui.tabs = true;
-        s.store.append_message(all, global.clone()).unwrap();
+        s.store.append_message(all, message).unwrap();
     });
+    let global = rt.state.store.load(all).unwrap().messages;
     rt.frame(0.0);
     tap(&mut rt, "tick-0");
     wait_for_tick(&mut rt, 0, true);
@@ -1399,12 +1400,12 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     tap(&mut rt, "tick-1");
     wait_for_tick(&mut rt, 1, true);
     assert_eq!(element(&rt, "tick-1").fill, checked);
-    assert_eq!(rt.state.saved.messages, [global.clone()]);
+    assert_eq!(rt.state.saved.messages, global);
     rt.update(|s, _| s.toggle_row(MEETING, 2));
     wait_for_tick(&mut rt, 2, true);
     assert_eq!(element(&rt, "tick-2").fill, checked);
     assert_eq!(rt.state.ask_key(), all);
-    assert_eq!(rt.state.saved.messages, [global]);
+    assert_eq!(rt.state.saved.messages, global);
 }
 
 #[test]
