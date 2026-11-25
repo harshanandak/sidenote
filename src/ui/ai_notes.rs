@@ -1,6 +1,10 @@
 //! AI notes controls. Disk access and helper calls return through one worker mailbox.
 use super::{Event, State, area::button, roles, theme::Palette};
-use super::{cards, hex::settings, widgets::row_action};
+use super::{
+    cards,
+    hex::settings,
+    widgets::{ButtonRole, row_action},
+};
 use rune::{El, TextEdit, col, row};
 use rune_kit::{Kit, Switch, TextInput};
 use sidenote::core::{
@@ -945,16 +949,43 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                 false,
                 p,
             ));
-        c = c
-            .child(super::hex::settings::panel(p).child(summary))
+        let actions = row()
+            .w_full()
+            .flex_wrap()
+            .gap(8.0)
+            .padding(14.0)
             .child(
-                button("What is sent", "summary-privacy-link", p)
-                    .self_start()
-                    .on_press(|s: &mut State| {
-                        s.hex.section = super::hex::Section::Privacy;
-                        super::scene_scroll(s, "notes-privacy");
-                    }),
-            );
+                super::widgets::button(
+                    "What is sent",
+                    "summary-privacy-link",
+                    ButtonRole::Secondary,
+                    p,
+                )
+                .on_press(|s: &mut State| {
+                    s.hex.section = super::hex::Section::Privacy;
+                    super::scene_scroll(s, "notes-privacy");
+                }),
+            )
+            .children(summaries_on.then(|| {
+                super::widgets::button(
+                    "Turn off Meeting summary",
+                    "notes-off",
+                    ButtonRole::Secondary,
+                    p,
+                )
+                .on_press(|s: &mut State| {
+                    if let Some(mut settings) = s.ai_notes.settings.clone() {
+                        settings.engine = "off".into();
+                        s.notes_save_settings(settings, "Turning off Meeting summary...");
+                    }
+                })
+            }));
+        c = c.child(
+            super::hex::settings::panel(p)
+                .child(summary)
+                .child(cards::settings_divider(p))
+                .child(actions),
+        );
     }
     if part == Part::Privacy {
         let sent = match (agent, scripts, automatic) {
@@ -1269,17 +1300,8 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                 ),
         );
     }
-    if part == Part::Summaries {
-        c = c.child(if summaries_on {
-            button("Turn off Meeting summary", "notes-off", p)
-                .self_start()
-                .on_press(|s: &mut State| {
-                    if let Some(mut settings) = s.ai_notes.settings.clone() {
-                        settings.engine = "off".into();
-                        s.notes_save_settings(settings, "Turning off Meeting summary...");
-                    }
-                })
-        } else {
+    if part == Part::Summaries && !summaries_on {
+        c = c.child(
             card(p)
                 .child(roles::TITLE.wrap("Meeting summaries are off", p.ink))
                 .child(roles::SMALL.wrap("Keep new meetings as transcripts only.", p.soft))
@@ -1289,8 +1311,8 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                         .fill(p.sel)
                         .self_start()
                         .focusable(false),
-                )
-        });
+                ),
+        );
     }
     if part == Part::Identity {
         let control = row()

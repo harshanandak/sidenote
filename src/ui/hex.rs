@@ -1444,6 +1444,13 @@ fn note(text: &str, p: Palette) -> El {
 
 fn summary_line(s: &State, p: Palette) -> El {
     let (_, words) = indicator(s, p);
+    let missing =
+        s.hex.stopped() && s.hex.installation == sidenote::hex_install::Installation::Missing;
+    let words = if missing {
+        "Not installed".into()
+    } else {
+        words
+    };
     let status = s
         .hex
         .state()
@@ -1454,6 +1461,8 @@ fn summary_line(s: &State, p: Palette) -> El {
         "Hex",
         if s.hex.running() {
             "Hex is running. Check its status here before recording."
+        } else if missing {
+            "Needed to record and transcribe meetings."
         } else {
             "Check the Hex connection before recording."
         },
