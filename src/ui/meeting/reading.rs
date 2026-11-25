@@ -936,11 +936,9 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
 
 pub fn transcript_height(s: &State) -> f32 {
     // Leave room for transcript rows when the time controls wrap on a phone.
-    let minimum = if super::phone(s) && s.meeting_ui.time_open {
-        256.0
-    } else {
-        124.0
-    };
+    let time_controls =
+        super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
+    let minimum = if time_controls { 256.0 } else { 124.0 };
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
@@ -1444,6 +1442,7 @@ mod tests {
         .unwrap();
         let mut rt = reading_page(ID, 360.0, None);
         rt.update(|s, _| s.toggle_transcript());
+        rt.settle_all();
         rt.frame(0.0);
         let [x, y, w, h] = element(&rt, "transcript-time-toggle").rect;
         rt.pointer_down(x + w / 2.0, y + h / 2.0);
