@@ -935,7 +935,11 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
 }
 
 pub fn transcript_height(s: &State) -> f32 {
-    (s.pane_h.get() * 0.34).clamp(124.0, 320.0)
+    // Leave room for transcript rows when the time controls wrap on a phone.
+    let time_controls =
+        super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
+    let minimum = if time_controls { 256.0 } else { 124.0 };
+    (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -1426,6 +1430,35 @@ mod tests {
     }
 
     #[test]
+    fn opening_go_to_time_leaves_transcript_room_on_a_short_phone() {
+        const ID: &str = "1800000000144-998";
+        crate::test_paths::isolate();
+        let folder = core::meetings_dir().join(ID);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("english-transcript.md"),
+            "[00:00:06.000] Maya (English): Ready?\n[00:00:27.000] Tom (English): Start the review.\n",
+        )
+        .unwrap();
+        let mut rt = reading_page(ID, 360.0, None);
+        rt.update(|s, _| s.toggle_transcript());
+        rt.settle_all();
+        rt.frame(0.0);
+        let [x, y, w, h] = element(&rt, "transcript-time-toggle").rect;
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.settle_all();
+        rt.frame(0.0);
+
+        assert!(element(&rt, "transcript-jump").focusable);
+        let scroll = element(&rt, "transcript-scroll").rect;
+        assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
+        let [_, y, _, h] = element(&rt, "transcript-copy").rect;
+        let hide = element(&rt, "meeting-hide-transcript").rect;
+        assert!(scroll[1] + scroll[3] <= y && y + h <= hide[1]);
+    }
+
+    #[test]
     fn paused_meeting_transcript_controls_fit_a_narrow_sheet() {
         const ID: &str = "1800000000143-998";
         crate::test_paths::isolate();
@@ -1468,6 +1501,13 @@ mod tests {
             }
             let [_, y, _, h] = element(&rt, "meeting-hide-transcript").rect;
             assert!(y + h <= pill[1], "Hide overlaps the dock at {width}");
+            rt.update(|s, _| {
+                let session = &mut s.live.as_mut().unwrap().session;
+                session.as_mut().unwrap().phase = meeting_parts::Phase::Ended;
+            });
+            rt.frame(0.0);
+            assert!(element(&rt, "meeting-resume").focusable);
+            section_absent(&rt, "meeting-generate");
         }
     }
 }
