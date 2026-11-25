@@ -36,6 +36,7 @@ pub mod check_v2;
 pub mod daily_check;
 pub mod diary;
 pub mod memory;
+pub mod note_edit_tool;
 pub mod notes;
 mod paths;
 #[cfg(any(
