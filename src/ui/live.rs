@@ -1405,6 +1405,7 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                 );
                 continue;
             }
+            let elapsed = elapsed_stamp(line.seconds);
             rows = rows.child(
                 row()
                     .key(format!("live-line-{i}"))
@@ -1412,11 +1413,7 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                     .gap(10.0)
                     .items_start()
                     .py(3.0)
-                    .child(
-                        roles::META
-                            .line(elapsed_stamp(line.seconds), p.soft)
-                            .w(44.0),
-                    )
+                    .child(roles::META.line(elapsed, p.soft).w(44.0))
                     .child(
                         roles::META
                             .bold()

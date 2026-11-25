@@ -1475,6 +1475,13 @@ mod tests {
                 hide_x >= x + w || hide_y >= y + h,
                 "Hide overlaps at {width}"
             );
+            rt.update(|s, _| {
+                let session = &mut s.live.as_mut().unwrap().session;
+                session.as_mut().unwrap().phase = meeting_parts::Phase::Ended;
+            });
+            rt.frame(0.0);
+            assert!(element(&rt, "meeting-resume").focusable);
+            section_absent(&rt, "meeting-generate");
         }
     }
 }
