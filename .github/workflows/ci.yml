@@ -292,6 +292,7 @@ jobs:
             ui::nav::tests::narrow_new_meeting_ \
             ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
+            ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
             ui::live::recording_control::tests:: \
             ui::list::tests::meeting_row_uses_the_singular_for_one_task \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
@@ -303,7 +304,7 @@ jobs:
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
-            ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
+            ui::meeting::reading::tests::opening_go_to_time_leaves_transcript_room_on_a_short_phone \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
             ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \
             ui::ask_switch_tests::ask_retry_submits_the_failed_question_once \
