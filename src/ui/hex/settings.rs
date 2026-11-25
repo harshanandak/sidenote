@@ -1017,7 +1017,7 @@ fn app_index() -> Vec<Destination> {
         ),
         entry(
             "people-import",
-            "Import people",
+            "How people are added",
             "People import contacts",
             Page::People,
             0,

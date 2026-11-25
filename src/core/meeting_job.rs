@@ -45,7 +45,7 @@ impl Cause {
             Self::Limit => "Agent usage limit reached",
             Self::Auth => "Agent sign-in needed",
             Self::TimedOut => "Meeting processing took too long",
-            Self::Other => "Meeting processing failed",
+            Self::Other => "Processing failed. Open Sidenote.",
         }
     }
     pub fn message(self) -> &'static str {
