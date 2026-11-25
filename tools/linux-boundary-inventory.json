@@ -421,7 +421,7 @@
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
-  "src/ui/hex/connection/stop_tests.rs": "60da61e06dd90a43907adbce97f8556e0502bc817384e1e5a85475eef38086e2",
+  "src/ui/hex/connection/stop_tests.rs": "47b556d80e4401414733865d34dff4219426cbd8ee2a49fb23847c53ea585ac3",
 
   "src/ui/hex/connection/stop_tests/api.rs": "95bdf13bde99c05d3f7c33e692d98a3a866daa3e22e58e4ebeb2d20dad853673",
 
@@ -435,7 +435,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "1e520faad6d8399f24130c836aea0d2a4f01369018118d64e1ef4d3bc6082b0b",
+  "src/ui/live.rs": "3688a4a303c6983bf0196a477fbf16f2ecf6219a7f0e410fc4620dbbf77507a2",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 

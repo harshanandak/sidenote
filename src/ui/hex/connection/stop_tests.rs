@@ -1554,3 +1554,112 @@ fn paused_meeting_keeps_its_status_when_hex_expires() {
         assert!(ui.find("new-meeting").is_none());
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn generate_after_stop_ignores_paused_selection() {
+    if !isolated_api_test("generate_after_stop_ignores_paused_selection") {
+        generate_after_stop_keeps_recording_meeting(false);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn generate_after_stop_ignores_ended_selection() {
+    if !isolated_api_test("generate_after_stop_ignores_ended_selection") {
+        generate_after_stop_keeps_recording_meeting(true);
+    }
+}
+
+#[cfg(windows)]
+fn generate_after_stop_keeps_recording_meeting(beta_ended: bool) {
+    use sidenote::core::{self, meeting_parts, notes};
+
+    let (api, mut state, _) = Fixture::start();
+    let root = core::state_dir();
+    let hex = core::meetings_dir();
+    let (alpha, beta) = ("100-1", "200-2");
+    // These short transcripts can be queued by an explicit request without launching a worker.
+    let manifest = |status| serde_json::json!({"status":status,"duration_ms":1000}).to_string();
+    for (id, status) in [(alpha, "recording"), (beta, "complete")] {
+        let folder = hex.join(id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("manifest.json"), manifest(status)).unwrap();
+        std::fs::write(
+            folder.join("transcript.ndjson"),
+            r#"{"start_ms":0,"end_ms":1000,"text":"Synthetic part","source":"microphone"}"#,
+        )
+        .unwrap();
+    }
+    let mut other = meeting_parts::Meeting::begin(&root, beta, 200).unwrap();
+    other.pause(&root).unwrap();
+    if beta_ended {
+        other.phase = meeting_parts::Phase::Ended;
+        other.save(&root).unwrap();
+    }
+    std::fs::write(
+        root.join("config.json"),
+        r#"{"version":1,"features":{"indic_engine":false},"notes":{"engine":"app","auto":false}}"#,
+    )
+    .unwrap();
+    state
+        .meetings
+        .push(core::Meeting::load_pending(&meeting_parts::inputs(&root).join(beta)).unwrap());
+    state.apply_event(Event::Hex(Msg::ObservedStatus(command_status_sample(
+        &state,
+    ))));
+    state.open_live();
+    api.data.lock().unwrap().stop_state = Some("transcribing");
+
+    let mut ui = rune::Runtime::with_text(
+        state,
+        crate::ui::view,
+        (1334.0, 900.0),
+        rune::Env::default(),
+        rune::text::TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter")),
+    );
+    ui.settle_all();
+    ui.frame(0.0);
+    let generate = ui
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("meeting-generate"))
+        .unwrap();
+    let [x, y, w, h] = generate.rect;
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_down(x + w / 2.0, y + h / 2.0);
+    ui.pointer_up(x + w / 2.0, y + h / 2.0);
+    ui.frame(0.0);
+    assert!(ui.state.hex_stop_pending());
+    Fixture::finish(&mut ui.state);
+    Fixture::stop_status(&mut ui.state);
+    assert!(ui.state.hex_stop_pending());
+    ui.update(|state, tx| state.select(beta, tx));
+
+    std::fs::write(hex.join(alpha).join("manifest.json"), manifest("complete")).unwrap();
+    api.data.lock().unwrap().meeting_state = None;
+    ui.state.hex_check_stop();
+    Fixture::stop_status(&mut ui.state);
+    assert!(!ui.state.hex_stop_pending());
+    assert_eq!(ui.state.selected.as_deref(), Some(beta));
+    let saved = meeting_parts::read(&root, alpha).unwrap().unwrap();
+    assert_eq!(
+        saved.requested_parts, 1,
+        "the deferred request must snapshot Alpha"
+    );
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        let event = ui
+            .state
+            .events_rx
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if let Event::Hex(Msg::NotesRequested(result)) = event {
+            result.unwrap();
+            break;
+        }
+    }
+    assert_eq!(notes::status(alpha), Some(notes::JobState::Queued));
+    assert!(notes::status(beta).is_none());
+    assert_eq!(api.data.lock().unwrap().stops, 1);
+}

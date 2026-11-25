@@ -829,7 +829,8 @@ impl State {
                 .as_ref()
                 .is_some_and(|l| l.phase == Phase::Paused && l.generate_after_pause)
         {
-            self.meeting_generate();
+            // The pause request belongs to this live session even after navigation.
+            self.generate_live_notes();
         }
         let Some(live) = self.live.as_mut() else {
             return;
