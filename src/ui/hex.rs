@@ -85,6 +85,8 @@ pub enum Msg {
     Meetings(Result<(Instant, EngineState), HexError>),
     Install(sidenote::hex_install::State),
     ObservedStatus(StatusSample),
+    RecoveryStatus(StatusSample),
+    WatcherStopped,
     StopStatus(Instant, StatusSample),
     RecheckStart(StatusSample),
     RecheckResume(StatusSample),
@@ -430,26 +432,30 @@ impl State {
     }
 
     /// Runs `work` on its own thread and delivers the result to the UI.
-    fn hex_spawn(&self, work: impl FnOnce(HexEngine) -> Msg + Send + 'static) {
+    fn hex_spawn(&self, work: impl FnOnce(HexEngine) -> Msg + Send + 'static) -> bool {
         let engine = self.hex.engine.clone();
         let events = self.events_tx.clone();
         let waker = self.waker.clone();
-        let _ = thread::Builder::new()
+        thread::Builder::new()
             .name("hex-call".into())
             .spawn(move || {
                 let _ = events.send(Event::Hex(work(engine)));
                 if let Some(w) = &waker {
                     w();
                 }
-            });
+            })
+            .is_ok()
     }
 
     /// Starts the status watcher. Its forwarder thread owns the watcher and reads its updates.
     pub fn hex_start(&mut self, waker: Waker) {
+        self.hex.visible = window_shown();
         let watcher = match self.hex.engine.watch() {
             Ok(w) => w,
             Err(e) => {
-                self.hex_observed_event(sample_status(|| Err(e)));
+                if self.hex.status.is_none() {
+                    self.hex_observed_event(sample_status(|| Err(e)));
+                }
                 return;
             }
         };
@@ -474,7 +480,7 @@ impl State {
                                 waker();
                             }
                             Err(RecvTimeoutError::Timeout) => {}
-                            Err(RecvTimeoutError::Disconnected) => return,
+                            Err(RecvTimeoutError::Disconnected) => break,
                         }
                         loop {
                             match input.try_recv() {
@@ -498,10 +504,12 @@ impl State {
                         visible = want;
                     }
                 }
+                let _ = events.send(Event::Hex(Msg::WatcherStopped));
+                waker();
             });
         if started.is_ok() {
+            let _ = commands.send(self.hex.visible);
             self.hex.visibility = Some(commands);
-            self.hex_visibility(window_shown());
         }
     }
 
@@ -542,6 +550,13 @@ impl State {
             Msg::ObservedStatus(sample) => {
                 self.hex_observed_event(sample);
             }
+            Msg::RecoveryStatus(sample) => {
+                self.hex.connection.finish_recovery(Instant::now());
+                if !matches!(&sample.1, Err(HexError::Timeout | HexError::Failed { .. })) {
+                    self.hex_observed_event(sample);
+                }
+            }
+            Msg::WatcherStopped => self.hex.visibility = None,
             Msg::StopStatus(deadline, r) => self.hex_stop_status(deadline, r),
             Msg::SettingsStatus(result) => {
                 self.hex.settings_status_pending = false;
@@ -985,7 +1000,26 @@ impl State {
         self.hex.connection.expired()
     }
     pub(super) fn hex_connection_tick(&mut self, tx: &mut Tx) -> bool {
-        self.hex.connection.tick(tx) | self.hex_stop_tick(Instant::now(), tx)
+        let now = Instant::now();
+        if self.hex.visibility.is_some() && !self.hex_status_unknown() {
+            self.hex.connection.reset_recovery_backoff();
+        } else if cfg!(windows)
+            && self.hex.visible
+            && window_shown()
+            && !self.hex.record_busy
+            && let Some(waker) = self.waker.clone()
+            && self.hex.connection.begin_recovery(now, tx)
+        {
+            if self.hex.visibility.is_none() {
+                self.hex_start(waker);
+            }
+            if !self.hex_spawn(|engine| {
+                Msg::RecoveryStatus(sample_status(|| engine.status_for_command()))
+            }) {
+                tx.wake_after(self.hex.connection.finish_recovery(now));
+            }
+        }
+        self.hex.connection.tick(tx) | self.hex_stop_tick(now, tx)
     }
     pub(super) fn hex_recheck_resume(&mut self) {
         if self.hex.record_busy {

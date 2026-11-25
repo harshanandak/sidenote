@@ -37,6 +37,7 @@ def main():
         [python, "-I", "tools/prove_linux_boundaries.py", ".", "--self-test"],
         [python, "-I", "tools/check_links.py", "--self-test"],
         [python, "-I", "tools/check_links.py"],
+        [python, "-I", "tools/icon/check_icon.py"],
         [python, "-I", ".github/ci_changes.py", "--self-test"],
     ]
     if args.test is not None:

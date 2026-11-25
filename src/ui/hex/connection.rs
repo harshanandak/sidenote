@@ -17,6 +17,9 @@ pub(in crate::ui) struct Connection {
     phase: &'static str,
     blocked: Cell<Option<&'static str>>,
     action: Option<u64>,
+    recovering: bool,
+    recovery_delay: Duration,
+    recovery_at: Option<Instant>,
 }
 
 impl Connection {
@@ -62,6 +65,31 @@ impl Connection {
     pub(super) fn expired(&self) -> bool {
         self.limit_age().is_some_and(|age| age > STALE_LIMIT)
     }
+    pub(super) fn begin_recovery(&mut self, now: Instant, tx: &mut Tx) -> bool {
+        if self.recovering {
+            return false;
+        }
+        if let Some(at) = self.recovery_at.filter(|&at| at > now) {
+            tx.wake_after(at - now);
+            return false;
+        }
+        self.recovering = true;
+        true
+    }
+
+    pub(super) fn finish_recovery(&mut self, now: Instant) -> Duration {
+        self.recovering = false;
+        self.recovery_delay =
+            (self.recovery_delay * 2).clamp(Duration::from_secs(1), Duration::from_secs(16));
+        self.recovery_at = Some(now + self.recovery_delay);
+        self.recovery_delay
+    }
+
+    pub(super) fn reset_recovery_backoff(&mut self) {
+        self.recovery_at = None;
+        self.recovery_delay = Duration::ZERO;
+    }
+
     pub(super) fn tick(&mut self, tx: &mut Tx) -> bool {
         let expired = self.expired();
         if !expired && let Some(age) = self.limit_age() {
