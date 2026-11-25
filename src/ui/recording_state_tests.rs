@@ -105,7 +105,7 @@ fn press(rt: &mut Runtime<State>, key: Key) {
     rt.frame(0.2);
 }
 
-/// Hex says one meeting records, so the top right offers the way back and Stop.
+/// Hex says the synthetic meeting records.
 fn hex_records(rt: &mut Runtime<State>) {
     rt.update(|s, _| {
         s.hex.status = Some(Ok(EngineState {
@@ -285,7 +285,8 @@ fn recording_clock_stays_visible_on_the_live_page() {
     });
     rt.frame(0.2);
     assert!(rt.find("recording-pill").is_some());
-    assert!(rt.find("hex-stop").is_some());
+    assert_eq!(&element(&rt, "hex-pause").rect[2..], &[24.0, 24.0]);
+    assert!(rt.find("hex-stop").is_none());
 
     rt.update(|s, _| s.open_live());
     rt.frame(0.2);
@@ -297,7 +298,7 @@ fn recording_clock_stays_visible_on_the_live_page() {
     );
     assert!(
         rt.find("recording-pill").is_none(),
-        "the live title adds its own Stop"
+        "the live page shows a second recording action"
     );
     rt.update(|s, _| {
         s.go_home();
@@ -400,11 +401,25 @@ Hex is not running. Stop it from Hex if it is recording."
         s.load_saved();
     });
     rt.frame(0.2);
+    let managed = element(&rt, "hex-pause");
+    assert!(managed.label.as_deref().unwrap().starts_with("Pause"));
+    assert!(rt.find("hex-stop").is_none());
+    assert!(rt.find("meeting-pause").is_none() && rt.find("dock-recording-dot").is_none());
+
+    rt.update(|s, _| {
+        let Some(Ok(status)) = &mut s.hex.status else {
+            unreachable!()
+        };
+        status.recording.as_mut().unwrap().id = Some(OTHER.into());
+    });
+    rt.frame(0.2);
+    assert!(rt.find("hex-pause").is_none());
     let stop = element(&rt, "hex-stop");
     let stop_name = stop.label.unwrap();
     assert!(stop_name.starts_with("Stop"), "{stop_name}");
     assert!(!stop_name.contains("Pause"), "{stop_name}");
     assert!(rt.find("meeting-pause").is_none() && rt.find("dock-recording-dot").is_none());
+    hex_records(&mut rt);
     rt.update(|s, _| {
         s.selected = Some(MEETING.into());
         s.load_saved();
