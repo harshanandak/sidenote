@@ -1471,7 +1471,7 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
     assert!(!log.contains("hex new_meeting blocked"));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(windows, feature = "recorder-ready-proof")))]
 fn meeting_control(state: &State, _: &mut rune::Cx<State>) -> rune::El {
     let mut layer = Vec::new();
     let (button, _) = crate::ui::nav::new_meeting_button(
