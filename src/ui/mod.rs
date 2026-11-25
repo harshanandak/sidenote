@@ -4057,6 +4057,15 @@ pub fn spec() -> AppSpec<State> {
             }),
             ("hex-list", |s| hex::scene(s, false)),
             ("hex-list-recording", |s| hex::scene(s, true)),
+            ("sidebar-status-unknown", |s| {
+                let features = s.config.features.clone();
+                let notes = s.ai_notes.settings.clone();
+                hex::settings::scene(s, "settings-hex-stale");
+                (s.config.features, s.ai_notes.settings) = (features, notes);
+                s.go_home();
+                hex::scene(s, true);
+                scene_filters(s);
+            }),
             // The sections of the Hex page: Model is the default; Advanced is closed, then open.
             ("hex-vocabulary", |s| {
                 scene_hex(s, hex::Section::Vocabulary, false)
