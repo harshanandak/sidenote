@@ -263,7 +263,10 @@ fn recording_pill_is_only_needed_on_the_other_meeting() {
         return;
     }
     let mut rt = page(SavedPhase::Recording, DEFAULT_SIZE);
+    assert!(rt.find("new-meeting").is_some());
     hex_records(&mut rt);
+    assert_eq!(element(&rt, "top-bar").rect[3], 48.0);
+    assert!(rt.find("new-meeting").is_none());
     assert!(rt.find("ask-pill").is_some());
     assert!(rt.find("meeting-pause").is_some());
     assert!(
@@ -288,6 +291,42 @@ fn recording_pill_is_only_needed_on_the_other_meeting() {
     rt.frame(0.2);
     assert!(rt.find("meeting-pause").is_some());
     assert!(rt.find("recording-open").is_none());
+    rt.update(|s, _| {
+        s.go_home();
+        s.set_sidebar(false);
+        s.config.features.people = true;
+        s.config.features.memory = true;
+        s.config.features.daily_check = true;
+        s.config.features.annotations = true;
+    });
+    rt.frame(0.2);
+    assert!(rt.find("nav-meetings").is_some());
+    let toggles = rt
+        .elements()
+        .into_iter()
+        .filter(|e| e.key.as_deref() == Some("sidebar-toggle"))
+        .count();
+    assert_eq!(toggles, 1);
+    assert_eq!(element(&rt, "nav-search").fill, rune::Color::TRANSPARENT);
+    #[cfg(windows)]
+    assert!(element(&rt, "open-deleted-meetings").rect[1] >= 48.0);
+    tap(&mut rt, "sidebar-toggle");
+    rt.update(|s, _| s.hex.status = Some(Err(sidenote::hex_engine::HexError::Timeout)));
+    rt.frame(0.2);
+    assert!(rt.find("new-meeting").is_some());
+    assert!(rt.find("search").is_none());
+    for place in [
+        "nav-meetings",
+        "view-tasks",
+        "nav-people",
+        "view-memory",
+        "nav-annotations",
+        "view-check",
+    ] {
+        assert!(rt.find(place).is_some(), "missing {place}");
+    }
+    tap(&mut rt, "sidebar-toggle");
+    assert!(rt.find("nav-meetings").is_none());
 }
 
 #[test]
