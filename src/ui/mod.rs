@@ -691,9 +691,15 @@ impl State {
     }
 
     fn load_saved(&mut self) {
-        self.ask_settings.loaded_scope = self.ask_key();
-        self.saved = match self.store.load(&self.ask_settings.loaded_scope) {
-            Ok(saved) => saved,
+        let scope = self.ask_key();
+        self.saved = match self.store.load(&scope) {
+            Ok(saved) => {
+                if self.selected.as_ref() == Some(&scope) {
+                    let checked = &mut self.tasks.checked;
+                    checked.insert(scope.clone(), saved.checked.clone());
+                }
+                saved
+            }
             Err(_) => {
                 self.notice = Some(
                     "Could not read the saved ticks and answers. Check the app data folder.".into(),
@@ -701,6 +707,7 @@ impl State {
                 Saved::default()
             }
         };
+        self.ask_settings.loaded_scope = scope;
         self.show_latest_question();
     }
 
