@@ -343,11 +343,11 @@
 
   "src/mcp/network.rs": "52582f512b6621939d0c63dc451a1ec41eeba4561c9e7ba5239450c8d7f04a29",
 
-  "src/meeting_icon.rs": "b9f78ad6272c44851d62f2062a4ac71c5332fb1ea854e0938f719ad254f7fcd5",
+  "src/meeting_icon.rs": "c4fecdd3b41f9ba4d895c222f9e6349b4f36da22ba42b87548f60b1e9d2a58cb",
 
   "src/meeting_icon/native.rs": "b8057a243e1bd7d1679b65ca9962756722de4601a897ae83a9a25a30b58ff73c",
 
-  "src/meeting_icon/native/window.rs": "ab18a0f19c775c873fbe2fa3a6aae57372ef4d516a7d06867d749cb1b25361b5",
+  "src/meeting_icon/native/window.rs": "cc017addf051be5c9e95dda8096ea1587b2d76dfb89f8649b0b840400410b391",
 
   "src/operations.rs": "0dfc204d0fb7235730bf0e70e8e7f1f4df945e520de7fe05e0954576e31d44f9",
 

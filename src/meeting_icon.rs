@@ -88,7 +88,7 @@ impl Notice {
             Self::Later => "Summary will be written later",
             Self::Failed(cause) => cause.label(),
             Self::Skipped(reason) => return reason.notice(),
-            Self::Unavailable => "Summary unavailable, open Sidenote",
+            Self::Unavailable => "Summary unavailable. Open Sidenote.",
         }
         .into()
     }
