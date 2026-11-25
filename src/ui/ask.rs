@@ -539,8 +539,8 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     .key("ask-options")
     .label("Ask options")
     .description("Choose the question scope, model or a suggested prompt.")
-    .size(44.0, 44.0)
-    .radius(22.0)
+    .size(32.0, 44.0)
+    .radius(16.0)
     .hover(p.button_hover)
     .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
@@ -760,7 +760,7 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, trigger: El, layer: &mut Vec<El
     menu.build(&kit, layer).min_w(0.0)
 }
 
-const ACTION: f32 = 44.0;
+const ACTION: f32 = 28.0;
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
@@ -771,7 +771,7 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
         let run = s.asks.get(&s.ask_key());
         let stopping = run.is_some_and(|r| r.cancel.stopped());
         let who = run.map_or("the answer", |r| short_runner(&r.runner));
-        return slot.child(
+        slot.child(
             super::widgets::icon_button(
                 &super::icons::STOP,
                 "Stop",
@@ -781,7 +781,7 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
             )
             .help(format!("Stop {who}"))
             .size(ACTION, ACTION)
-            .radius(22.0)
+            .radius(14.0)
             .focus_ring(1.0, 1.0, p.faint)
             .preserve_focus_on_press(true)
             .transition(replace)
@@ -791,27 +791,28 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
                 s.stop_ask();
                 keep_question_focus(s, tx);
             }),
-        );
-    }
-    slot.child(
-        super::widgets::icon_button(
-            &super::icons::ARROW_UP,
-            "Ask (Enter)",
-            "ask-send",
-            super::widgets::ButtonRole::Primary,
-            p,
         )
-        .size(ACTION, ACTION)
-        .radius(22.0)
-        .focus_ring(1.0, 1.0, p.faint)
-        .preserve_focus_on_press(true)
-        .transition(replace)
-        .button_disabled(empty)
-        .on_press_tx(|s: &mut State, tx| {
-            let q = s.question.text.clone();
-            submit(s, &q, tx);
-        }),
-    )
+    } else {
+        slot.child(
+            super::widgets::icon_button(
+                &super::icons::ARROW_UP,
+                "Ask (Enter)",
+                "ask-send",
+                super::widgets::ButtonRole::Primary,
+                p,
+            )
+            .size(ACTION, ACTION)
+            .radius(14.0)
+            .focus_ring(1.0, 1.0, p.faint)
+            .preserve_focus_on_press(true)
+            .transition(replace)
+            .button_disabled(empty)
+            .on_press_tx(|s: &mut State, tx| {
+                let q = s.question.text.clone();
+                submit(s, &q, tx);
+            }),
+        )
+    }
 }
 
 /// What the pill says when no agent CLI is on this machine.
@@ -867,16 +868,12 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let inset = if s.on_live() {
+    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs) {
+        0.0
+    } else if s.on_live() {
         super::live::gutter(s)
     } else {
         16.0
-    };
-    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live())
-    {
-        0.0
-    } else {
-        inset
     };
     let mut stack = col()
         .w_full()
