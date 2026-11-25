@@ -434,8 +434,13 @@ fn error_controls(s: &State, id: &str, error: &str, p: Palette) -> El {
             let question = question.clone();
             row = row.child(
                 button("Try again", "ask-retry", ButtonRole::Secondary, p)
-                    .button_disabled(!s.question.text.is_empty() && s.question.text != question)
-                    .on_press_tx(move |s: &mut State, tx| submit(s, &question, tx)),
+                    .button_disabled(
+                        !s.question.text.is_empty() && s.question.text != question.text,
+                    )
+                    .on_press_tx(move |s: &mut State, tx| {
+                        s.send_question(&question.text, question.id.as_deref());
+                        keep_question_focus(s, tx);
+                    }),
             );
         }
         if s.has_agent() {
@@ -871,16 +876,12 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let inset = if s.on_live() {
+    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs) {
+        0.0
+    } else if s.on_live() {
         super::live::gutter(s)
     } else {
         16.0
-    };
-    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live())
-    {
-        0.0
-    } else {
-        inset
     };
     let mut stack = col()
         .w_full()
