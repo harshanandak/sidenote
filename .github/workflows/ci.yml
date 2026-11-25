@@ -303,7 +303,11 @@ jobs:
             ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
-            ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker
+            ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \
+            ui::ask_switch_tests::ask_retry_submits_the_failed_question_once \
+            ui::ask_switch_tests::stop_keeps_the_streamed_answer_and_marks_it_in_the_thread \
+            ui::ask::meeting_agent_tests::local_endpoint_failure_shows_recovery_before_the_known_metrics \
+            ui::list::tests::home_last_row_scrolls_clear_of_ask
           SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \
             cargo test --locked -p sidenote-sync --lib -- worker::tests::
           cargo test --locked --features dev,asr-runtime -p sidenote --test idle_cpu --test relay_preview --test meeting_delete_storage --test meeting_delete_visibility

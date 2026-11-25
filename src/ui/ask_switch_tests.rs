@@ -919,12 +919,9 @@ fn an_answer_names_the_helper_and_model_that_wrote_it_and_old_ones_still_load() 
     let label = |i: usize| ask::answer_label(&rt.state, &rt.state.saved.messages[i]);
     assert_eq!(label(0), None);
     assert!(label(1).unwrap().starts_with("Codex"), "{:?}", label(1));
-    assert_eq!(label(2).as_deref(), Some("OpenCode (model not reported)"));
-    assert_eq!(
-        label(3).as_deref(),
-        Some("Claude Code (model not reported) \u{b7} fallback")
-    );
-    assert_eq!(label(4).as_deref(), Some("Codex (model not reported)"));
+    assert_eq!(label(2).as_deref(), Some("OpenCode"));
+    assert_eq!(label(3).as_deref(), Some("Claude Code \u{b7} fallback"));
+    assert_eq!(label(4).as_deref(), Some("Codex"));
     assert!(rt.find("answer-model-0").is_none());
     for i in 1..5 {
         assert!(
@@ -1005,7 +1002,7 @@ fn a_connected_endpoint_answer_names_the_model_it_reported_or_says_it_did_not() 
             Some("served-model-1"),
             "Chat completions \u{b7} served-model-1",
         ),
-        (None, "Chat completions (model not reported)"),
+        (None, "Chat completions"),
     ] {
         let mut run = AskRun::stand_in(core::provider::NAME, &[], 0);
         run.requested_model = Some("asked-model".into());
@@ -1120,7 +1117,7 @@ fn stop_keeps_the_streamed_answer_and_marks_it_in_the_thread() {
             text: PARTIAL_ANSWER.into(),
         },
     );
-    assert!(rt.find("ask-streaming-answer").is_some());
+    let streaming_path = element(&rt, "msg-1").path;
     assert_eq!(stopped_label_count(&rt), 0);
     tap(&mut rt, "ask-stop");
     assert!(rt.state.asks[MEETING].cancel.stopped());
@@ -1145,7 +1142,7 @@ fn stop_keeps_the_streamed_answer_and_marks_it_in_the_thread() {
     assert_eq!(serde_json::to_value(answer).unwrap()["stopped"], true);
     assert!(rt.state.question.text.is_empty());
     assert_no_ask_alert(&rt);
-    assert!(rt.find("ask-streaming-answer").is_none());
+    assert_eq!(element(&rt, "msg-1").path, streaming_path);
     assert_eq!(stopped_label_count(&rt), 1);
     let answer_path = element(&rt, "msg-1").path + "/";
     assert!(
@@ -1153,6 +1150,32 @@ fn stop_keeps_the_streamed_answer_and_marks_it_in_the_thread() {
             .iter()
             .any(|e| e.path.starts_with(&answer_path) && e.text.as_deref() == Some("Stopped"))
     );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn ask_retry_submits_the_failed_question_once() {
+    if in_parent("ask_retry_submits_the_failed_question_once") {
+        return;
+    }
+    *core::ask_session::STAND_IN.lock().unwrap() = Some(fake_helper);
+    GATE.store(true, SeqCst);
+    let mut rt = page();
+    start_stop_fixture(&mut rt);
+    ask_fixture_progress(
+        &mut rt,
+        AskProgress::Failed {
+            message: "The answer failed.".into(),
+        },
+    );
+    assert!(rt.state.store.load(MEETING).unwrap().messages.is_empty());
+    assert_eq!(rt.state.question.text, STOP_QUESTION);
+    tap(&mut rt, "ask-retry");
+    assert!(rt.state.asks.contains_key(MEETING));
+    assert_eq!(rt.state.saved.messages.len(), 1);
+    assert_eq!(rt.state.saved.messages[0].text, STOP_QUESTION);
+    finish_answer(&mut rt);
+    assert_no_ask_alert(&rt);
 }
 
 #[test]
@@ -1710,7 +1733,7 @@ fn switching_helper_mid_answer_labels_each_answer_and_runs_the_next_on_the_new_o
     );
     assert_eq!(
         ask::answer_label(&rt.state, &second).as_deref(),
-        Some("OpenCode (model not reported)")
+        Some("OpenCode")
     );
     assert!(rt.state.ask_settings.pick.is_none());
     // Reload the saved thread from disk: both answers and their labels are unchanged.
@@ -1726,7 +1749,7 @@ fn switching_helper_mid_answer_labels_each_answer_and_runs_the_next_on_the_new_o
         .map(|m| ask::answer_label(&rt.state, m))
         .collect();
     assert!(labels[0].as_ref().unwrap().starts_with("Codex"));
-    assert_eq!(labels[1].as_deref(), Some("OpenCode (model not reported)"));
+    assert_eq!(labels[1].as_deref(), Some("OpenCode"));
     let calls = CALLS.lock().unwrap().clone();
     assert_eq!(calls, vec![(a, a_model), (b, b_model)]);
 }

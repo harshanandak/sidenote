@@ -354,7 +354,7 @@ def main():
    jobs.append(('hidden-search-'+query,'settings-general',1280,'light',900,[tap('hex-filter',.2),typed]))
    jobs.append(('hidden-finder-'+query,'settings-general',1280,'light',900,[dict(type='key',name='k',cmd=True,t=.2),typed]))
  if args.cloud_ask:
-  jobs=[('cloud-ask','settings-cloud-ask',1280,'dark',1400,None),('cloud-ask-label','cloud-ask-answer',1280,'dark',900,None)]
+  jobs=[('cloud-ask','settings-cloud-ask',1280,'dark',1400,None),('cloud-ask-label','cloud-ask-answer',1280,'dark',900,[tap('ask-endpoint-details')])]
  if args.search_keys:
   mapping=json.loads((ROOT/'tools/ui-fixtures/settings-search-map.json').read_text(encoding='utf-8'))
   jobs=[('legacy-search-'+str(i).zfill(2),'settings-search',1280,'light',900,[tap('hex-filter',.2),dict(type='type',text=item['key'],t=.4),dict(type='key',name='Enter',t=1.)]) for i,item in enumerate(mapping)]
