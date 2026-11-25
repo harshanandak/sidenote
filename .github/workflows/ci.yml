@@ -301,7 +301,9 @@ jobs:
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
             ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
-            ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet
+            ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
+            ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
+            ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker
           SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \
             cargo test --locked -p sidenote-sync --lib -- worker::tests::
           cargo test --locked --features dev,asr-runtime -p sidenote --test idle_cpu --test relay_preview --test meeting_delete_storage --test meeting_delete_visibility

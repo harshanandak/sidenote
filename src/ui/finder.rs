@@ -431,7 +431,7 @@ pub fn overlay(s: &State, k: &Kit, p: Palette, narrow: bool) -> Option<El> {
     let has_agent = s.has_agent();
     let input = TextInput::new(&s.finder_query)
         .plain()
-        .placeholder("Search or jump to")
+        .placeholder("\u{2009}Search or jump to")
         .label("Search meetings, pages and actions")
         .height(52.0)
         .on_edit(|s: &mut State| &mut s.finder_query)
