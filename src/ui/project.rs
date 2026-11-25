@@ -245,30 +245,20 @@ fn chip_with(
                 .any(|known| known.eq_ignore_ascii_case(name))
         });
     let guessed = mp.name.is_some() && !mp.confirmed;
-    let stacked = guessed && !quiet && s.narrow.get();
     let label = match if quiet { &display_name } else { &mp.name } {
         Some(n) if guessed => format!("Suggested project: {n}. Change it"),
         Some(n) => format!("Project: {n}. Change it"),
         None => "Add this meeting to a project".into(),
     };
     let name_ink = if mp.confirmed { p.soft } else { p.ink };
-    let mut trigger_row = row().gap(if quiet { 6.0 } else { 4.0 }).items_center();
-    if guessed && !quiet {
-        trigger_row = trigger_row.child(roles::META.wrap(
-            if new_project {
-                "New project:"
-            } else {
-                "Suggested project:"
-            },
-            p.faint,
-        ));
-    }
     let name_style = if quiet {
         roles::FACT.bold()
     } else {
         roles::META.medium()
     };
-    trigger_row = trigger_row
+    let trigger_row = row()
+        .gap(if quiet { 6.0 } else { 4.0 })
+        .items_center()
         .child(
             name_style
                 .line(
@@ -302,7 +292,6 @@ fn chip_with(
     } else {
         trigger
     };
-    let trigger = if stacked { trigger.shrink() } else { trigger };
     let mut menu = Menu::new(format!("proj-{id}"))
         .trigger(trigger)
         .open(open)
@@ -354,17 +343,13 @@ fn chip_with(
         }
     }
     let menu = menu.build(k, layer).min_w(0.0);
-    let menu = if stacked { menu.w_full() } else { menu };
-    let mut wrap = if stacked {
-        col().items_start()
-    } else {
-        row().items_center()
-    }
-    .key(format!("project-{id}"))
-    .min_w(0.0)
-    .max_w(420.0)
-    .radius(if quiet { 8.0 } else { 999.0 })
-    .child(menu.shrink());
+    let mut wrap = row()
+        .items_center()
+        .key(format!("project-{id}"))
+        .min_w(0.0)
+        .max_w(420.0)
+        .radius(if quiet { 8.0 } else { 12.0 })
+        .child(menu.shrink());
     if guessed {
         wrap = wrap
             .border(1.0, if quiet { p.mark } else { p.line })
@@ -408,11 +393,7 @@ fn chip_with(
             .radius(999.0)
             .hover(p.chip)
             .on_press(move |s: &mut State| s.set_meeting_project(&dismiss_id, UNSORTED));
-        wrap = if stacked {
-            wrap.child(row().w_full().flex_wrap().child(accept).child(dismiss))
-        } else {
-            wrap.child(accept).child(dismiss)
-        };
+        wrap = wrap.flex_wrap().child(accept).child(dismiss);
     }
     Some(wrap)
 }

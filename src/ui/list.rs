@@ -32,7 +32,7 @@ pub(super) fn people_line(m: &Meeting) -> String {
         parts.push(plural(decided, "decision", "decisions"));
     }
     if !m.summary.todo.is_empty() {
-        parts.push(format!("{} tasks", m.summary.todo.len()));
+        parts.push(plural(m.summary.todo.len(), "task", "tasks"));
     }
     parts.retain(|p| !p.is_empty());
     parts.join(" \u{b7} ")
@@ -87,7 +87,7 @@ fn search_box(s: &State, k: &Kit, height: f32, placeholder: &str, p: Palette) ->
         .build(k)
         .key("search")
         .border(1.0, if s.search.focused { p.accent } else { p.line })
-        .radius(10.0)
+        .radius(999.0)
         .fill(p.card)
         .w_full()
         .min_w(0.0)
@@ -95,11 +95,11 @@ fn search_box(s: &State, k: &Kit, height: f32, placeholder: &str, p: Palette) ->
 
 fn empty_text(s: &State) -> &'static str {
     if s.meetings.is_empty() {
-        "Your completed meetings and transcripts appear here."
+        "Choose New meeting to start a recording. It will appear here when it is ready."
     } else if s.filter != Filter::All && s.search.text.trim().is_empty() {
         "No meetings here yet."
     } else {
-        "No meeting mentions that."
+        "No meetings match. Try a different search or clear the search field."
     }
 }
 
@@ -142,7 +142,7 @@ fn home_row(
                 .max_lines(2),
         )
         .child(
-            roles::META.line(
+            roles::META.wrap(
                 notes_job
                     .as_ref()
                     .and_then(super::notes_status::list_label)
@@ -225,9 +225,6 @@ fn home_row(
             }),
         );
     }
-    if !narrow && let Some(chip) = project::chip(s, k, &m.id, p, layer) {
-        r = r.child(chip);
-    }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
     r = if narrow {
@@ -240,11 +237,11 @@ fn home_row(
         r = r.fill(p.chip);
     }
     let mut out = col().w_full().child(r);
-    if narrow && let Some(chip) = project::chip(s, k, &m.id, p, layer) {
-        out = out.child(row().w_full().pl(56.0).mb(6.0).child(chip.shrink()));
+    if let Some(chip) = project::chip(s, k, &m.id, p, layer) {
+        out = out.child(row().w_full().px(10.0).mb(6.0).child(chip.shrink()));
     }
     if let Some(form) = project::form(s, k, &m.id, p) {
-        out = out.child(form.ml(56.0).mb(6.0));
+        out = out.child(form.mx(10.0).mb(6.0));
     }
     out
 }
@@ -291,13 +288,6 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 )
                 .child(roles::meta(count, p).pb(6.0)),
         )
-        .child(
-            link("Short recordings", p)
-                .key("filter-short-recordings")
-                .self_start()
-                .mb(10.0)
-                .on_press(|s: &mut State| s.set_filter(Filter::Short)),
-        )
         .children((s.filter != Filter::All).then(|| {
             link("Show all meetings", p)
                 .key("filter-clear")
@@ -319,7 +309,18 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             42.0,
             "Search meetings, tasks and transcripts",
             p,
-        ));
+        ))
+        .child(
+            super::widgets::button(
+                "Short recordings",
+                "filter-short-recordings",
+                super::widgets::ButtonRole::Secondary,
+                p,
+            )
+            .self_start()
+            .mt(10.0)
+            .on_press(|s: &mut State| s.set_filter(Filter::Short)),
+        );
     let mut position = 0;
     for group in &s.groups {
         doc = doc.child(
@@ -424,6 +425,14 @@ mod tests {
                 .join("tools/ui-fixtures/screens/meetings/1793955600000-1"),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn meeting_row_uses_the_singular_for_one_task() {
+        let mut meeting = fixture();
+        assert!(!meeting.summary.todo.is_empty());
+        meeting.summary.todo.truncate(1);
+        assert!(people_line(&meeting).ends_with("1 task"));
     }
 
     #[test]

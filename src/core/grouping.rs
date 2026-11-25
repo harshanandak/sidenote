@@ -11,7 +11,7 @@ pub fn day_label(date: Option<NaiveDate>, today: NaiveDate) -> String {
     match date {
         Some(date) if date == today => "Today".into(),
         Some(date) if Some(date) == today.pred_opt() => "Yesterday".into(),
-        Some(date) => date.format("%A %d %B").to_string(),
+        Some(date) => date.format("%A, %-d %b").to_string(),
         None => "Date unknown".into(),
     }
 }
