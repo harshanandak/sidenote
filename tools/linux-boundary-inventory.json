@@ -119,7 +119,7 @@
 
   "src/core/meeting_evidence/speech_host_tests.rs": "e9c6c885ffae4026ea94bfc8bebc158258a2e31d729e0196108c9554655feba5",
 
-  "src/core/meeting_job.rs": "5c3051f8f4e0873415705505823b6dcff3a15360b74889ec50c2612ee89ffe05",
+  "src/core/meeting_job.rs": "ce9ff379e4dc81177374077355c80a3297c09dec60134f9338b6dca28b398a3c",
 
   "src/core/meeting_job/checkpoint.rs": "6c21475b0a2c6400906e8fd03d6deed17224af530dd3079cf6ffa7d870cb86c6",
 
@@ -217,7 +217,7 @@
 
   "src/core/notes/status_detail.rs": "8c9c642856258caf225a450469d2649ef2801b749d1baa6cc29e236114558dad",
 
-  "src/core/notes/tests.rs": "0795d8a656d162b7d7e94b041adb045173f0c2f882ab84c320fed82f1de6c7f8",
+  "src/core/notes/tests.rs": "0f9f6d73dba9ebe143e110259a79e9bcf73720021aae5cb5b2917b45973461bb",
 
   "src/core/notes/tests/corruption.rs": "22bd6f4b4809efa5810b067bccd89e089ffb3adc5e8806c7d7b768b8aa6c5147",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
-  "src/ui/hex/settings.rs": "67b631d2cf5c05a3a407cea8ff1cd401124697dfb61d0bb80171eca6d6525288",
+  "src/ui/hex/settings.rs": "01e14d1eebc922b8f239f6b28df100bf68940a92e4de4df8bc8d516658ee68d2",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
