@@ -632,7 +632,7 @@ impl View {
         let frame = self.frame.borrow();
         if frame.recording || self.look.get().is_some() {
             nub::WIDTH
-        } else if frame.notice.is_some() {
+        } else if frame.notice.is_some() || frame.skipped {
             300.0
         } else {
             WIDTH
@@ -757,7 +757,7 @@ impl View {
             let text = if let Some(notice) = frame.notice {
                 notice.text()
             } else if frame.skipped {
-                "Skipped. Short recordings are not processed.".into()
+                "Short recording skipped. Sidenote only summarizes longer recordings.".into()
             } else {
                 card_text(&frame.id, frame.recording, frame.raw.as_deref())
             };
@@ -1000,7 +1000,11 @@ impl View {
                 }
                 &timer.as_ref().unwrap().1
             } else {
-                other = wide(&frame.notice.map_or_else(|| "Skipped".into(), Notice::text));
+                other = wide(
+                    &frame
+                        .notice
+                        .map_or_else(|| "Short recording skipped".into(), Notice::text),
+                );
                 &other
             };
             let font = if live {
