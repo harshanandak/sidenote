@@ -162,7 +162,7 @@ impl Notebook {
         }
         self.captures.push(Reference {
             key,
-            folder: c.legacy_folder.clone().unwrap_or_else(|| c.folder.clone()),
+            folder: c.folder.clone(),
             title: c.title().into(),
         });
         self.revision += 1;
@@ -267,7 +267,7 @@ pub fn load_capture_note(root: &Path, c: &Capture) -> io::Result<Option<(Approve
         folder,
     };
     approved.verify()?;
-    if !media::note_fingerprint_matches(c, &approved.approval.source_fingerprint)? {
+    if media::source_fingerprint(c)? != approved.approval.source_fingerprint {
         return Ok(None);
     }
     let Some(value) = note::load(&approved.folder)? else {

@@ -598,66 +598,6 @@ fn hexannotation_duplicate_id_wins_over_scrawl_across_roots() {
 }
 
 #[test]
-fn hexannotation_duplicate_keeps_legacy_saved_note_readable() {
-    use super::{media, note, notebook};
-    let legacy_root = Temp::new();
-    let hex_root = Temp::new();
-    let store = Temp::new();
-    let legacy = legacy_root.0.join("chart.scrawl");
-    fs::create_dir(&legacy).unwrap();
-    fs::create_dir(legacy.join("frames")).unwrap();
-    fs::copy(fixture().join("scrawl.json"), legacy.join("scrawl.json")).unwrap();
-    for frame in ["frame-01.png", "frame-02.png"] {
-        fs::copy(
-            fixture().join("frames").join(frame),
-            legacy.join("frames").join(frame),
-        )
-        .unwrap();
-    }
-    let legacy_capture = read_capture(&legacy).unwrap();
-    let legacy_key = media::capture_key(&legacy_capture);
-    let approved = media::approve(
-        &legacy_capture,
-        &[media::ReviewFrame {
-            index: 1,
-            included: true,
-            masks: Vec::new(),
-        }],
-        &store.0,
-    )
-    .unwrap();
-    let saved = note::synthetic_note(&approved);
-    note::validate(&saved, &approved).unwrap();
-    note::save(&approved.folder, &saved).unwrap();
-    media::publish_latest(&store.0, &approved).unwrap();
-    hex_root.hex_bundle(
-        "chart",
-        r#"{"formatVersion":1,"annotation":{"id":"synthetic","createdAtMs":1794384000000}}"#,
-    );
-    let scan = scan_roots(&[hex_root.0.clone(), legacy_root.0.clone()]);
-    assert_eq!(scan.captures.len(), 1);
-    let merged = &scan.captures[0];
-    assert!(merged.folder.ends_with("chart.hexannotation"));
-    assert_eq!(merged.legacy_folder.as_ref(), Some(&legacy));
-    assert_eq!(media::capture_key(merged), legacy_key);
-    let (loaded, loaded_note) = notebook::load_capture_note(&store.0, merged)
-        .unwrap()
-        .unwrap();
-    note::validate(&loaded_note, &loaded).unwrap();
-    assert_eq!(loaded_note, saved);
-    let mut book = notebook::Notebook::new("Duplicate");
-    assert!(book.add(merged));
-    assert_eq!(book.captures[0].key, legacy_key);
-    assert_eq!(book.captures[0].folder, legacy);
-    let reference = read_capture(&book.captures[0].folder).unwrap();
-    assert!(
-        notebook::load_capture_note(&store.0, &reference)
-            .unwrap()
-            .is_some()
-    );
-}
-
-#[test]
 fn display_drag_at_two_sizes_bakes_exactly_the_same_source_pixels() {
     use super::media::*;
     let source = image::RgbaImage::from_pixel(800, 400, image::Rgba([90, 110, 130, 77]));
