@@ -224,10 +224,9 @@ pub fn heading(compact: bool, affiliation: Option<bool>, p: Palette) -> El {
     if compact {
         return col();
     }
-    row()
-        .w_full()
-        .px(14.0)
-        .gap(12.0)
+    cards::row_shell()
+        .pt(10.0)
+        .pb(0.0)
         .mb(8.0)
         .child(roles::META.line("Person", p.faint).grow(1.0).min_w(190.0))
         .children(affiliation.map(|external| {
@@ -238,7 +237,7 @@ pub fn heading(compact: bool, affiliation: Option<bool>, p: Palette) -> El {
         .child(roles::META.line("Meetings", p.faint).w(52.0))
         .child(roles::META.line("Last seen", p.faint).w(65.0))
         .child(roles::META.line("Open", p.faint).w(40.0))
-        .child(roles::META.line("Side", p.faint).w(168.0))
+        .child(roles::META.line("Relationship", p.faint).w(168.0))
         .child(col().w(32.0))
 }
 
@@ -319,7 +318,7 @@ pub fn person_row(
                 ),
         );
     } else if person.side.is_none() {
-        name = name.child(roles::META.line("Side not set", p.faint));
+        name = name.child(roles::META.line("Relationship not set", p.faint));
     }
     let identity = row()
         .min_w(190.0)
@@ -386,7 +385,7 @@ pub fn person_row(
             .child(roles::META.line(date, p.soft).w(65.0))
             .child(roles::META.line(person.open.to_string(), p.soft).w(40.0))
             .child(side_control(person, k, p))
-            .child(menu);
+            .child(menu.w(32.0));
     }
     let mut out = col().w_full().child(line);
     if s.companies.person.as_deref() == Some(&person.name) {
@@ -415,18 +414,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
 }
 
 pub(super) fn content(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
-    col()
-        .w_full()
-        .child(section(s, k, p, s.people.tab, layer))
-        .child(
-            roles::SMALL
-                .wrap(
-                    "Import people is not available yet. Add people and teams here.",
-                    p.soft,
-                )
-                .key("people-import")
-                .mt(18.0),
-        )
+    section(s, k, p, s.people.tab, layer)
 }
 
 fn section(s: &State, k: &Kit, p: Palette, tab: usize, layer: &mut Vec<El>) -> El {
@@ -474,12 +462,14 @@ fn section(s: &State, k: &Kit, p: Palette, tab: usize, layer: &mut Vec<El>) -> E
         .gap(12.0)
         .mt(18.0)
         .child(
-            roles::META
-                .wrap(
-                    "People from older meetings appear when you meet them again.",
-                    p.soft,
-                )
-                .key("people-history-note"),
+            col().key("people-import").child(
+                roles::META
+                    .wrap(
+                        "People from older meetings appear when you meet them again.",
+                        p.soft,
+                    )
+                    .key("people-history-note"),
+            ),
         )
         .child(
             TextInput::new(&s.people.search)
@@ -592,22 +582,20 @@ fn section(s: &State, k: &Kit, p: Palette, tab: usize, layer: &mut Vec<El>) -> E
                     out = out.child(roles::NAME.wrap("No company assigned", p.soft));
                 }
             }
-            let mut panel = cards::panel(p).key(format!(
-                "people-card-{}",
-                company.as_deref().unwrap_or("none")
-            ));
+            let mut panel = cards::panel(p)
+                .key(format!(
+                    "people-card-{}",
+                    company.as_deref().unwrap_or("none")
+                ))
+                .children((!compact).then(|| heading(false, Some(tab == 1), p)))
+                .children((!compact).then(|| hairline(p)));
             for (i, person) in group.iter().enumerate() {
                 if i > 0 {
                     panel = panel.child(hairline(p));
                 }
                 panel = panel.child(person_row(s, person, k, compact, p, layer));
             }
-            out = out.child(
-                col()
-                    .w_full()
-                    .child(heading(compact, Some(tab == 1), p))
-                    .child(panel),
-            );
+            out = out.child(panel);
         }
     }
 

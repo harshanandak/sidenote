@@ -23,7 +23,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const NOT_USED: &str = "These saved choices do not affect the built-in engine yet.";
+const NOT_USED: &str =
+    "You can save these choices for later. The built-in engine does not use them yet.";
 const NOT_SAVED: &str = "Nothing was saved. Fix the values marked not valid.";
 const SAVE_FAILED: &str = "Could not save. Reload Settings and try again.";
 
@@ -153,18 +154,18 @@ impl Field {
                 "Default",
             ),
             Self::Threads => (
-                "Worker threads",
-                "How many transcription workers run at the same time. The default is 4.",
+                "Parallel transcription jobs",
+                "How many parts of a recording can be transcribed at once. The default is 4.",
                 "4",
             ),
             Self::Deadline => (
-                "Transcription deadline (seconds)",
+                "Time limit for a full transcript (seconds)",
                 "The longest a whole transcription may take. Leave empty to work it out from the audio length.",
                 "Automatic",
             ),
             Self::RequestDeadline => (
-                "Request deadline (seconds)",
-                "The longest one transcription request may take. The default is 180.",
+                "Time limit for one transcription request (seconds)",
+                "How long the engine waits for one request to finish. The default is 180 seconds.",
                 "180",
             ),
             Self::Translation => (
@@ -778,7 +779,7 @@ fn field_row(
     let config = engine.base.as_ref().unwrap_or(&s.config);
     let input = if routed(config, field) {
         let value = roles::CONTROL.wrap(read(config, field), p.ink);
-        value.key(format!("{key}-value")).max_w(220.0)
+        value.key(format!("{key}-value")).w(220.0).px(9.0)
     } else {
         TextInput::new(engine.drafts.get(index).unwrap_or(&fallback))
             .height(30.0)
@@ -925,18 +926,15 @@ fn notes_extras(s: &State, p: Palette, st: &BTreeMap<String, FieldStatus>) -> Ve
 pub(super) fn body(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let statuses = s.config.engine_field_status();
     let open = s.hex.shell.engine.unused_open;
-    let mut deferred = col()
-        .key("engine-unused-section")
-        .w_full()
-        .mt(18.0)
-        .child(
-            crate::ui::cards::fold_control("Not used yet", "engine-unused", open, p).on_press(
-                |s: &mut State| s.hex.shell.engine.unused_open = !s.hex.shell.engine.unused_open,
-            ),
-        )
-        .child(roles::SMALL.wrap(NOT_USED, p.soft));
+    let mut deferred = col().key("engine-unused-section").w_full().mt(18.0).child(
+        crate::ui::cards::fold_control("Advanced engine settings", "engine-unused", open, p)
+            .on_press(|s: &mut State| {
+                s.hex.shell.engine.unused_open = !s.hex.shell.engine.unused_open;
+            }),
+    );
     if open {
         deferred = deferred
+            .child(roles::SMALL.wrap(NOT_USED, p.soft).mt(6.0))
             .child(group(
                 s,
                 k,

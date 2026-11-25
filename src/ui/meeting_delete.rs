@@ -503,9 +503,10 @@ pub(super) fn overlay(s: &State, p: Palette, layer: &mut Vec<El>) {
     layer.push(
         col()
             .key("meeting-delete-overlay")
-            .pin(Some(0.0), Some(72.0), Some(0.0), None)
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
             .px(16.0)
             .items_center()
+            .justify_center()
             .child(
                 content
                     .key("meeting-delete-dialog")
