@@ -201,6 +201,28 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
             .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
+    let owner = s.live.as_ref().and_then(|l| l.session.as_ref());
+    if recording && (live || owner.is_some_and(|m| s.selected.as_ref() == Some(&m.id))) {
+        use crate::ui::icons::STOP;
+        use crate::ui::widgets::{ButtonRole, icon_button};
+        let expected = hex::recording_id(s);
+        let reason = hex::stop_blocked(s);
+        let stop = if s.narrow.get() {
+            icon_button(&STOP, "Stop recording", "hex-stop", ButtonRole::Ghost, p).size(28.0, 28.0)
+        } else {
+            quiet_button("Stop", "hex-stop", p)
+        };
+        control = control.child(
+            stop.label(
+                reason.map_or_else(|| "Stop recording".into(), |why| format!("Stop ({why})")),
+            )
+            .help(
+                reason.unwrap_or("Stop this recording part. Generate notes from the meeting page."),
+            )
+            .button_disabled(reason.is_some())
+            .on_press(move |s: &mut State| s.hex_record_stop(expected.clone())),
+        );
+    }
     if let Some(status) = above {
         col().gap(4.0).items_center().child(status).child(control)
     } else {

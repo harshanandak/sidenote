@@ -2,15 +2,13 @@
 //!
 //! The panel and thread use Rune's shared motion tokens and follow the system's reduced motion setting.
 use super::{
-    AskRun, State, icons,
-    meeting::COLUMN,
-    roles,
+    AskRun, State, roles,
     theme::Palette,
     widgets::{ButtonDisabled, hairline, pressable, quiet_button, spaced_caps},
 };
 use regex::{Captures, Regex};
-use rune::tok::motion::{GLIDE, GLIDE_EXIT, SNAP, pair};
-use rune::{El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, el, row};
+use rune::tok::motion::{SNAP, pair};
+use rune::{El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
 use rune_kit::{Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
@@ -196,8 +194,7 @@ pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
         tx.animated();
-        // The dock and panel share a spring so the bottom edge stays anchored.
-        tx.motion(if open { GLIDE } else { GLIDE_EXIT });
+        tx.motion(SNAP);
     }
     open
 }
@@ -414,12 +411,9 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
             stick_bottom: false,
         })
         .child(messages);
-    Some(panel.child(hairline(p)).child(list))
+    let panel = panel.max_w(840.0).self_center();
+    Some(with_note(panel.child(hairline(p)).child(list), p))
 }
-
-/// Gutter of the notes column at normal widths. The saved meeting page's Ask bar uses it, so the bar
-/// lines up with the notes text; at 390 wide the Ask panel keeps its 16 point gutter.
-const NOTES_GUTTER: f32 = 24.0;
 
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
     let (prompt, more) = if s.companies.open {
@@ -679,15 +673,15 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
 const ACTION: f32 = 28.0;
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
-/// while a question runs, and a disabled arrow for an empty editor.
-fn action(s: &State, p: Palette, ready: bool, pending: bool) -> El {
+/// while a question runs.
+fn action(s: &State, p: Palette, pending: bool) -> El {
     let slot = col().key("ask-action").size(ACTION, ACTION).shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
     if pending {
         let run = s.asks.get(&s.ask_key());
         let stopping = run.is_some_and(|r| r.cancel.stopped());
         let who = run.map_or("the answer", |r| short_runner(&r.runner));
-        return slot.child(
+        slot.child(
             super::widgets::icon_button(
                 &super::icons::STOP,
                 "Stop",
@@ -707,10 +701,9 @@ fn action(s: &State, p: Palette, ready: bool, pending: bool) -> El {
                 s.stop_ask();
                 keep_question_focus(s, tx);
             }),
-        );
-    }
-    if ready {
-        return slot.child(
+        )
+    } else {
+        slot.child(
             super::widgets::icon_button(
                 &super::icons::ARROW_UP,
                 "Ask (Enter)",
@@ -727,23 +720,8 @@ fn action(s: &State, p: Palette, ready: bool, pending: bool) -> El {
                 let q = s.question.text.clone();
                 submit(s, &q, tx);
             }),
-        );
+        )
     }
-    slot.child(
-        row()
-            .key("ask-send-empty")
-            .transition(replace)
-            .role("button")
-            .label("Ask (Enter)")
-            .disabled(true)
-            .inert()
-            .size(ACTION, ACTION)
-            .center()
-            .radius(14.0)
-            .fill(p.card)
-            .border(1.0, p.line)
-            .child(icons::draw(&icons::ARROW_UP, 16.0, p.faint)),
-    )
 }
 
 /// What the pill says when no agent CLI is on this machine.
@@ -798,20 +776,12 @@ pub fn overlay_with(
 ) -> El {
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
-    let meeting_bar = s.selected.is_some();
-    // On the saved meeting page the bar is the notes column's width and shares its left edge.
-    let notes_column = meeting_bar && !s.on_live() && !s.companies.open && !s.meeting_ui.tabs;
-    let compact = s.app_w.get() < 600.0;
-    let gutter = if notes_column && super::meeting::strip(s) || s.companies.open {
-        0.0
-    } else if notes_column && !compact {
-        NOTES_GUTTER
-    } else {
-        16.0
-    };
+    let compact = s.app_w.get() - super::nav::width(s) < 600.0;
+    let inset = if compact && s.on_live() { 4.0 } else { 16.0 };
+    let gutter = if s.companies.open { 0.0 } else { inset };
     let mut stack = col()
         .w_full()
-        .max_w(COLUMN + 2.0 * gutter)
+        .max_w(840.0 + 2.0 * gutter + if lead.is_some() { 220.0 } else { 0.0 })
         .px(gutter)
         .gap(6.0);
     if s.back.is_some() && !(s.selected.is_some() && !s.meeting_ui.tabs && s.transcript_open) {
@@ -865,13 +835,14 @@ pub fn overlay_with(
             .cloned()
             .unwrap_or_else(|| s.ask_settings.connection.settings.label());
         let selected = s.ask_settings.connection.settings.label();
+        let mut disclosure = col().w_full().padding(8.0).radius(12.0).fill(p.card);
         let label =
             if !pending && (!s.ask_settings.connection.settings.enabled || label != selected) {
                 format!("Last attempt: {label}")
             } else {
                 label
             };
-        stack = stack.child(
+        disclosure = disclosure.child(
             roles::META
                 .wrap(label, p.soft)
                 .key("ask-endpoint-label")
@@ -886,7 +857,7 @@ pub fn overlay_with(
                 .get(&id)
                 .is_some_and(|label| label != &selected)
         {
-            stack = stack.child(
+            disclosure = disclosure.child(
                 roles::META
                     .wrap(format!("Next Ask: {selected}"), p.soft)
                     .key("ask-next-endpoint-label")
@@ -895,20 +866,21 @@ pub fn overlay_with(
         }
         let recovery = super::cloud_ask::recovery(s, p);
         let recovering = recovery.is_some();
-        stack = stack.children(recovery);
+        disclosure = disclosure.children(recovery);
         if let Some(metrics) = s.ask_settings.connection.metrics.get(&id) {
             let label = if recovering {
                 super::cloud_ask::known_metrics_label(metrics)
             } else {
                 metrics.label()
             };
-            stack = stack.child(
+            disclosure = disclosure.child(
                 roles::META
                     .wrap(label, p.faint)
                     .key("ask-endpoint-timing")
                     .w_full(),
             );
         }
+        stack = stack.child(disclosure.max_w(840.0).self_center());
     }
     if !s.has_agent() && !pending && s.runner_error.is_none() {
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
@@ -928,7 +900,7 @@ pub fn overlay_with(
         } else {
             (stack, lead)
         };
-        return place(s, with_note(beside(stack, lead, pill), p), p);
+        return place(s, beside(stack, lead, pill.max_w(840.0)));
     }
     let empty = s.question.text.trim().is_empty();
     let focused = s.ask_open || s.runner_open;
@@ -990,10 +962,11 @@ pub fn overlay_with(
         .key("ask-input")
         .grow(1.0)
         .min_w(0.0);
-    let ready = !empty && !pending;
     let model = (focused || pending).then(|| {
         if s.ask_settings.connection.settings.enabled {
-            quiet_button("Connection", "ask-endpoint-settings", p)
+            let caption = if compact { "Setup" } else { "Connection" };
+            quiet_button(caption, "ask-endpoint-settings", p)
+                .label("Connection")
                 .button_disabled(pending)
                 .help(if pending {
                     "Available after this answer finishes"
@@ -1019,37 +992,26 @@ pub fn overlay_with(
     let pill = row()
         .key("ask-pill")
         .w_full()
-        .min_h(44.0)
-        .gap(4.0)
+        .max_w(840.0)
+        .h(70.0)
+        .gap(if compact { 2.0 } else { 4.0 })
         .items_center()
-        .pl(18.0)
-        .pr(8.0)
-        .radius(22.0)
+        .pl(if compact { 8.0 } else { 22.0 })
+        .pr(if compact { 6.0 } else { 10.0 })
+        .radius(35.0)
         .fill(p.card)
         .focus_within_flat()
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
         .child(input)
         .children(model)
         .child(ask_options(s, k, p, empty && !pending, layer))
-        .children((focused || pending).then(|| action(s, p, ready, pending)));
-    // Narrow and focused: the lead holds Pause, Resume and Generate notes, so it
-    // moves above the panel instead of disappearing.
-    let live_compact = s.on_live() && s.app_w.get() - super::nav::width(s) < 410.0;
-    let (stack, lead) = if compact && (focused || live_compact) {
+        .children((!empty || pending).then(|| action(s, p, pending)));
+    let (stack, lead) = if compact {
         (stack.children(lead.map(El::self_start)), None)
-    } else if compact {
-        let glide = |control: El| control.transition(Transition::opacity().springs(pair::GLIDE));
-        (stack, lead.map(glide))
     } else {
         (stack, lead)
     };
-    let panel = col()
-        .key("ask-panel")
-        .w_full()
-        .padding(6.0)
-        .child(if compact { pill.width_leads() } else { pill });
-    let panel = if compact { panel.width_leads() } else { panel };
-    place(s, with_note(beside(stack, lead, panel), p), p)
+    place(s, beside(stack, lead, pill))
 }
 
 fn with_note(stack: El, p: Palette) -> El {
@@ -1062,7 +1024,7 @@ fn with_note(stack: El, p: Palette) -> El {
     )
 }
 
-fn place(s: &State, stack: El, p: Palette) -> El {
+fn place(s: &State, stack: El) -> El {
     if s.on_live() {
         col()
             .key("ask-overlay")
@@ -1072,7 +1034,6 @@ fn place(s: &State, stack: El, p: Palette) -> El {
             .shrink()
             .items_center()
             .pb(8.0)
-            .fill(p.bg)
             .child(
                 stack
                     .max_h((super::live::limits(s).space - 8.0).max(0.0))
@@ -1084,57 +1045,27 @@ fn place(s: &State, stack: El, p: Palette) -> El {
             )
     } else if s.companies.open {
         col().key("company-ask").w_full().min_w(0.0).child(stack)
-    } else if s.selected.is_some() && !s.meeting_ui.tabs {
-        // Left-aligned, like the notes above it.
+    } else {
         col()
             .key("ask-overlay")
-            .w_full()
-            .items_start()
-            .shrink()
+            .pin(Some(0.0), None, Some(0.0), Some(0.0))
+            .items_center()
             .pb(8.0)
             .child(stack)
-    } else {
-        dock(stack, p)
     }
 }
 
-/// Keep the transcript control level with the input as the panel opens above it.
 fn beside(stack: El, lead: Option<El>, pill: El) -> El {
     stack.child(
         row()
             .key("meeting-bottom-bar")
             .w_full()
             .gap(8.0)
-            .items_end()
-            .children(lead.map(|control| control.mb(6.0).shrink()))
+            .items_center()
+            .justify_center()
+            .children(lead)
             .child(pill.grow(1.0).min_w(0.0)),
     )
-}
-
-/// The stack pinned to the bottom edge, centred. A short fade lifts the page out from under it,
-/// and from the fade down the ground is solid page colour, so the chips, the thread and the
-/// pill never have loose page text showing through them.
-fn dock(stack: El, p: Palette) -> El {
-    col()
-        .key("ask-overlay")
-        .pin(Some(0.0), None, Some(0.0), Some(0.0))
-        .items_center()
-        .child(el().w_full().h(150.0).linear_gradient(
-            std::f32::consts::PI,
-            [
-                (0.0, p.bg.alpha(0.0)),
-                (0.55, p.bg.alpha(0.88)),
-                (1.0, p.bg),
-            ],
-        ))
-        .child(
-            col()
-                .w_full()
-                .items_center()
-                .pb(8.0)
-                .fill(p.bg)
-                .child(stack),
-        )
 }
 
 #[cfg(test)]

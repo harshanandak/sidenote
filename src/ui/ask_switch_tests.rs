@@ -1332,15 +1332,9 @@ fn at_390_wide_the_ask_header_keeps_clear_off_the_edge_and_the_page_fades_out() 
         caption[0] + caption[2] <= hide[0] && hide[0] + hide[2] <= clear[0],
         "the caption runs under Hide or Clear"
     );
-    let (scroll, fade) = (
-        rect(&rt, "meeting-scroll"),
-        rect(&rt, "meeting-scroll-fade"),
-    );
-    assert_eq!(
-        fade[1] + fade[3],
-        scroll[1] + scroll[3],
-        "fade sits on the cut edge"
-    );
+    let scroll = rect(&rt, "meeting-scroll");
+    assert_eq!(scroll[1] + scroll[3], overlay[1] + overlay[3]);
+    assert!(rt.find("meeting-scroll-fade").is_none());
 }
 
 #[test]
@@ -1408,6 +1402,67 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     assert_eq!(element(&rt, "tick-2").fill, checked);
     assert_eq!(rt.state.ask_key(), core::ALL_KEY);
     assert_eq!(rt.state.saved.messages, global);
+}
+
+#[test]
+fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
+    if in_parent("ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor") {
+        return;
+    }
+    for size in [DEFAULT_SIZE, (390.0, 844.0)] {
+        let mut rt = page_at(size);
+        rt.update(|s, _| {
+            scene_agents(s, ALL_AGENTS);
+            super::live::parts_scene(s, "paused");
+            s.ask_open = true;
+        });
+        rt.frame(0.0);
+        assert!(rt.find("meeting-resume").is_some());
+        assert!(rt.find("meeting-generate").is_some());
+        assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
+        let chip = |rt: &Runtime<State>| element(rt, "ask-options").label.unwrap();
+        assert_eq!(rt.state.ask_key(), MEETING);
+        assert_eq!(chip(&rt), "Ask options, What did we decide?");
+        rt.update(|s, _| s.set_ask_scope(true));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+        rt.update(|s, _| s.go_home());
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options, List my tasks");
+        rt.update(|s, _| s.question = TextEdit::new("A draft"));
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options");
+        rt.update(|s, _| {
+            s.question = TextEdit::default();
+            scene_live(s, "", &[], false);
+            s.hex.status = Some(Ok(hex_engine_recording()));
+            use sidenote::hex_engine::{Feature, Support};
+            let caps = [(Feature::RecordStop, Support::Supported)].into();
+            s.hex_apply(hex::Msg::Caps("test".into(), Ok(caps)));
+        });
+        rt.frame(0.0);
+        assert!(rt.state.ask_current_live());
+        assert_eq!(chip(&rt), "Ask options, What did I miss");
+        assert_eq!(
+            element(&rt, "hex-stop").label.as_deref(),
+            Some("Stop recording")
+        );
+        let [x, y, w, h] = rect_of(&rt, "hex-stop");
+        let [left, top, ..] = rect_of(&rt, "ask-pill");
+        let phone = size.0 < 600.0;
+        assert!((phone && y + h <= top) || (!phone && x + w <= left));
+        assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
+        rt.update(|s, _| {
+            s.asks
+                .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
+        });
+        rt.frame(0.0);
+        assert_eq!(chip(&rt), "Ask options");
+        rt.update(|s, _| s.go_home());
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+        assert_eq!(chip(&rt), "Ask options, List my tasks");
+    }
 }
 
 #[test]
@@ -1926,8 +1981,7 @@ fn retiring_memory_shares_the_wait_between_two_contended_locks() {
     );
 }
 
-/// The Ask dock starts at the notes edge and aligns the suggestions inside the panel.
-fn the_bar_starts_at_the_notes_column(name: &str, size: (f32, f32)) {
+fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     if in_parent(name) {
         return;
     }
@@ -1944,30 +1998,25 @@ fn the_bar_starts_at_the_notes_column(name: &str, size: (f32, f32)) {
             .unwrap_or_else(|| panic!("{key} at {size:?}"))
             .0
     };
-    let notes = rect("meeting-view");
-    let (dock, chip, pill) = (
+    let (pane, dock, chip, pill) = (
+        rect("meeting-pane"),
         rect("meeting-bottom-bar"),
         rect("ask-options"),
         rect("ask-pill"),
     );
-    assert_eq!(dock[0], notes[0], "the dock starts at the notes column");
+    assert!((dock[0] + dock[2] / 2.0 - pane[0] - pane[2] / 2.0).abs() < 1.0);
+    assert_eq!(pill[3], 70.0);
     assert!(chip[0] > pill[0] && chip[0] + chip[2] < pill[0] + pill[2]);
 }
 
 #[test]
-fn the_ask_bar_starts_at_the_notes_column_at_390_wide() {
-    the_bar_starts_at_the_notes_column(
-        "the_ask_bar_starts_at_the_notes_column_at_390_wide",
-        (390.0, 844.0),
-    );
+fn the_ask_bar_is_centered_at_390_wide() {
+    the_bar_is_centered("the_ask_bar_is_centered_at_390_wide", (390.0, 844.0));
 }
 
 #[test]
-fn the_ask_bar_starts_at_the_notes_column_at_the_default_width() {
-    the_bar_starts_at_the_notes_column(
-        "the_ask_bar_starts_at_the_notes_column_at_the_default_width",
-        DEFAULT_SIZE,
-    );
+fn the_ask_bar_is_centered_at_the_default_width() {
+    the_bar_is_centered("the_ask_bar_is_centered_at_the_default_width", DEFAULT_SIZE);
 }
 
 #[test]
@@ -1975,7 +2024,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks") {
         return;
     }
-    let mut rt = page_with_tasks((1334.0, 900.0));
+    let mut rt = page_with_tasks((1334.0, 390.0));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
@@ -2002,12 +2051,13 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     // The header's title and controls are in the notes column.
     let head = rect(&rt, "meeting-header");
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
-    // The Ask bar is the notes column wide and starts where it does; the fade and the Ask
-    // stack together are 150, measured from the window bottom like the mock's.
-    let dock = rect(&rt, "meeting-bottom-bar");
-    assert_eq!((dock[0], dock[2]), (main[0], 640.0), "Ask bar");
-    let fade = rect(&rt, "meeting-scroll-fade")[3] + rect(&rt, "ask-overlay")[3];
-    assert_eq!(fade, 150.0, "fade plus Ask bar");
+    assert_eq!(rect(&rt, "ask-pill")[2], 840.0, "Ask bar");
+    assert!(rt.find("meeting-scroll-fade").is_none());
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
+    rt.frame(0.0);
+    let [x, _, w, _] = rect(&rt, "ask-pill");
+    let [_, y, _, h] = rect(&rt, "meeting-actions");
+    assert!(tasks[0] >= x + w || y + h <= rect(&rt, "ask-overlay")[1]);
     // The transcript sheet rises inside the notes column.
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);
@@ -2018,8 +2068,8 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
 
 /// Long notes: the last row ends below where the old 150 fade began, and is still clear of it.
 #[test]
-fn the_fade_leaves_the_last_notes_row_clear_and_is_gone_under_an_open_thread() {
-    if in_parent("the_fade_leaves_the_last_notes_row_clear_and_is_gone_under_an_open_thread") {
+fn the_dock_leaves_the_last_notes_row_clear() {
+    if in_parent("the_dock_leaves_the_last_notes_row_clear") {
         return;
     }
     let long = || {
@@ -2027,7 +2077,7 @@ fn the_fade_leaves_the_last_notes_row_clear_and_is_gone_under_an_open_thread() {
         let point = |kind: &str, text: &str| serde_json::json!({"type": kind, "text": text});
         let summary = serde_json::json!({
             "title": "Beta launch plan",
-            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions."],
+            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions. ".repeat(24)],
             "topics": [
                 {"title": "Launch date", "points": [
                     point("decided", "Launch in the second week of December, if the copy is done."),
@@ -2046,21 +2096,21 @@ fn the_fade_leaves_the_last_notes_row_clear_and_is_gone_under_an_open_thread() {
         std::fs::write(folder.join("english-summary.json"), summary.to_string()).unwrap();
     };
     let mut rt = page_with((1334.0, 900.0), long);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-scroll"));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
         |rt: &Runtime<State>, key: &str| rt.presented(key).unwrap_or_else(|| panic!("{key}")).0;
-    let (last, fade) = (rect(&rt, "verify-0"), rect(&rt, "meeting-scroll-fade"));
+    let (last, dock) = (rect(&rt, "verify-0"), rect(&rt, "ask-overlay"));
     let scroll = rect(&rt, "meeting-scroll");
     assert!(
         last[1] + last[3] > scroll[1] + scroll[3] - 150.0,
         "the scene must reach into the old 150 fade"
     );
     assert!(
-        last[1] + last[3] <= fade[1],
-        "the last notes row {last:?} sits under the fade {fade:?}"
+        last[1] + last[3] <= dock[1],
+        "the last notes row {last:?} sits under the dock {dock:?}"
     );
-    // A saved thread makes the Ask stack taller than the fade: nothing is left to draw.
     rt.update(|s, _| {
         s.saved.messages = ["What did we decide?", "The beta ships on Friday."]
             .iter()
@@ -2075,9 +2125,8 @@ fn the_fade_leaves_the_last_notes_row_clear_and_is_gone_under_an_open_thread() {
     rt.frame(0.0);
     rt.settle_all();
     rt.frame(0.0);
-    let (overlay, fade) = (rect(&rt, "ask-overlay"), rect(&rt, "meeting-scroll-fade"));
-    assert!(overlay[3] >= 150.0, "the thread stack is {overlay:?}");
-    assert_eq!(fade[3], 0.0, "fade with a thread open");
+    assert!(rect(&rt, "ask-thread")[3] > 0.0);
+    assert!(rt.find("meeting-scroll-fade").is_none());
 }
 
 /// The saved meeting at `size` with a date and duration, two people, a project and the English-only
@@ -2284,21 +2333,15 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
         return;
     }
     // 800 wide with no sidebar, and 1000 wide with it (a page of 751): both are `narrow` and both
-    // have room for the strip and the 640 column, so the bar sits on the column's edge.
+    // have room for the strip and the 640 column. The dock spans the pane with 16-point gutters.
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
-        let (pill, main) = (
-            rect_of(&rt, "meeting-bottom-bar"),
-            rect_of(&rt, "meeting-main"),
-        );
+        let [dock, pane] = ["meeting-bottom-bar", "meeting-pane"].map(|key| rect_of(&rt, key));
         assert_eq!(
-            pill[0], main[0],
-            "{size:?}: the Ask bar is off the notes edge"
-        );
-        assert_eq!(
-            pill[2], main[2],
-            "{size:?}: the Ask bar is not the column's width"
+            (dock[0], dock[2]),
+            (pane[0] + 16.0, pane[2] - 32.0),
+            "{size:?}"
         );
     }
 }
@@ -2503,8 +2546,8 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         (main[0] - 8.0, 656.0),
         "task row {task:?}"
     );
-    // The Ask bar and the transcript sheet start on the notes edge too.
-    assert_eq!(r(&rt, "meeting-bottom-bar")[0], main[0], "Ask bar");
+    let pane = r(&rt, "meeting-pane");
+    assert_eq!(r(&rt, "meeting-bottom-bar")[0], pane[0] + 16.0);
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);
     rt.settle_all();
