@@ -299,6 +299,8 @@ jobs:
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \
             ui::ask_switch_tests::suppression_failure_during_ui_apply_retries_unchanged_catalog \
             ui::ask_switch_tests::meeting_ticks_keep_the_all_meetings_chat \
+            ui::list::tests::home_last_row_scrolls_clear_of_ask \
+            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::recording_state_tests::pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard \
             ui::ask_switch_tests::meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks \
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \

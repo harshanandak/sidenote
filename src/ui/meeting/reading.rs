@@ -1236,9 +1236,9 @@ mod tests {
                         .unwrap()
                 };
                 let viewport = element(&rt, "meeting-scroll");
-                let fade = element(&rt, "meeting-scroll-fade");
+                let dock = element(&rt, "ask-overlay");
                 assert!(last_line.rect[1] >= viewport.rect[1]);
-                assert!(last_line.rect[1] + last_line.rect[3] <= fade.rect[1]);
+                assert!(last_line.rect[1] + last_line.rect[3] <= dock.rect[1]);
             }
 
             rt.update(|s, _| s.toggle_transcript());
