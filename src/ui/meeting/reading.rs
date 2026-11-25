@@ -929,22 +929,11 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // scroll area is 8 wider each side there, as the tasks column's is on the wide grid.
     let hang = if strip && !wide { 8.0 } else { 0.0 };
     let phone_sheet = s.transcript_open && super::phone(s);
-    let fade = if phone_sheet {
-        28.0
-    } else if s.transcript_open {
-        0.0
-    } else {
-        (150.0 - s.overlay_h.get()).max(0.0)
-    };
-    let fade_opacity = if phone_sheet {
-        1.0
-    } else {
-        (fade / 75.0).min(1.0)
-    };
+    let fade = if phone_sheet { 28.0 } else { 0.0 };
     let bottom_pad = if s.transcript_open {
         fade + 32.0
     } else {
-        s.overlay_h.get().max(fade) + 32.0
+        s.overlay_h.get() + 16.0
     };
     let mut visit = s.meeting_ui.sections.borrow_mut();
     visit.sync(m, s.meeting_tab, strip);
@@ -1000,19 +989,14 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 )
                 .grow(1.0),
             )
-            // The Ask stack sits below the scroll area. On a phone, fade to the page color
-            // before the transcript dock so the clipped document does not run into the sheet.
-            .child(
+            // Ease the clipped document into the open phone transcript sheet.
+            .children(phone_sheet.then(|| {
                 el().key("meeting-scroll-fade")
                     .pin(Some(0.0), None, Some(0.0), Some(0.0))
                     .h(fade)
-                    .linear_gradient(
-                        std::f32::consts::PI,
-                        [(0.0, p.bg.alpha(0.0)), (1.0, p.bg.alpha(fade_opacity))],
-                    ),
-            ),
+                    .linear_gradient(std::f32::consts::PI, [(0.0, p.bg.alpha(0.0)), (1.0, p.bg)])
+            })),
     );
-    let control = recording_control(s, k, p, layer);
     let panel = s.transcript_open.then(|| {
         col()
             .key("meeting-transcript-view")
@@ -1023,7 +1007,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             .max_h(transcript_height(s))
             .child(transcript_panel(s, k, m, true, p))
     });
-    main = main.child(if let Some(panel) = panel {
+    main = main.children(panel.map(|panel| {
         col()
             .key("meeting-transcript-dock")
             .w_full()
@@ -1055,7 +1039,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                             .flex_wrap()
                             .gaps(4.0, 0.0)
                             .justify_between()
-                            .child(control)
+                            .child(recording_control(s, k, p, layer))
                             .child(
                                 quiet_button("Hide transcript", "meeting-hide-transcript", p)
                                     .h(36.0)
@@ -1067,16 +1051,14 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                             ),
                     ),
             )
-    } else {
-        ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
-    });
+    }));
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
         columns = columns.pr(EDGE);
         // The tasks' rows hang 8 either side of their column, like the mock, so the text gap to the
         // notes is the 40 and the rows' hairlines and check circles are not cut by the scroll area.
         let tasks = scroll(
-            col().px(8.0).pb(24.0).child(
+            col().px(8.0).pb(bottom_pad).child(
                 col()
                     .key("meeting-tasks-column")
                     .w(TASKS)
@@ -1125,7 +1107,12 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     if let Some(note) = &s.notice {
         pane = pane.child(notice_bar(note, p));
     }
-    pane.child(head).child(columns)
+    pane.child(head)
+        .child(columns)
+        .children((!s.transcript_open).then(|| {
+            let control = recording_control(s, k, p, layer);
+            ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
+        }))
 }
 
 /// The grid row, `width` wide: the 44 point strip kept for the section rail, then `notes`. The
@@ -1249,9 +1236,9 @@ mod tests {
                         .unwrap()
                 };
                 let viewport = element(&rt, "meeting-scroll");
-                let fade = element(&rt, "meeting-scroll-fade");
+                let dock = element(&rt, "ask-overlay");
                 assert!(last_line.rect[1] >= viewport.rect[1]);
-                assert!(last_line.rect[1] + last_line.rect[3] <= fade.rect[1]);
+                assert!(last_line.rect[1] + last_line.rect[3] <= dock.rect[1]);
             }
 
             rt.update(|s, _| s.toggle_transcript());
