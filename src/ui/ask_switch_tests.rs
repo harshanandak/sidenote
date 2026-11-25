@@ -1388,8 +1388,8 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     rt.update(|s, _| s.set_ask_scope(true));
     rt.frame(0.0);
     assert_eq!(element(&rt, "tick-0").fill, checked);
-    tap(&mut rt, "tick-0");
-    wait_for_tick(&mut rt, 0, false);
+    tap(&mut rt, "tick-1");
+    wait_for_tick(&mut rt, 1, true);
     assert_eq!(rt.state.ask_key(), all);
     assert_eq!(rt.state.saved.messages, [global]);
 }
