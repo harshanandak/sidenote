@@ -287,6 +287,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --bin sidenote -- \
             install_hooks_tests:: ui::models::dev40_ ui::models::provisioning_review_ \
             ui::window::close_tests:: \
+            ui::nav::tests::blocked_new_meeting_keeps_status_below_native_titlebar \
             ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \

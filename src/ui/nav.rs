@@ -545,18 +545,26 @@ pub(super) fn actions(
     p: Palette,
     narrow: bool,
     layer: &mut Vec<El>,
-) -> (Option<El>, Option<El>) {
+) -> (Option<El>, Option<El>, Option<&'static str>) {
     if s.annotations.open {
-        return (None, Some(super::annotations::new_button(s, p)));
+        return (None, Some(super::annotations::new_button(s, p)), None);
     }
     let recording = s.hex_recording();
-    (
-        (recording && !meeting_shows_pause(s)).then(|| recording_pill(s, p, narrow)),
-        (!recording || s.hex_status_unknown()).then(|| new_meeting_button(s, p, narrow, layer)),
-    )
+    let pill = (recording && !meeting_shows_pause(s)).then(|| recording_pill(s, p, narrow));
+    if !recording || s.hex_status_unknown() {
+        let (button, blocked) = new_meeting_button(s, p, narrow, layer);
+        (pill, Some(button), blocked)
+    } else {
+        (pill, None, None)
+    }
 }
 
-pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
+pub(super) fn new_meeting_button(
+    s: &State,
+    p: Palette,
+    narrow: bool,
+    layer: &mut Vec<El>,
+) -> (El, Option<&'static str>) {
     let b = super::widgets::button(
         if narrow { "+" } else { "+ New meeting" },
         "new-meeting",
@@ -567,7 +575,10 @@ pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mu
     .px(if narrow { 8.0 } else { 10.0 })
     .radius(14.0);
     if let Some(error) = super::updates::listener_problem(s) {
-        return super::updates::listener_popover(s, b, error, p, layer);
+        return (
+            super::updates::listener_popover(s, b, error, p, layer),
+            None,
+        );
     }
     let blocked = hex::start_blocked(s);
     let action = match blocked {
@@ -581,19 +592,12 @@ pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mu
             .opacity(0.5)
             .disabled(true),
     };
-    if cfg!(target_os = "linux") {
-        return action;
-    }
-    col()
-        .items_end()
-        .gap(if narrow { 6.0 } else { 2.0 })
-        .child(action)
-        .children(blocked.map(|reason| {
-            roles::META
-                .wrap(reason, p.soft)
-                .max_w(if narrow { 300.0 } else { 440.0 })
-                .role("status")
-        }))
+    let notice = if cfg!(target_os = "linux") {
+        None
+    } else {
+        blocked
+    };
+    (action, notice)
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
@@ -959,9 +963,7 @@ pub fn meetings_home(s: &State) -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
-    #[test]
-    fn narrow_new_meeting_gives_hex_check_its_own_line() {
+    fn checking_hex(width: f32) -> rune::Runtime<State> {
         use crate::ui::theme;
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
@@ -977,17 +979,55 @@ mod tests {
         );
         let mut rt = Runtime::with_text(
             state,
-            |s: &State, _: &mut rune::Cx<State>| {
-                let mut layer = Vec::new();
-                let action = new_meeting_button(s, theme::palette(true), true, &mut layer);
-                col().child(action).children(layer)
-            },
-            (360.0, 200.0),
+            crate::ui::view,
+            (width, 900.0),
             Env::default(),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
         );
+        rt.settle_all();
         rt.frame(0.0);
-        let elements = rt.elements();
+        rt
+    }
+
+    #[test]
+    fn blocked_new_meeting_keeps_status_below_native_titlebar() {
+        let reason = if cfg!(target_os = "linux") {
+            "Recording is not available on Linux yet."
+        } else {
+            "Checking for Hex"
+        };
+        let label = format!("New meeting ({reason})");
+        for width in [390.0, 1334.0] {
+            let elements = checking_hex(width).elements();
+            let find = |key| {
+                elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(key))
+                    .unwrap()
+            };
+            let bar = find("top-bar");
+            let button = find("new-meeting");
+            assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
+            assert!(button.path.starts_with(&bar.path));
+            assert!(button.rect[1] + button.rect[3] <= bar.rect[1] + bar.rect[3]);
+            assert_eq!(button.label.as_deref(), Some(label.as_str()));
+            assert!(!button.focusable);
+            let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
+            if cfg!(target_os = "linux") {
+                assert!(status.is_none());
+            } else {
+                let status = status.expect("visible start-blocked reason");
+                assert_eq!(status.role, "status");
+                assert!(!status.path.starts_with(&bar.path));
+                assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn narrow_new_meeting_gives_hex_check_its_own_line() {
+        let elements = checking_hex(360.0).elements();
         let button = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("new-meeting"))

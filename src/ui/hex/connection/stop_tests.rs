@@ -757,7 +757,7 @@ fn expired_header_stop_reconciles_each_hex_outcome() {
     }
     fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
         let mut layer = Vec::new();
-        let (pill, action) =
+        let (pill, action, _) =
             crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
         rune_kit::root(rune::row().children(pill).children(action), layer)
     }
@@ -1477,7 +1477,7 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
 #[cfg(any(windows, target_os = "linux"))]
 fn meeting_control(state: &State, _: &mut rune::Cx<State>) -> rune::El {
     let mut layer = Vec::new();
-    let button = crate::ui::nav::new_meeting_button(
+    let (button, _) = crate::ui::nav::new_meeting_button(
         state,
         crate::ui::theme::palette(false),
         false,
