@@ -389,9 +389,6 @@ impl NativeWindow {
             if (changed || geometry) && self.view.paint_icon().is_err() {
                 crate::listener::log("FI_PAINT_FAILED");
             }
-            if changed {
-                self.view.position_card();
-            }
             if !self.view.control.stop.load(Ordering::Acquire)
                 && IsWindowVisible(self.view.icon.get()) == 0
             {
@@ -422,10 +419,10 @@ impl NativeWindow {
         }
         let view = &self.view;
         let now = Instant::now();
-        let interval = view.animation_interval();
+        let visible = || unsafe { IsWindowVisible(view.icon.get()) } != 0;
+        let interval = view.animation_interval(visible());
         if interval != 0
             && view.motion.get().due(now, interval)
-            && unsafe { IsWindowVisible(view.icon.get()) } != 0
             && view.advance(now, view.replay_level())
         {
             let _ = unsafe { view.present_icon() };
@@ -443,7 +440,7 @@ impl NativeWindow {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            let wait = match view.animation_interval() {
+            let wait = match view.animation_interval(visible()) {
                 0 => 50,
                 ms => ms,
             };
@@ -601,8 +598,12 @@ impl View {
         self.look.replace(look) != look
     }
 
-    fn animation_interval(&self) -> u32 {
-        match self.look.get() {
+    fn animation_interval(&self, visible: bool) -> u32 {
+        match self
+            .look
+            .get()
+            .filter(|_| visible && !self.control.stop.load(Ordering::Acquire))
+        {
             Some(look) if look.level > 0.0 || !self.frame.borrow().recording => 16,
             Some(_) => 50,
             None => 0,
@@ -725,12 +726,13 @@ impl View {
             }
             let g = self.layout.get();
             let p = self.point();
-            let width = self.px(360.0).min(g.work.right - g.work.left);
+            let right = (p.x - self.px(8.0)).max(g.work.left);
+            let width = self.px(360.0).min(right - g.work.left);
             let height = self.px(300.0).min(g.work.bottom - g.work.top);
             SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,
-                (p.x - width - self.px(8.0)).max(g.work.left),
+                right - width,
                 p.y.min(g.work.bottom - height),
                 width,
                 height,
@@ -1148,6 +1150,9 @@ impl View {
                 return Err(error);
             }
             self.surface.replace(Some(surface));
+            if self.region_geometry.get() != Some(key) {
+                self.position_card();
+            }
             self.set_region(key, |region| SetWindowRgn(self.icon.get(), region, 1))
         }
     }
@@ -1791,13 +1796,13 @@ fn nub_pump_repaints_steps_only_during_speech() {
     assert!(icon_changed(&prior, &view.frame.borrow()));
     let start = Instant::now();
     view.advance(start, None);
-    assert_eq!(view.animation_interval(), 50);
+    assert_eq!(view.animation_interval(true), 50);
     let (mut first, _) = view.draw_icon().unwrap();
     assert!(!view.advance(start + Duration::from_millis(50), None));
     let (mut second, _) = view.draw_icon().unwrap();
     assert_eq!(first.pixels(), second.pixels());
     assert!(view.advance(start + Duration::from_millis(66), Some(0.16)));
-    assert_eq!(view.animation_interval(), 16);
+    assert_eq!(view.animation_interval(true), 16);
     let loud = view.look.get().unwrap().level;
     assert!(loud > 0.0);
     view.frame.borrow_mut().recording = false;
@@ -1807,7 +1812,55 @@ fn nub_pump_repaints_steps_only_during_speech() {
     assert!((view.look.get().unwrap().opacity - 0.5).abs() < 0.001);
     view.advance(start + Duration::from_millis(532), None);
     assert!(view.look.get().is_none());
-    assert_eq!(view.animation_interval(), 0);
+    assert_eq!(view.animation_interval(true), 0);
+}
+
+#[test]
+fn fading_icon_schedules_no_ticks_while_hidden_or_retiring() {
+    let view = synthetic_view(1.0).unwrap();
+    let now = Instant::now();
+    view.frame.borrow_mut().recording = true;
+    view.advance(now, None);
+    view.frame.borrow_mut().recording = false;
+    view.advance(now, None);
+    assert_eq!(view.animation_interval(true), 16);
+    assert_eq!(view.animation_interval(false), 0);
+    view.control.stop.store(true, Ordering::Release);
+    assert_eq!(view.animation_interval(true), 0);
+}
+
+#[test]
+fn writing_notice_repositions_the_card_when_the_stop_fade_ends() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = serde_json::to_value(core::Config::default()).unwrap();
+    config["meeting_icon_in_captures"] = serde_json::json!(true);
+    store_io::write(&root.path().join("config.json"), &config).unwrap();
+    let window =
+        NativeWindow::new(false, root.path().to_owned(), Arc::new(Control::new())).unwrap();
+    let view = &window.view;
+    for scale in [1.0, 1.5] {
+        view.layout.set(Layout {
+            scale,
+            ..view.layout.get()
+        });
+        let now = Instant::now();
+        view.frame.borrow_mut().recording = true;
+        view.advance(now, None);
+        view.frame.borrow_mut().recording = false;
+        view.frame.borrow_mut().notice = Some(Notice::Writing);
+        view.advance(now, None);
+        unsafe {
+            let card = view.prepare_card();
+            assert!(!card.is_null());
+            view.position_card();
+            view.present_icon().unwrap();
+            view.advance(now + Duration::from_millis(450), None);
+            view.present_icon().unwrap();
+            let mut rect: RECT = std::mem::zeroed();
+            assert_ne!(GetWindowRect(card, &raw mut rect), 0);
+            assert_eq!(rect.right + view.px(8.0), view.point().x);
+        }
+    }
 }
 
 #[test]
