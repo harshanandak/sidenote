@@ -22,7 +22,7 @@ use serde_json::Value;
 pub use settings::{sidebar as settings_sidebar, tick as settings_tick};
 use sidenote::hex_engine::{
     AudioRetention, Capabilities, EngineState, Feature, HexEngine, HexError, ModelInfo, ModelState,
-    Recording, Setting, Support, VocabularyEntry,
+    Recording, Setting, StatusSample, Support, VocabularyEntry, sample_status,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -73,7 +73,7 @@ pub fn window_shown() -> bool {
 
 pub enum Action {
     Start,
-    Stop(u64),
+    Stop(u64, Option<Box<StatusSample>>),
     Set(String),
     Add,
     Remove,
@@ -82,13 +82,13 @@ pub enum Action {
 
 pub enum Msg {
     NotesRequested(Result<(), HexError>),
-    Meetings(Result<EngineState, HexError>),
+    Meetings(Result<(Instant, EngineState), HexError>),
     Install(sidenote::hex_install::State),
-    Status(Result<EngineState, HexError>),
-    StopStatus(Instant, Result<EngineState, HexError>),
-    RecheckStart(Result<EngineState, HexError>),
-    RecheckResume(Result<EngineState, HexError>),
-    SettingsStatus(Result<EngineState, HexError>),
+    ObservedStatus(StatusSample),
+    StopStatus(Instant, StatusSample),
+    RecheckStart(StatusSample),
+    RecheckResume(StatusSample),
+    SettingsStatus(StatusSample),
     Caps(String, Result<Capabilities, HexError>),
     Data {
         settings: Result<Vec<Setting>, HexError>,
@@ -119,7 +119,7 @@ fn plain(e: &HexError) -> &'static str {
             Some("not-ready") => "Hex is not ready yet.",
             Some("busy") => "Hex is busy.",
             Some("recording-changed") => {
-                "Hex's active recording has changed or ended. Stop was not sent. Stop it from Hex."
+                "Hex is recording a different meeting. Stop it from Hex if you meant that one."
             }
             Some("stop-unconfirmed") => {
                 "Could not confirm this recording. Stop was not confirmed. Stop it from Hex."
@@ -143,6 +143,7 @@ pub struct HexState {
     visible: bool,
     /// Latest result, separate from the bounded last-known-good snapshot.
     pub status: Option<Result<EngineState, HexError>>,
+    last_status_request: Option<Instant>,
     pub(super) connection: connection::Connection,
     was_running: bool,
     settings_status_pending: bool,
@@ -202,6 +203,7 @@ impl Default for HexState {
             visibility: None,
             visible: false,
             status: None,
+            last_status_request: None,
             connection: connection::Connection::default(),
             was_running: false,
             settings_status_pending: false,
@@ -447,7 +449,7 @@ impl State {
         let watcher = match self.hex.engine.watch() {
             Ok(w) => w,
             Err(e) => {
-                self.hex_status(Err(e));
+                self.hex_observed_event(sample_status(|| Err(e)));
                 return;
             }
         };
@@ -463,7 +465,10 @@ impl State {
                     if visible {
                         match watcher.updates.recv_timeout(FORWARD_TICK) {
                             Ok(update) => {
-                                if events.send(Event::Hex(Msg::Status(update))).is_err() {
+                                if events
+                                    .send(Event::Hex(Msg::ObservedStatus(update)))
+                                    .is_err()
+                                {
                                     return;
                                 }
                                 waker();
@@ -516,10 +521,10 @@ impl State {
             Msg::Meetings(result) => {
                 self.hex.busy_keys.remove("meetings.enabled");
                 match result {
-                    Ok(state) => {
+                    Ok((sent, state)) => {
                         self.hex.row_errors.remove("meetings.enabled");
                         self.hex.data_dirty = true;
-                        self.hex_status(Ok(state));
+                        self.hex_observed_event((sent, Ok(state)));
                     }
                     Err(_) => {
                         self.hex.row_errors.insert("meetings.enabled".into(),
@@ -534,12 +539,14 @@ impl State {
                 }
                 self.hex.install = state;
             }
-            Msg::Status(r) => self.hex_status(r),
+            Msg::ObservedStatus(sample) => {
+                self.hex_observed_event(sample);
+            }
             Msg::StopStatus(deadline, r) => self.hex_stop_status(deadline, r),
             Msg::SettingsStatus(result) => {
                 self.hex.settings_status_pending = false;
                 self.hex.settings_status_at = Some(Instant::now());
-                self.hex_status(result);
+                self.hex_observed_event(result);
             }
             Msg::NotesRequested(result) => {
                 if result.is_err() {
@@ -549,30 +556,31 @@ impl State {
                     );
                 }
             }
-            Msg::RecheckResume(result) => {
+            Msg::RecheckResume((sent, result)) => {
                 self.hex.record_busy = false;
                 match result {
                     Ok(status) => {
-                        let recording = status.recording.is_some();
-                        self.hex_status(Ok(status));
-                        if recording {
+                        self.hex_observed_event((sent, Ok(status)));
+                        if self.hex_recording() {
                             self.hex.error =
                                 Some("Hex is already recording. No new part was started.");
                         } else {
                             self.meeting_resume();
                         }
                     }
-                    Err(e) => self.hex.error = Some(plain(&e)),
+                    Err(e) => {
+                        self.hex.error = Some(plain(&e));
+                        self.hex_observed_event((sent, Err(e)));
+                    }
                 }
             }
-            Msg::RecheckStart(result) => {
+            Msg::RecheckStart((sent, result)) => {
                 self.hex.connection.action_stage("recheck_done");
                 self.hex.record_busy = false;
                 match result {
                     Ok(status) => {
-                        let recording = status.recording.is_some();
-                        self.hex_status(Ok(status));
-                        if recording {
+                        self.hex_observed_event((sent, Ok(status)));
+                        if self.hex_recording() {
                             self.hex.error =
                                 Some("Hex is already recording. No new meeting was started.");
                         } else if let Some(reason) = start_blocked(self) {
@@ -582,7 +590,7 @@ impl State {
                         }
                     }
                     Err(error) => {
-                        self.hex_status(Err(error));
+                        self.hex_observed_event((sent, Err(error)));
                         self.hex.error =
                             Some("Could not check Hex. New meeting was not started. Try again.");
                     }
@@ -653,7 +661,26 @@ impl State {
         }
     }
 
-    pub(super) fn hex_status_event(&mut self, r: Result<EngineState, HexError>) -> bool {
+    fn hex_accept_status(&mut self, (sent, result): &StatusSample) -> bool {
+        if self
+            .hex
+            .last_status_request
+            .is_some_and(|last| *sent < last)
+        {
+            return false;
+        }
+        // A transport failure has no observation to supersede a slow, successful reply.
+        if !matches!(result, Err(HexError::Timeout | HexError::Failed { .. })) {
+            self.hex.last_status_request = Some(*sent);
+        }
+        true
+    }
+
+    pub(super) fn hex_observed_event(&mut self, sample: StatusSample) -> bool {
+        if !self.hex_accept_status(&sample) {
+            return false;
+        }
+        let (sent, r) = sample;
         let changed = self.hex.status.as_ref() != Some(&r) || self.live.is_some();
         let before = (
             self.hex.installation.clone(),
@@ -663,7 +690,7 @@ impl State {
             self.ask_settings.recording,
         );
         // Keep capability retries, install detection and visibility handling on every sample.
-        self.hex_status(r);
+        self.hex_status_at(r, sent);
         changed
             || self.live.is_some()
             || before
@@ -674,10 +701,6 @@ impl State {
                     self.hex.data_loading,
                     self.ask_settings.recording,
                 )
-    }
-
-    fn hex_status(&mut self, r: Result<EngineState, HexError>) {
-        self.hex_status_at(r, Instant::now());
     }
 
     fn hex_status_at(&mut self, r: Result<EngineState, HexError>, now: Instant) {
@@ -820,20 +843,30 @@ impl State {
         }
     }
 
-    fn hex_done(&mut self, action: Action, r: Result<(), HexError>) {
+    fn hex_done(&mut self, mut action: Action, r: Result<(), HexError>) {
+        let sample = match &mut action {
+            Action::Stop(_, sample) => sample.take().map(|sample| *sample),
+            _ => None,
+        };
+        let checked = sample.is_some();
+        let observed = sample.filter(|sample| self.hex_accept_status(sample));
+        let applied = observed.is_some();
+        if let Some((sent, status)) = observed {
+            self.hex_status_at(status, sent);
+        }
         if matches!(action, Action::Start) {
             self.hex.connection.finish_action();
         }
         match action {
-            Action::Start | Action::Stop(_) => {
+            Action::Start | Action::Stop(..) => {
                 self.hex.record_busy = false;
                 match r {
                     Ok(()) => {
                         self.hex.error = None;
-                        if matches!(action, Action::Stop(_)) {
+                        if matches!(action, Action::Stop(..)) {
                             self.hex_check_stop();
                         } else {
-                            self.hex_spawn(|e| Msg::Status(e.status()));
+                            self.hex_spawn(|e| Msg::ObservedStatus(sample_status(|| e.status())));
                         }
                     }
                     Err(e) => {
@@ -842,7 +875,7 @@ impl State {
                         }
                         self.hex.error = Some(match (&action, &e) {
                             (
-                                Action::Stop(_),
+                                Action::Stop(..),
                                 HexError::Failed {
                                     code: Some(code), ..
                                 },
@@ -853,11 +886,11 @@ impl State {
                             {
                                 plain(&e)
                             }
-                            (Action::Stop(_), _) => "Could not stop recording. Stop it from Hex.",
+                            (Action::Stop(..), _) => "Could not stop recording. Stop it from Hex.",
                             _ => plain(&e),
                         });
-                        if let Action::Stop(recording) = action {
-                            self.hex_stop_failed(recording, &e);
+                        if let Action::Stop(recording, _) = action {
+                            self.hex_stop_failed(recording, &e, checked, applied);
                         }
                     }
                 }
@@ -945,7 +978,7 @@ impl State {
             return;
         }
         self.hex.settings_status_pending = true;
-        self.hex_spawn(|engine| Msg::SettingsStatus(engine.status_for_command()));
+        self.hex_spawn(|engine| Msg::SettingsStatus(sample_status(|| engine.status_for_command())));
     }
 
     pub fn hex_status_unknown(&self) -> bool {
@@ -960,12 +993,12 @@ impl State {
         }
         self.hex.record_busy = true;
         self.hex.error = None;
-        self.hex_spawn(|engine| Msg::RecheckResume(engine.status_for_command()));
+        self.hex_spawn(|engine| Msg::RecheckResume(sample_status(|| engine.status_for_command())));
     }
     pub(super) fn hex_recheck_start(&mut self) {
         self.hex.record_busy = true;
         self.hex.error = None;
-        self.hex_spawn(|engine| Msg::RecheckStart(engine.status_for_command()));
+        self.hex_spawn(|engine| Msg::RecheckStart(sample_status(|| engine.status_for_command())));
     }
 
     pub fn hex_recording(&self) -> bool {
@@ -1047,9 +1080,10 @@ impl State {
         let wake = self.waker.clone();
         self.hex_begin_stop(recording, pressed);
         if !self.live_work(move || {
+            let (status, result) = engine.record_stop(&expected_id, &cached);
             let _ = events.send(Event::Hex(Msg::Done(
-                Action::Stop(recording),
-                engine.record_stop(&expected_id, &cached),
+                Action::Stop(recording, status.map(Box::new)),
+                result,
             )));
             if let Some(wake) = wake {
                 wake();

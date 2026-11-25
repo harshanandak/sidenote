@@ -1,6 +1,7 @@
 //! No native window or GPU: the production view, poll and background status workers.
 use super::*;
 use rune::{Env, Runtime, text::TextSystem};
+use sidenote::hex_engine::sample_status;
 #[cfg(windows)]
 mod measurement;
 
@@ -135,10 +136,10 @@ fn idle_cpu_simulated_thirty_seconds() {
     let mut repaint_requests = 0;
     let mut wakeups = 0;
     for _ in 0..20 {
-        let status = engine.status();
+        let status = sample_status(|| engine.status());
         rt.state
             .events_tx
-            .send(Event::Hex(hex::Msg::Status(status)))
+            .send(Event::Hex(hex::Msg::ObservedStatus(status)))
             .unwrap();
         wakeups += 1;
         let before = rt.stats.commits;
@@ -322,8 +323,9 @@ fn idle_cpu_hex_state_changes_reach_the_view() {
     std::fs::write(&discovery, serde_json::json!({"port":address.port(),"token":format!("{:x}", chrono::Utc::now().timestamp_nanos_opt().unwrap())}).to_string()).unwrap();
     for active in [false, false, true, true, false] {
         dictating.store(active, Ordering::Relaxed);
-        let status = engine.status();
-        assert!(status.is_ok());
+        let earlier_sent = Instant::now();
+        let status = sample_status(|| engine.status());
+        assert!(status.1.is_ok());
         let before = rt.stats.commits;
         let changed = rt
             .state
@@ -340,13 +342,16 @@ fn idle_cpu_hex_state_changes_reach_the_view() {
             for _ in 0..8 {
                 rt.state
                     .events_tx
-                    .send(Event::Hex(hex::Msg::Status(earlier.clone())))
+                    .send(Event::Hex(hex::Msg::ObservedStatus((
+                        earlier_sent,
+                        earlier.clone(),
+                    ))))
                     .unwrap();
             }
         }
         rt.state
             .events_tx
-            .send(Event::Hex(hex::Msg::Status(status)))
+            .send(Event::Hex(hex::Msg::ObservedStatus(status)))
             .unwrap();
         rt.frame(1.5);
         // Each frame applies at least one queued sample, so the queue (at most 9 here) drains
@@ -384,11 +389,11 @@ fn idle_cpu_hex_state_changes_reach_the_view() {
     }
     for seconds in [0, 2] {
         meeting_seconds.store(seconds, Ordering::Relaxed);
-        let status = engine.status();
+        let status = sample_status(|| engine.status());
         let before = rt.stats.commits;
         rt.state
             .events_tx
-            .send(Event::Hex(hex::Msg::Status(status)))
+            .send(Event::Hex(hex::Msg::ObservedStatus(status)))
             .unwrap();
         rt.frame(1.5);
         assert!(rt.state.hex_recording() && rt.state.live.is_some());

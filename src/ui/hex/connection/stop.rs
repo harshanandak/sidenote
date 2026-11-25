@@ -1,11 +1,12 @@
 use super::*;
 
 const WAIT: Duration = Duration::from_secs(30);
+const FINISHING: &str = "Recording stopped. Hex is still transcribing.";
 pub(in crate::ui) const UNCONFIRMED: &str = "The recording may still be finishing in Hex.";
 
 pub(super) struct Completion {
     recording: u64,
-    deadline: Option<Instant>,
+    pub(super) deadline: Option<Instant>,
 }
 
 pub(in crate::ui) fn scene(s: &mut State, timed_out: bool) {
@@ -46,7 +47,13 @@ impl State {
         });
     }
 
-    pub(super) fn hex_stop_failed(&mut self, recording: u64, error: &HexError) {
+    pub(super) fn hex_stop_failed(
+        &mut self,
+        recording: u64,
+        error: &HexError,
+        checked: bool,
+        applied: bool,
+    ) {
         if let Some(live) = &mut self.live {
             super::super::response_time::failed(live.take_notes_timing(recording));
             live.generate_after_pause = false;
@@ -54,10 +61,19 @@ impl State {
         let refused = matches!(error, HexError::Unsupported)
             || matches!(error, HexError::Failed { code: Some(code), .. }
                 if matches!(code.as_str(), "recording-changed" | "not-recording"));
-        let transcribing =
-            matches!(&self.hex.status, Some(Ok(s)) if s.meeting_state == "transcribing");
-        if refused && !transcribing {
+        let status = self.hex.status.as_ref().and_then(|r| r.as_ref().ok());
+        if status.is_some_and(terminal) {
+            self.hex_complete_stop(recording);
+            self.hex.error = Some("The recording already ended in Hex.");
+        } else if matches!(status, Some(s) if s.meeting_state == "transcribing") {
+            self.hex.error = Some(FINISHING);
+            self.hex_check_stop();
+        } else if refused || !checked {
             self.hex.stop = None;
+            self.live_sync();
+            if checked && !applied {
+                self.hex.error = None;
+            }
         } else {
             self.hex_check_stop();
         }
@@ -66,7 +82,9 @@ impl State {
     pub(super) fn hex_check_stop(&mut self) {
         if let Some(deadline) = self.hex.stop.as_ref().and_then(|stop| stop.deadline) {
             // The watcher can deliver a sample taken before Stop replied.
-            self.hex_spawn(move |engine| Msg::StopStatus(deadline, engine.status()));
+            self.hex_spawn(move |engine| {
+                Msg::StopStatus(deadline, sample_status(|| engine.status()))
+            });
         }
     }
 
@@ -78,31 +96,37 @@ impl State {
         self.hex_check_stop();
     }
 
-    pub(super) fn hex_stop_status(
-        &mut self,
-        deadline: Instant,
-        result: Result<EngineState, HexError>,
-    ) {
+    pub(super) fn hex_stop_status(&mut self, deadline: Instant, sample: StatusSample) {
         if self.hex.stop.as_ref().and_then(|stop| stop.deadline) != Some(deadline) {
             return;
         }
-        if result.as_ref().is_ok_and(terminal) {
+        if !self.hex_accept_status(&sample) {
+            return;
+        }
+        let (sent, Ok(status)) = sample else { return };
+        if terminal(&status) {
             let stop = self.hex.stop.as_mut().unwrap();
             stop.deadline = None;
             let recording = stop.recording;
-            self.hex_status(result);
+            self.hex_status_at(Ok(status), sent);
             self.hex.error = None;
-            self.hex.stop = None;
-            if self
-                .live
-                .as_ref()
-                .is_some_and(|l| l.recording_id == recording)
-            {
-                self.live_stopped();
-                self.live_sync();
-            } else {
-                self.request_refresh();
+            self.hex_complete_stop(recording);
+        } else {
+            let transcribing = status.meeting_state == "transcribing";
+            self.hex_status_at(Ok(status), sent);
+            if transcribing {
+                self.hex.error = Some(FINISHING);
             }
+        }
+    }
+
+    fn hex_complete_stop(&mut self, recording: u64) {
+        self.hex.stop = None;
+        if self.live.as_ref().map(|l| l.recording_id) == Some(recording) {
+            self.live_stopped();
+            self.live_sync();
+        } else {
+            self.request_refresh();
         }
     }
 
