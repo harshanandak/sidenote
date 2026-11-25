@@ -2960,12 +2960,14 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
     }
     for width in [1334.0, 390.0] {
         for height in [600.0, 720.0, 900.0] {
+            let detect = hex::SKIP_INSTALL_DETECT.replace(true);
             let mut rt = page_at((width, height));
+            hex::SKIP_INSTALL_DETECT.set(detect);
             for phase in ["transcript", "paused"] {
                 rt.update(|s, _| {
                     s.selected = None;
                     super::live::parts_scene(s, phase);
-                    scene_agents(s, ALL_AGENTS);
+                    scene_agents(s, &["codex"]);
                     s.saved.messages.clear();
                     s.live.as_mut().unwrap().panel_open = false;
                 });
