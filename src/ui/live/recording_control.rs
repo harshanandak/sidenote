@@ -111,27 +111,26 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
     if recording {
         // Two bars distinguish Pause here from Stop on other pages.
         let bar = |key: &'static str| el().key(key).w(3.0).h(9.0).radius(1.0).fill(p.ink);
-        control = control
-            .children((live && !s.narrow.get()).then(|| recording_status(s, p)))
-            .child(
-                pressable(
-                    row()
-                        .key("meeting-pause-bars")
-                        .gap(2.0)
-                        .items_center()
-                        .justify_center()
-                        .child(bar("meeting-pause-bar-0"))
-                        .child(bar("meeting-pause-bar-1")),
-                )
-                .key("meeting-pause")
-                .label("Pause recording")
-                .size(44.0, 44.0)
-                .radius(22.0)
-                .hover(p.button_hover)
-                .center()
-                .button_disabled(s.hex_record_busy())
-                .on_press(|s: &mut State| s.meeting_pause()),
-            );
+        control = control.children((live && !s.narrow.get()).then(|| recording_status(s, p)));
+        control = control.child(
+            pressable(
+                row()
+                    .key("meeting-pause-bars")
+                    .gap(2.0)
+                    .items_center()
+                    .justify_center()
+                    .child(bar("meeting-pause-bar-0"))
+                    .child(bar("meeting-pause-bar-1")),
+            )
+            .key("meeting-pause")
+            .label("Pause recording")
+            .size(44.0, 44.0)
+            .radius(22.0)
+            .hover(p.button_hover)
+            .center()
+            .button_disabled(s.hex_record_busy())
+            .on_press(|s: &mut State| s.meeting_pause()),
+        );
     } else if m
         .as_ref()
         .is_some_and(|m| m.phase != SavedPhase::Ended || !m.parts.is_empty())
