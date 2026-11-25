@@ -586,12 +586,7 @@ impl State {
             Completion::Tick { id, result } => match result {
                 Ok(view) => {
                     if view.generation == core::mutation_generation() {
-                        self.tasks
-                            .checked
-                            .insert(id.clone(), view.value.checked.clone());
-                        if self.selected.as_deref() == Some(&id) {
-                            self.saved = view.value;
-                        }
+                        self.tasks.checked.insert(id, view.value.checked);
                         self.rebuild_tasks();
                     }
                 }
@@ -627,12 +622,7 @@ impl State {
                 if newest == Some(core::mutation_generation()) {
                     let core::Moved { ticks, overrides } = *moved;
                     if let Some(view) = ticks {
-                        self.tasks
-                            .checked
-                            .insert(id.clone(), view.value.checked.clone());
-                        if self.selected.as_deref() == Some(&id) {
-                            self.saved = view.value;
-                        }
+                        self.tasks.checked.insert(id, view.value.checked);
                     }
                     if let Some(view) = overrides {
                         self.tasks.overrides = view.value;
