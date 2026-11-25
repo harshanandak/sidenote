@@ -470,7 +470,10 @@ mod tests {
     #[test]
     fn home_last_row_scrolls_clear_of_ask() {
         crate::test_paths::isolate();
+        let detect = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        crate::ui::hex::SKIP_INSTALL_DETECT.set(detect);
+        crate::ui::scene_agents(&mut state, &["codex"]);
         let meeting = fixture();
         state.meetings = (1..=40)
             .map(|suffix| {
