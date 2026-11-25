@@ -1446,11 +1446,8 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         );
         let [x, y, w, h] = rect_of(&rt, "hex-stop");
         let [left, top, ..] = rect_of(&rt, "ask-pill");
-        assert!(if size.0 < 600.0 {
-            y + h <= top
-        } else {
-            x + w <= left
-        });
+        let phone = size.0 < 600.0;
+        assert!((phone && y + h <= top) || (!phone && x + w <= left));
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
         rt.update(|s, _| {
             s.asks
