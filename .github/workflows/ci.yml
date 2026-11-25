@@ -293,6 +293,9 @@ jobs:
             ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
             ui::live::recording_control::tests:: \
+            ui::list::tests::meeting_row_uses_the_singular_for_one_task \
+            ui::updates::listener_tests::install_action_waits_for_a_verified_download \
+            ui::tasks::tests::empty_tasks_page_offers_to_add_a_task \
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \
             ui::ask_switch_tests::suppression_failure_during_ui_apply_retries_unchanged_catalog
           SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \

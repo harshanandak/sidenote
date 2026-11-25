@@ -48,6 +48,7 @@ pub struct Settings {
     kb_fields: [TextEdit; 5],
     kb_base: Option<sidenote::core::Config>,
     kb_error: Option<String>,
+    kb_open: bool,
     engine: engine::Engine,
     #[cfg(windows)]
     speech_host: host::Form,
@@ -480,7 +481,7 @@ fn ownership_text(page: Page) -> &'static str {
     if page == Page::Hex {
         "These settings live in Hex and also change Hex."
     } else {
-        "Settings marked ⬡ Hex live in Hex and also change Hex."
+        "Settings labeled Hex also change Hex."
     }
 }
 fn ownership(page: Page, p: Palette) -> El {
@@ -952,24 +953,24 @@ fn app_index() -> Vec<Destination> {
         ),
         entry(
             "engine-worker-threads",
-            "Worker threads",
-            "meeting engine transcription workers parallel",
+            "Parallel transcription jobs",
+            "meeting engine transcription worker threads parallel",
             Page::Meetings,
             3,
             false,
         ),
         entry(
             "engine-transcription-deadline",
-            "Transcription deadline",
-            "meeting engine transcription timeout seconds",
+            "Time limit for a full transcript",
+            "meeting engine transcription deadline timeout seconds",
             Page::Meetings,
             3,
             false,
         ),
         entry(
             "engine-request-deadline",
-            "Request deadline",
-            "meeting engine transcription request timeout seconds",
+            "Time limit for one transcription request",
+            "meeting engine transcription request deadline timeout seconds",
             Page::Meetings,
             3,
             false,
@@ -1016,7 +1017,7 @@ fn app_index() -> Vec<Destination> {
         ),
         entry(
             "people-import",
-            "Import people",
+            "How people are added",
             "People import contacts",
             Page::People,
             0,
@@ -1389,6 +1390,9 @@ fn jump(s: &mut State, dest: Destination) {
     }
     if dest.key == "spoken-languages" {
         s.hex.open_groups.insert("languages");
+    }
+    if dest.key == "knowledge-base" {
+        s.hex.shell.kb_open = true;
     }
     if dest.key == "hex-vocabulary" {
         s.hex.open_groups.insert("vocabulary-edit");
@@ -2476,7 +2480,7 @@ fn knowledge_base(s: &State, k: &Kit, p: Palette) -> El {
         .padding(16.0)
         .gap(12.0)
         .child(roles::SMALL.wrap(
-            "Daily check reads these sources from your repository. People supports Markdown rosters only; YAML, JSON and TXT are unsupported. Settings stay on this device.",
+            "Daily check reads these sources from your repository. Use a Markdown file for the people roster. These settings stay on this device.",
             p.soft,
         ));
     for (index, label) in [
@@ -2529,10 +2533,15 @@ fn knowledge_base(s: &State, k: &Kit, p: Palette) -> El {
         body = body.child(roles::SMALL.wrap(error, p.soft));
     }
     body = body.child(
-        crate::ui::widgets::action("Save knowledge base", p)
-            .key("kb-save")
-            .button_disabled(!kb.is_empty() && kb.validate().is_err())
-            .on_press(save_kb),
+        crate::ui::widgets::button(
+            "Save knowledge base",
+            "kb-save",
+            crate::ui::widgets::ButtonRole::Primary,
+            p,
+        )
+        .self_start()
+        .button_disabled(!kb.is_empty() && kb.validate().is_err())
+        .on_press(save_kb),
     );
     settings_card("Knowledge base", body, p).key("knowledge-base")
 }
@@ -2647,11 +2656,9 @@ fn body(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, page: Page, tab: us
             }))
             .children(s.config.features.indic_engine.then(|| hex_group(
                 2,
-                settings_card(
-                    "Sidenote · Languages you speak",
-                    super::super::models::language_picker(s, k, p),
-                    p,
-                ),
+                panel(p)
+                    .mt(roles::SECTION_TOP)
+                    .child(super::super::models::language_picker(s, k, p)),
             )))
             .child(hex_group(
                 3,
@@ -2684,21 +2691,27 @@ fn body(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, page: Page, tab: us
             let body = body.child(host::card(s, k, p));
             body
         }
-        (Page::Meetings, _) => col()
-            .w_full()
-            .child(settings_card(
-                "Daily check",
-                feature(
+        (Page::Meetings, _) => {
+            let enabled = s.config.features.enabled(AppFeature::DailyCheck);
+            let open = s.hex.shell.kb_open;
+            col()
+                .w_full()
+                .mt(roles::SECTION_TOP)
+                .child(panel(p).child(feature(
                     s,
                     k,
                     AppFeature::DailyCheck,
                     "Daily check",
                     "Sidenote checks your meeting knowledge for gaps and conflicts each day.",
                     p,
-                ),
-                p,
-            ))
-            .child(knowledge_base(s, k, p)),
+                )))
+                .children((!enabled).then(|| {
+                    cards::fold_control("Configure knowledge base", "knowledge-base-fold", open, p)
+                        .mt(12.0)
+                        .on_press(|s: &mut State| s.hex.shell.kb_open = !s.hex.shell.kb_open)
+                }))
+                .children((enabled || open).then(|| knowledge_base(s, k, p)))
+        }
         (Page::Prompts, _) => super::super::prompt_library::view(s, p),
         (Page::People, _) => super::super::people::content(s, k, p, layer),
         (Page::Helpers, 0) => col()
@@ -3053,18 +3066,26 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
                         (!jump_groups(page, tab).is_empty())
                             .then(|| tab_bar(s, p, true, page, tab)),
                     )
-                    .children(hex_unavailable.then(|| {
-                        let reason = if s.hex.settings_status_pending {
-                            "Checking Hex."
-                        } else {
-                            page_note.unwrap_or("Checking Hex.")
-                        };
-                        roles::SMALL
-                            .wrap(reason, p.soft)
-                            .role("status")
-                            .key("hex-unavailable-reason")
-                            .mt(8.0)
-                    }))
+                    .children(
+                        (hex_unavailable
+                            && (!has_setup
+                                || !matches!(
+                                    s.hex.status,
+                                    None | Some(Err(HexError::HexNotRunning))
+                                )))
+                        .then(|| {
+                            let reason = if s.hex.settings_status_pending {
+                                "Checking Hex."
+                            } else {
+                                page_note.unwrap_or("Checking Hex.")
+                            };
+                            roles::SMALL
+                                .wrap(reason, p.soft)
+                                .role("status")
+                                .key("hex-unavailable-reason")
+                                .mt(8.0)
+                        }),
+                    )
                     .pb(4.0),
             ),
         )
@@ -3162,6 +3183,7 @@ pub fn scene(s: &mut State, name: &str) {
         }
         load_kb(s);
         navigate(s, Page::Meetings, 2);
+        s.hex.shell.kb_open = true;
         if name == "settings-kb-merge-error" {
             s.hex.shell.kb_error = Some(
                 "Could not save knowledge base after merging other saved changes. Enter the repository folder. Reload Settings and try again."
@@ -3343,6 +3365,58 @@ pub fn scene(s: &mut State, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daily_check_keeps_configuration_reachable_while_off() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.config.features.memory = true;
+        state.config.features.daily_check = false;
+        state.hex_open = true;
+        state.hex.settings_status_pending = true;
+        navigate(&mut state, Page::Meetings, 2);
+        let destination = index(&state)
+            .into_iter()
+            .find(|item| item.key == "knowledge-base")
+            .unwrap();
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::ui::view,
+            (1280.0, 900.0),
+            rune::Env::default(),
+        );
+        rt.frame(0.0);
+        assert!(rt.find("knowledge-base-fold").is_some());
+        assert!(rt.find("kb-field-0").is_none());
+        rt.update(|s, _| jump(s, destination));
+        rt.frame(0.016);
+        assert!(rt.find("kb-field-0").is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_hex_shows_setup_without_asking_to_start_hex() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.hex_open = true;
+        state.hex.status = Some(Err(HexError::HexNotRunning));
+        state.hex.installation = sidenote::hex_install::Installation::Missing;
+        navigate(&mut state, Page::Hex, 0);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::ui::view,
+            (1280.0, 900.0),
+            rune::Env::default(),
+        );
+        rt.frame(0.0);
+        assert!(rt.find("hex-install").is_some());
+        assert!(rt.find("hex-unavailable-reason").is_none());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Not installed"))
+        );
+    }
 
     #[test]
     fn settings_list_rows_and_tabs_use_the_compact_heights() {
@@ -3694,7 +3768,7 @@ mod tests {
         );
         assert_eq!(
             ownership_text(Page::Meetings),
-            "Settings marked ⬡ Hex live in Hex and also change Hex."
+            "Settings labeled Hex also change Hex."
         );
         let fixture: Vec<Setting> = serde_json::from_str(include_str!(
             "../../../tools/ui-fixtures/settings-recording.json"

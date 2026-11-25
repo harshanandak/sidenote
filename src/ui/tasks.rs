@@ -1805,7 +1805,7 @@ fn title_row(s: &State, k: &Kit, narrow: bool, p: Palette, layer: &mut Vec<El>) 
             row()
                 .gap(8.0)
                 .items_center()
-                .child(add.mt(5.0))
+                .children((!s.tasks.items.is_empty()).then(|| add.mt(5.0)))
                 .child(redo_older_menu(s, k, p, layer)),
         )
 }
@@ -2123,18 +2123,22 @@ fn compact_meta(t: &TaskItem, today: NaiveDate, p: Palette) -> El {
     let owner = owner_name(t)
         .map(|(name, _)| name)
         .unwrap_or_else(|| "No owner".into());
-    row()
+    let mut meta = row()
         .key(format!("task-meta-{}-{}", t.meeting_id, t.index))
         .min_w(0.0)
         .gap(4.0)
         .items_center()
-        .child(roles::META.line(&owner, p.soft).max_w(144.0).help(&owner))
-        .child(roles::META.wrap("\u{b7}", p.faint))
-        .child(date_chip(t, today, p).unwrap_or_else(|| roles::META.line("No date", p.faint)))
-        .children(
-            (t.due_default && t.due_date.is_some())
-                .then(|| roles::META.line("\u{b7} guessed", p.soft)),
-        )
+        .child(roles::META.line(&owner, p.soft).max_w(144.0).help(&owner));
+    if let Some(date) = date_chip(t, today, p) {
+        meta = meta
+            .child(roles::META.wrap("\u{b7}", p.faint))
+            .child(date)
+            .children(
+                t.due_default
+                    .then(|| roles::META.line("\u{b7} guessed", p.soft)),
+            );
+    }
+    meta
 }
 
 /// How much of the row the properties take, which depends on the room the list has.
@@ -2231,6 +2235,12 @@ fn task_row(s: &State, t: &TaskItem, lay: RowLayout, p: Palette) -> El {
             .min_w(0.0)
             .gap(3.0)
             .child(title)
+            .children((!lay.compact).then(|| {
+                let owner = owner_name(t)
+                    .map(|(name, _)| name)
+                    .unwrap_or_else(|| "No owner".into());
+                roles::META.line(&owner, p.soft).help(&owner)
+            }))
             .children(
                 core::task_conflict_versions(&s.relay_ui.conflicts, t).map(|count| {
                     roles::SMALL
@@ -2302,20 +2312,13 @@ fn task_row(s: &State, t: &TaskItem, lay: RowLayout, p: Palette) -> El {
                 .children((lay.project_w > 30.0).then(|| roles::META.line(&t.project, p.faint))),
         );
     }
-    props = props
-        .child(
-            row().w(88.0).justify_end().items_center().child(
-                roles::META.line(
-                    owner_name(t)
-                        .map(|(name, _)| name)
-                        .unwrap_or_else(|| "No owner".into()),
-                    p.soft,
-                ),
-            ),
-        )
-        .child(row().w(88.0).justify_end().items_center().child(
-            due_chip(t, tasks.today, p).unwrap_or_else(|| roles::META.line("No date", p.faint)),
-        ));
+    props = props.child(
+        row()
+            .w(88.0)
+            .justify_end()
+            .items_center()
+            .children(due_chip(t, tasks.today, p)),
+    );
     let props = pressable(props)
         .key(format!("tmeta-{id}-{index}"))
         .focusable(false)
@@ -2570,12 +2573,7 @@ fn cleared_line(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let link = |text: &str, key: &str, help: String| {
         super::widgets::quiet_button(text, key, p).label(help)
     };
-    let mut line = row()
-        .key("tasks-cleared")
-        .flex_wrap()
-        .items_center()
-        .gaps(2.0, 4.0)
-        .mt(if t.panel.is_some() { 16.0 } else { 20.0 });
+    let mut line = row().flex_wrap().items_center().gaps(2.0, 4.0);
     let change_text = if let Some(day) = t.cutoff {
         let day = cutoff_text(day, t.today);
         let (said, action) = if t.show_cleared {
@@ -2639,7 +2637,13 @@ fn cleared_line(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             );
         }
     }
-    let mut out = col().w_full().child(line.child(menu.build(k, layer)));
+    let mut out = col()
+        .key("tasks-cleared")
+        .w_full()
+        .mt(if t.panel.is_some() { 16.0 } else { 20.0 });
+    if t.clear_confirm.is_none() {
+        return out.child(line.child(menu.build(k, layer)));
+    }
     if let Some(days) = t.clear_confirm {
         let cutoff = t.today - Duration::days(days);
         let count = t
@@ -3669,7 +3673,13 @@ fn panel(s: &State, k: &Kit, p: Palette, overlay: bool, layer: &mut Vec<El>) -> 
                     .cursor
                     .as_ref()
                     .map(|(id, index)| format!("ttask-{id}-{index}"))
-                    .unwrap_or_else(|| "task-add".into()),
+                    .unwrap_or_else(|| {
+                        if s.tasks.items.is_empty() {
+                            "tasks-empty-add".into()
+                        } else {
+                            "task-add".into()
+                        }
+                    }),
             )
             .h_full()
             .min_w(0.0)
@@ -4766,6 +4776,7 @@ mod tests {
         assert!(rt.elements().iter().any(|node| {
             node.text.as_deref() == Some("Add tasks or get them from meeting summaries.")
         }));
+        assert!(rt.find("task-add").is_none());
         let (x, y) = rt
             .find("tasks-empty-add")
             .expect("empty-state Add task button");

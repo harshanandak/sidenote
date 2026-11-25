@@ -47,9 +47,8 @@ fn search(s: &State, k: &Kit, p: Palette) -> El {
         .border(1.0, p.line)
         .radius(8.0)
         .fill(p.card)
-        .w((s.app_w.get() - crate::ui::nav::width(s) - 80.0).clamp(72.0, 480.0))
-        .max_w(480.0)
-        .min_w(72.0)
+        .grow(1.0)
+        .min_w(0.0)
 }
 
 fn filter_chip(
@@ -205,7 +204,7 @@ pub(super) fn toolbar(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El
             .flex_wrap()
             .gap(8.0)
             .items_center()
-            .child(search(s, k, p))
+            .child(search(s, k, p).min_w(180.0))
             .child(filters),
     );
     let mut active = row().w_full().flex_wrap().gap(8.0).items_center();
@@ -617,9 +616,21 @@ pub(super) fn column(s: &State, k: &Kit, p: Palette, narrow: bool) -> El {
                     }),
                 ),
         )
-        .child(count(s, p))
+        .children((!m.records.is_empty() || !m.proposals.is_empty()).then(|| count(s, p)))
         .child(search(s, k, p).w_full().mb(6.0));
     let query = m.search.text.trim().to_lowercase();
+    if query.is_empty() && m.records.is_empty() && m.proposals.is_empty() {
+        doc = doc.child(cards::panel(p).child(
+            col()
+                .padding(16.0)
+                .gap(6.0)
+                .child(roles::NAME.wrap("No saved memory yet", p.ink))
+                .child(roles::SMALL.wrap(
+                    "Daily check suggests facts from your meetings. Review them here and approve the ones you want Sidenote to remember.",
+                    p.soft,
+                )),
+        ));
+    }
     let pending: Vec<_> = m
         .proposals
         .iter()

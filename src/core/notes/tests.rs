@@ -1897,7 +1897,7 @@ fn accidental_seventeen_second_call_has_no_job_and_a_terminal_skip() {
         crate::core::recording_guard::eligibility(root.path(), &meetings, ID).unwrap();
     let skipped = summary_skip(eligibility, false, None).unwrap();
     assert_eq!(skipped.heading(), "Summary skipped");
-    assert!(skipped.detail().contains("Too short to summarise"));
+    assert!(skipped.detail().contains("Too short to summarize"));
     crate::core::recording_guard::keep_in(root.path(), ID).unwrap();
     let eligibility =
         crate::core::recording_guard::eligibility(root.path(), &meetings, ID).unwrap();

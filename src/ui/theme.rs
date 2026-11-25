@@ -127,8 +127,8 @@ pub fn palette(dark: bool) -> Palette {
         scrim: c[17],
         button_fill: c[7],
         button_ink: hex(if dark { "#1f2328" } else { "#ffffff" }),
-        switch_on: hex(if dark { "#ececec" } else { "#1f2328" }),
-        switch_knob: hex(if dark { "#1f2328" } else { "#ffffff" }),
+        switch_on: c[8],
+        switch_knob: hex(if dark { "#12251a" } else { "#ffffff" }),
         button_border: if dark { c[6] } else { hex("#dcd9d2") },
         danger: hex(if dark { "#f29b99" } else { "#a92b30" }),
         danger_border: hex(if dark { "#704345" } else { "#efc5c5" }),
@@ -260,10 +260,11 @@ mod quiet_ink_switch_tests {
     }
 
     #[test]
-    fn switches_stay_grey_and_never_use_the_accent_in_both_themes() {
+    fn on_switches_use_the_positive_status_color_in_both_themes() {
         for dark in [false, true] {
             let p = palette(dark);
             let k = kit(&p);
+            assert_eq!(k.c.bg_accent, p.ok);
             assert_eq!(k.c.bg_accent, p.switch_on);
             assert_eq!(k.c.knob_on, p.switch_knob);
             assert_ne!(k.c.bg_accent, p.accent);

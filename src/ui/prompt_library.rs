@@ -592,10 +592,9 @@ fn counts(entry: &Entry, ei: usize, d: &Derived, dirty: bool, p: Palette) -> El 
         "This text contains a character that cannot be saved. Remove it and try again.".into()
     } else {
         format!(
-            "{} / 16,000 characters. About {} tokens in your instructions, about {} in the whole prompt.{}",
+            "{} of {} characters used.{}",
             ai_notes::count_text(d.chars),
-            ai_notes::count_text(d.tokens),
-            ai_notes::count_text(d.whole),
+            ai_notes::count_text(library::MAX_CHARS),
             if dirty { " Unsaved changes." } else { "" }
         )
     };
@@ -603,7 +602,15 @@ fn counts(entry: &Entry, ei: usize, d: &Derived, dirty: bool, p: Palette) -> El 
         .w_full()
         .gap(2.0)
         .key(format!("instructions-count-{ei}"))
-        .child(roles::META.wrap(line, if valid { p.soft } else { p.warn }));
+        .child(
+            roles::META
+                .wrap(line, if valid { p.soft } else { p.warn })
+                .help(format!(
+                    "Estimated tokens: {} in your instructions, {} in the whole prompt.",
+                    ai_notes::count_text(d.tokens),
+                    ai_notes::count_text(d.whole),
+                )),
+        );
     if entry.id == "meeting-summary" {
         c = c.child(roles::META.wrap("Summaries are written in English.", p.soft));
     }
