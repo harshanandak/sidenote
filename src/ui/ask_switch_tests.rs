@@ -1400,7 +1400,7 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     wait_for_tick(&mut rt, 1, true);
     assert_eq!(element(&rt, "tick-1").fill, checked);
     assert_eq!(rt.state.saved.messages, [global.clone()]);
-    rt.update(|s, _| s.move_card(MEETING, 2, core::BoardColumn::Done));
+    rt.update(|s, _| s.toggle_row(MEETING, 2));
     wait_for_tick(&mut rt, 2, true);
     assert_eq!(element(&rt, "tick-2").fill, checked);
     assert_eq!(rt.state.ask_key(), all);
