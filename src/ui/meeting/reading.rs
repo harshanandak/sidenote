@@ -1468,6 +1468,13 @@ mod tests {
             }
             let [_, y, _, h] = element(&rt, "meeting-hide-transcript").rect;
             assert!(y + h <= pill[1], "Hide overlaps the dock at {width}");
+            rt.update(|s, _| {
+                let session = &mut s.live.as_mut().unwrap().session;
+                session.as_mut().unwrap().phase = meeting_parts::Phase::Ended;
+            });
+            rt.frame(0.0);
+            assert!(element(&rt, "meeting-resume").focusable);
+            section_absent(&rt, "meeting-generate");
         }
     }
 }
