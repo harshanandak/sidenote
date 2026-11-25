@@ -21,7 +21,7 @@ impl State {
         }
         self.hex.data_dirty = true;
         self.hex_refresh_if_due();
-        self.hex_spawn(|engine| Msg::Status(engine.status()));
+        self.hex_spawn(|engine| Msg::ObservedStatus(sample_status(|| engine.status())));
     }
 
     pub fn hex_needs_install(&self) -> bool {

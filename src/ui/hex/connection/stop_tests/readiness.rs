@@ -51,7 +51,8 @@ pub(super) fn run() {
     runtime.set_full_keyboard_access(true);
     runtime.frame(0.0);
     runtime.update(|state, _| {
-        state.hex_status(Ok(state.hex.engine.status_for_command().unwrap()));
+        let sample = command_status_sample(state);
+        state.hex_apply(Msg::ObservedStatus(sample));
     });
     let mut worker = None;
     runtime.update(|state, _| worker = state.retry_listener());
@@ -101,7 +102,8 @@ pub(super) fn run() {
     assert!(probe.ready);
     runtime.update(|state, _| {
         state.apply_event(Event::ListenerProbed(Some(probe), None));
-        state.hex_status(Ok(state.hex.engine.status_for_command().unwrap()));
+        let sample = command_status_sample(state);
+        state.hex_apply(Msg::ObservedStatus(sample));
     });
     runtime.frame(0.0);
     let control = runtime

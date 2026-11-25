@@ -317,7 +317,7 @@
 
   "src/core/ui_prefs.rs": "26870e51eebbc5f4a8a405b1dd81b680140ae8191d9bbf626f4ce708d91c4203",
 
-  "src/hex_engine.rs": "4f89ee47a2b76376a6ad2bc56d3fcb099d9d7fb5a657003ad4a9b3a2ac1ab8d9",
+  "src/hex_engine.rs": "3bafd542ba5da8ea6cac5c4bba4cba2eadd46ca0e3762693712ab9cfdc2f1815",
 
   "src/hex_engine/audio_retention/tests.rs": "e222ae001e30661415465c8a1c055b135c37ac0821496dbe25c47d1307fa8a77",
 
@@ -413,23 +413,23 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "3c5296cd639154d7193d6fb52a09da45a757393b5ec51d1ce6045d6a3025c7ca",
+  "src/ui/hex.rs": "02e294f2d30d65f03f861c8f7ed8f5fc6c3b8c4aee612c2776eaad2212c5acd7",
 
-  "src/ui/hex/connection/stop.rs": "48def6ec1d077a8b3639e62179355b3937453295da8d79745d71bd53f5dbd758",
+  "src/ui/hex/connection/stop.rs": "9d50d0de84f686db38f61e704c1d848443b92e159c7c0b9a501a83dadce6ea20",
 
-  "src/ui/hex/connection/stop_tests.rs": "09b5a6cb182b578ed7f22b04c3e68888a9a6643f6030c6bd66b1f0e2a7fafd08",
+  "src/ui/hex/connection/stop_tests.rs": "bb316bbf37f9bc139bca2db09f273cc17be0c47b5c1e2e7555017ffa5b76b802",
 
   "src/ui/hex/connection/stop_tests/api.rs": "fdbace0c0b926c5a8520497d841c9180e611c1724a5e1c25464204e0e8285fde",
 
-  "src/ui/hex/connection/stop_tests/readiness.rs": "1affb66b203a249c971286341d62d22e1b33b3ce745619949bae00e3208c6d81",
+  "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
   "src/ui/hex/settings.rs": "5453190d196df3cd2de221074098053c8b475cb9a2991f4714ffe605682c14bb",
 
-  "src/ui/hex/setup.rs": "494e5d0651bff961f55877cadcd419e11f9e9b25221059e9520e458a52be2eb2",
+  "src/ui/hex/setup.rs": "7ac1dfa48dd3acdf0cab7a10683fe8e672c069a93b4bcf3ef9f9077474d067c8",
 
-  "src/ui/idle_cpu.rs": "ab45c9a037baff122cbbd3a35ef2de88d452a16666265c0e89166aa8624ff239",
+  "src/ui/idle_cpu.rs": "e0d44a4a2aa72668e127baf5f100e1ad6267971c73ce46230d279701e94b27f0",
 
-  "src/ui/idle_cpu/measurement.rs": "e4be960feb8fd3fe5bef8d5d8e3c409aa8cf6e8d8fb77fccc0c4011777af7c2b",
+  "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
   "src/ui/live.rs": "3182fb356622eb597eabcfb9ef03875f5d4f66730c6b717fabf6e678c7ba1314",
 
@@ -441,7 +441,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "ed375000b7723ae86aa9f03eb49a5a16dbc0c6bb90cb1787c527f0d2a8787619",
+  "src/ui/mod.rs": "0c3fef2235176c6c5f1fe7be63663ec50c738c730b5569b64f175407efb941f9",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

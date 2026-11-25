@@ -1962,7 +1962,7 @@ fn apply_pending(s: &mut State, headless: bool) -> (bool, usize) {
         match s.events_rx.try_recv() {
             Ok(event) => {
                 changed |= match event {
-                    Event::Hex(hex::Msg::Status(status)) => s.hex_status_event(status),
+                    Event::Hex(hex::Msg::ObservedStatus(sample)) => s.hex_observed_event(sample),
                     event => {
                         s.apply_event(event);
                         true

@@ -4,6 +4,7 @@ use crate::ui::{
     hex::{self, Capabilities, Feature, Msg, Support},
     theme,
 };
+use sidenote::hex_engine::sample_status;
 use std::collections::VecDeque;
 
 struct FakeControl {
@@ -12,7 +13,7 @@ struct FakeControl {
 }
 impl FakeControl {
     fn poll(&mut self, state: &mut State) {
-        // Same status-apply entry as Msg::Status, with a deterministic clock and fake client.
+        // Use a fake clock for freshness and expiry checks.
         state.hex_status_at(self.replies.pop_front().unwrap(), self.now);
         self.now += Duration::from_secs(2);
     }
@@ -121,7 +122,9 @@ fn not_running_clears_immediately_and_initial_timeout_never_says_open_hex() {
         super::super::recorder_start_block_reason(&state),
         Some("Open Hex, then try New meeting again.")
     );
-    state.hex_apply(Msg::Status(Err(HexError::Timeout)));
+    state.hex_apply(Msg::ObservedStatus(sample_status(|| {
+        Err(HexError::Timeout)
+    })));
     assert_eq!(
         super::super::recorder_start_block_reason(&state),
         Some(SLOW)
@@ -197,7 +200,9 @@ fn unknown_status_does_not_offer_to_open_an_installed_hex() {
             stderr_summary: "synthetic",
         },
     ] {
-        runtime.state.hex_apply(Msg::Status(Err(error)));
+        runtime
+            .state
+            .hex_apply(Msg::ObservedStatus(sample_status(|| Err(error))));
         runtime.invalidate();
         runtime.frame(0.0);
         assert!(
@@ -210,7 +215,9 @@ fn unknown_status_does_not_offer_to_open_an_installed_hex() {
     runtime.state.hex.install = sidenote::hex_install::State::Idle;
     runtime
         .state
-        .hex_apply(Msg::Status(Err(HexError::HexNotRunning)));
+        .hex_apply(Msg::ObservedStatus(sample_status(|| {
+            Err(HexError::HexNotRunning)
+        })));
     runtime.invalidate();
     runtime.frame(0.0);
     assert!(

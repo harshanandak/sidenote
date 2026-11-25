@@ -35,9 +35,12 @@ pub(super) fn idle_cpu_real_thirty_seconds() {
     let (stopping, count) = (stop.clone(), calls.clone());
     let status = std::thread::spawn(move || {
         while !stopping.load(Ordering::Relaxed) {
-            let result = engine.status();
+            let result = sample_status(|| engine.status());
             count.fetch_add(1, Ordering::Relaxed);
-            if events.send(Event::Hex(hex::Msg::Status(result))).is_err() {
+            if events
+                .send(Event::Hex(hex::Msg::ObservedStatus(result)))
+                .is_err()
+            {
                 break;
             }
             wake();

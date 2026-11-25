@@ -5,7 +5,7 @@ pub(in crate::ui) const UNCONFIRMED: &str = "The recording may still be finishin
 
 pub(super) struct Completion {
     recording: u64,
-    deadline: Option<Instant>,
+    pub(super) deadline: Option<Instant>,
 }
 
 pub(in crate::ui) fn scene(s: &mut State, timed_out: bool) {
@@ -66,7 +66,9 @@ impl State {
     pub(super) fn hex_check_stop(&mut self) {
         if let Some(deadline) = self.hex.stop.as_ref().and_then(|stop| stop.deadline) {
             // The watcher can deliver a sample taken before Stop replied.
-            self.hex_spawn(move |engine| Msg::StopStatus(deadline, engine.status()));
+            self.hex_spawn(move |engine| {
+                Msg::StopStatus(deadline, sample_status(|| engine.status()))
+            });
         }
     }
 
@@ -78,31 +80,30 @@ impl State {
         self.hex_check_stop();
     }
 
-    pub(super) fn hex_stop_status(
-        &mut self,
-        deadline: Instant,
-        result: Result<EngineState, HexError>,
-    ) {
+    pub(super) fn hex_stop_status(&mut self, deadline: Instant, sample: StatusSample) {
         if self.hex.stop.as_ref().and_then(|stop| stop.deadline) != Some(deadline) {
             return;
         }
-        if result.as_ref().is_ok_and(terminal) {
+        let (sent, Ok(status)) = sample else { return };
+        if terminal(&status) {
             let stop = self.hex.stop.as_mut().unwrap();
             stop.deadline = None;
             let recording = stop.recording;
-            self.hex_status(result);
+            self.hex_status_at(Ok(status), sent);
             self.hex.error = None;
-            self.hex.stop = None;
-            if self
-                .live
-                .as_ref()
-                .is_some_and(|l| l.recording_id == recording)
-            {
-                self.live_stopped();
-                self.live_sync();
-            } else {
-                self.request_refresh();
-            }
+            self.hex_complete_stop(recording);
+        } else {
+            self.hex_status_at(Ok(status), sent);
+        }
+    }
+
+    fn hex_complete_stop(&mut self, recording: u64) {
+        self.hex.stop = None;
+        if self.live.as_ref().map(|l| l.recording_id) == Some(recording) {
+            self.live_stopped();
+            self.live_sync();
+        } else {
+            self.request_refresh();
         }
     }
 

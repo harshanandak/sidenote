@@ -447,6 +447,13 @@ struct Cache {
 pub struct HexEngine {
     cache: Arc<Mutex<Cache>>,
 }
+pub type RecordStopResult = (Option<StatusSample>, Result<()>);
+pub type StatusSample = (Instant, Result<EngineState>);
+
+pub fn sample_status(read: impl FnOnce() -> Result<EngineState>) -> StatusSample {
+    (Instant::now(), read())
+}
+
 impl HexEngine {
     pub fn new() -> Self {
         Self::default()
@@ -460,6 +467,9 @@ impl HexEngine {
     }
     fn status_with_budget(&self, budget: Duration) -> Result<EngineState> {
         let v = control(json!({"command":"status"}), budget)?;
+        self.parse_status(v)
+    }
+    fn parse_status(&self, v: Value) -> Result<EngineState> {
         if v["status"] != "status" {
             return Err(failed("unexpected status reply"));
         }
@@ -584,10 +594,11 @@ impl HexEngine {
     }
 
     /// Only the setup button calls this. Never use `labs on meetings` on Windows.
-    pub fn enable_meetings(&self) -> Result<EngineState> {
+    pub fn enable_meetings(&self) -> Result<(Instant, EngineState)> {
+        let sent = Instant::now();
         let state = self.status()?;
         if state.labs.state("meetings") == Some(true) {
-            return Ok(state);
+            return Ok((sent, state));
         }
         if state.labs.state("meetings") != Some(false)
             || self.capabilities()?.get(&Feature::SettingsSet) != Some(&Support::Supported)
@@ -598,13 +609,14 @@ impl HexEngine {
             return Err(HexError::Unsupported);
         }
         self.settings_set("meetings.enabled", "true")?;
+        let sent = Instant::now();
         let state = self.status()?;
         if state.labs.state("meetings") != Some(true) {
             return Err(failed(
                 "Hex did not confirm that Meetings is on. Check again.",
             ));
         }
-        Ok(state)
+        Ok((sent, state))
     }
     pub(crate) fn stop_forgotten(&self, id: &str) -> Result<()> {
         // Recheck immediately before the CLI call, including after a slow file read.
@@ -756,7 +768,18 @@ impl HexEngine {
         }
         Ok(())
     }
-    pub fn record_stop(&self, expected_id: &str, cached: &Capabilities) -> Result<()> {
+    pub fn record_stop(&self, expected_id: &str, cached: &Capabilities) -> RecordStopResult {
+        let mut observed = None;
+        let result = self.record_stop_checked(expected_id, cached, &mut observed);
+        (observed, result)
+    }
+
+    fn record_stop_checked(
+        &self,
+        expected_id: &str,
+        cached: &Capabilities,
+        observed: &mut Option<StatusSample>,
+    ) -> Result<()> {
         let refused = |code: &str| HexError::Failed {
             code: Some(code.into()),
             stderr_summary: "Stop refused; values suppressed",
@@ -774,6 +797,7 @@ impl HexEngine {
             }
             Ok(reply)
         };
+        let sent = Instant::now();
         let current = request("status").map_err(|_| refused("stop-unconfirmed"))?;
         if current["status"] != "status" {
             return Err(refused("stop-unconfirmed"));
@@ -792,6 +816,10 @@ impl HexEngine {
         if current["capabilities"]["meetings"] == false {
             return Err(HexError::Unsupported);
         }
+        *observed = self
+            .parse_status(current)
+            .ok()
+            .map(|status| (sent, Ok(status)));
         // Hex has no atomic ID-scoped stop. This is the caller-requested status-check fallback.
         let reply = request("meeting-stop")?;
         if reply["status"] != "done" {
@@ -1045,7 +1073,7 @@ mod watcher {
         Stop,
     }
     pub struct StatusWatcher {
-        pub updates: mpsc::Receiver<Result<EngineState>>,
+        pub updates: mpsc::Receiver<StatusSample>,
         commands: mpsc::Sender<WatchCommand>,
         wake: Arc<Event>,
         thread: Option<JoinHandle<()>>,
@@ -1076,7 +1104,9 @@ mod watcher {
                             )
                         };
                         if result == WAIT_FAILED {
-                            let _ = output.try_send(Err(failed("status watcher wait failed")));
+                            let _ = output.try_send(sample_status(|| {
+                                Err(failed("status watcher wait failed"))
+                            }));
                             return;
                         }
                         let mut refresh = result != WAIT_OBJECT_0;
@@ -1092,7 +1122,7 @@ mod watcher {
                         if visible
                             && refresh
                             && let Err(mpsc::TrySendError::Disconnected(_)) =
-                                output.try_send(engine.status())
+                                output.try_send(sample_status(|| engine.status()))
                         {
                             return;
                         }
@@ -1173,7 +1203,7 @@ pub fn run_status() -> i32 {
             let mut updates = 0;
             while start.elapsed() < Duration::from_secs(20) {
                 if let Ok(update) = watcher.updates.recv_timeout(Duration::from_millis(500)) {
-                    update?;
+                    update.1?;
                     updates += 1;
                 }
             }
@@ -1194,7 +1224,7 @@ pub fn run_status() -> i32 {
 pub(crate) fn meeting_event() {}
 #[cfg(not(windows))]
 pub struct StatusWatcher {
-    pub updates: std::sync::mpsc::Receiver<Result<EngineState>>,
+    pub updates: std::sync::mpsc::Receiver<StatusSample>,
 }
 #[cfg(not(windows))]
 impl StatusWatcher {
