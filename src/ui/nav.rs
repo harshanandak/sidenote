@@ -549,27 +549,46 @@ pub fn scene_all(s: &mut State) {
 
 // ---- the top right ----------------------------------------------------------------------------
 
-fn meeting_shows_pause(s: &State) -> bool {
-    let Some(live) = &s.live else {
-        return false;
-    };
-    let recording = live
-        .session
-        .as_ref()
-        .filter(|session| session.phase == core::meeting_parts::Phase::Recording);
-    if s.on_live() {
-        return live.phase == super::live::Phase::Recording || recording.is_some();
-    }
-    s.page() == Page::Meetings
+fn shown_live(s: &State) -> Option<&super::live::Live> {
+    let live = s.live.as_ref()?;
+    let selected = s.page() == Page::Meetings
         && !s.meeting_ui.tabs
-        && recording.is_some_and(|session| s.selected.as_ref() == Some(&session.id))
-        && s.current().is_some()
+        && live
+            .session
+            .as_ref()
+            .is_some_and(|session| s.selected.as_ref() == Some(&session.id))
+        && s.current().is_some();
+    (s.on_live() || selected).then_some(live)
+}
+
+fn meeting_shows_pause(s: &State) -> bool {
+    shown_live(s).is_some_and(|live| {
+        (s.on_live() && live.phase == super::live::Phase::Recording)
+            || live
+                .session
+                .as_ref()
+                .is_some_and(|session| session.phase == core::meeting_parts::Phase::Recording)
+    })
+}
+
+fn recording_status(s: &State) -> super::live::RecordingStatus {
+    let phase = shown_live(s)
+        .filter(|live| {
+            live.session
+                .as_ref()
+                .is_none_or(|session| session.phase != core::meeting_parts::Phase::Ended)
+        })
+        .map(|live| live.phase);
+    super::live::RecordingStatus::for_phase(s, phase)
 }
 
 /// "New meeting", or while Hex records, the recording actions outside the active meeting.
 pub fn actions(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     if s.annotations.open {
         return super::annotations::new_button(s, p);
+    }
+    if recording_status(s) == super::live::RecordingStatus::Paused {
+        return recording_pill(s, p, narrow);
     }
     if s.hex_recording() {
         if meeting_shows_pause(s) {
@@ -594,16 +613,33 @@ pub fn actions(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
 }
 
 pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    let b = super::widgets::button(
-        if narrow { "+ New" } else { "+ New meeting" },
-        "new-meeting",
-        super::widgets::ButtonRole::Primary,
-        p,
-    );
+    let new = if narrow { "+ New" } else { "+ New meeting" };
+    use super::widgets::ButtonRole;
+    let button = |label, role| super::widgets::button(label, "new-meeting", role, p);
     if let Some(error) = super::updates::listener_problem(s) {
-        return super::updates::listener_popover(s, b, error, p, layer);
+        return super::updates::listener_popover(
+            s,
+            button(new, ButtonRole::Primary),
+            error,
+            p,
+            layer,
+        );
     }
     let blocked = hex::start_blocked(s);
+    let progress = match blocked {
+        Some(hex::CHECKING) => Some(hex::CHECKING),
+        Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
+        _ => None,
+    };
+    if let Some(label) = progress
+        && let Some(reason) = blocked
+    {
+        return button(label, ButtonRole::Secondary)
+            .label(format!("New meeting ({reason})"))
+            .help(reason)
+            .disabled(true);
+    }
+    let b = button(new, ButtonRole::Primary);
     let action = match blocked {
         None => b
             .label("New meeting")
@@ -631,17 +667,23 @@ pub(super) fn new_meeting_button(s: &State, p: Palette, narrow: bool, layer: &mu
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
-    if s.hex_status_unknown() {
+    use super::live::RecordingStatus;
+    let status = recording_status(s);
+    if status == RecordingStatus::Paused {
+        return status.label().into();
+    }
+    if status == RecordingStatus::Unknown {
         return if narrow {
             "Status unknown"
         } else {
-            "Recording status unknown"
+            status.label()
         }
         .into();
     }
     let clock = s
         .live
         .as_ref()
+        .filter(|live| live.phase == super::live::Phase::Recording)
         .and_then(|live| live.session.as_ref())
         .map(|m| {
             let seconds = m.elapsed_ms() / 1000;
@@ -650,13 +692,18 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
         .or_else(|| hex::recording_clock(s));
     match (&clock, narrow) {
         (Some(c), true) => c.clone(),
-        (Some(c), false) => format!("Recording {c}"),
-        (None, _) => "Recording".into(),
+        (Some(c), false) => format!("{} {c}", status.label()),
+        (None, _) => status.label().into(),
     }
 }
 
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
+    let color = match recording_status(s) {
+        super::live::RecordingStatus::Paused => None,
+        super::live::RecordingStatus::Recording => Some(p.danger),
+        super::live::RecordingStatus::Unknown => Some(p.warn),
+    };
     let open = super::widgets::button(
         "",
         "recording-open",
@@ -668,7 +715,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         row()
             .gap(8.0)
             .items_center()
-            .child(dot(8.0, p.danger).key("recording-live-dot"))
+            .children(color.map(|color| dot(8.0, color).key("recording-live-dot")))
             .child(roles::CONTROL.wrap(words.clone(), p.soft)),
     )
     .label(format!("{words}. Open the live meeting"))

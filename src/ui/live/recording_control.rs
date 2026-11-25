@@ -4,6 +4,33 @@ use sidenote::core::{
     self,
     meeting_parts::{self, Phase as SavedPhase},
 };
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui) enum RecordingStatus {
+    Recording,
+    Paused,
+    Unknown,
+}
+
+impl RecordingStatus {
+    pub(in crate::ui) fn for_phase(s: &State, phase: Option<Phase>) -> Self {
+        if phase == Some(Phase::Paused) {
+            Self::Paused
+        } else if s.hex_status_unknown() {
+            Self::Unknown
+        } else {
+            Self::Recording
+        }
+    }
+
+    pub(in crate::ui) fn label(self) -> &'static str {
+        match self {
+            Self::Recording => "Recording",
+            Self::Paused => "Paused",
+            Self::Unknown => "Recording status unknown",
+        }
+    }
+}
+
 fn session(s: &State) -> Option<meeting_parts::Meeting> {
     s.live
         .as_ref()
@@ -24,13 +51,20 @@ fn is_recording(s: &State, m: &Option<meeting_parts::Meeting>) -> bool {
 /// it pauses, so until then they are the last ones.
 pub(in crate::ui) fn recording_note(s: &State, p: Palette) -> Option<El> {
     is_recording(s, &session(s)).then(|| {
+        let unknown =
+            RecordingStatus::for_phase(s, Some(Phase::Recording)) == RecordingStatus::Unknown;
+        let words = if unknown {
+            RecordingStatus::Unknown.label()
+        } else {
+            "Recording. These notes update when you pause."
+        };
         row()
             .key("meeting-recording-note")
             .gap(8.0)
             .items_center()
             .mb(16.0)
-            .child(dot(8.0, p.danger))
-            .child(roles::SMALL.wrap("Recording. These notes update when you pause.", p.faint))
+            .child(dot(8.0, if unknown { p.warn } else { p.danger }))
+            .child(roles::SMALL.wrap(words, p.faint))
     })
 }
 pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
@@ -148,23 +182,30 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
                 .on_press(|s: &mut State| s.meeting_resume()),
         );
     }
-    if let Some(m) = m
-        && m.phase != SavedPhase::Ended
-        && !m.parts.is_empty()
-        && !recording
-    {
+    let can_generate = recording
+        || m.as_ref()
+            .is_some_and(|m| m.phase != SavedPhase::Ended && !m.parts.is_empty());
+    if can_generate {
+        let label = if m.as_ref().is_some_and(meeting_parts::Meeting::stale) {
+            "Update notes"
+        } else {
+            "Generate notes"
+        };
+        let generate = if recording && s.narrow.get() {
+            let icon = super::super::icons::draw(&super::super::icons::FILE_TEXT, 16.0, p.soft);
+            pressable(el().size(32.0, 28.0).center().child(icon))
+                .key("meeting-generate")
+                .label(label)
+                .help(label)
+                .radius(14.0)
+                .hover(p.bg)
+        } else {
+            quiet_button(label, "meeting-generate", p)
+        };
         control = control.child(
-            quiet_button(
-                if m.stale() {
-                    "Update notes"
-                } else {
-                    "Generate notes"
-                },
-                "meeting-generate",
-                p,
-            )
-            .button_disabled(s.hex_record_busy())
-            .on_press(|s: &mut State| s.meeting_generate()),
+            generate
+                .button_disabled(s.hex_record_busy() || (recording && !s.hex_recording()))
+                .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
     if let Some(status) = above {
@@ -200,7 +241,7 @@ pub(in crate::ui) fn status(s: &State, p: Palette) -> Option<El> {
     let state = match phase {
         Phase::Starting => "Starting",
         Phase::Recording => "Recording",
-        Phase::Paused => "Paused",
+        Phase::Paused => RecordingStatus::for_phase(s, Some(phase)).label(),
         Phase::Making => "Writing notes",
     };
     let mut c = col().gap(8.0).child(
@@ -263,11 +304,19 @@ mod tests {
             let status = keyed("live-recording-status");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
+            assert_eq!(
+                keyed("meeting-generate").label.as_deref(),
+                Some("Generate notes")
+            );
             assert_eq!(status.text.as_deref(), Some("Recording 12:34"));
             assert_eq!(h, roles::META.lh, "one line at {width} px");
             assert!(x >= 0.0 && x + w <= width);
             if narrow {
                 assert!(y + h <= pause.rect[1]);
+                assert!(
+                    keyed("ask-input").rect[2] >= 90.0,
+                    "Ask is squeezed at {width} px"
+                );
             } else {
                 assert!(x + w <= pause.rect[0]);
             }

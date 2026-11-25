@@ -1331,14 +1331,12 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         .pl(16.0)
         .pr(8.0)
         .py(8.0)
-        .child(spaced_caps(
-            if s.hex_status_unknown() {
-                "Transcript (recording status unknown)"
-            } else {
-                "Live transcript"
-            },
-            p,
-        ))
+        .child(
+            roles::CONTROL
+                .medium()
+                .line("Transcript", p.ink)
+                .key("live-panel-title"),
+        )
         .child(
             quiet_button("Hide", "live-panel-hide", p)
                 .on_press(|s: &mut State| s.live_toggle_panel()),
@@ -1884,6 +1882,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         }
     };
     let lost = !stopping && phase == Phase::Recording && !s.hex_running();
+    let unknown = RecordingStatus::for_phase(s, Some(phase)) == RecordingStatus::Unknown;
     let mut doc = col()
         .key("live")
         .w_full()
@@ -1898,7 +1897,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             roles::SMALL
                 .medium()
                 .wrap(
-                    if s.hex_status_unknown() { "Recording status unknown. Stop will check the recording before sending a request. New meeting can check Hex again." } else { "Hex is not answering. The recording may still be running in Hex." },
+                    if unknown { "Recording status unknown. Sidenote is checking Hex. Pause or Generate notes will check the recording before stopping it." } else { "Hex is not answering. The recording may still be running in Hex." },
                     p.warn,
                 )
                 .role("alert"),
@@ -2466,4 +2465,6 @@ pub(super) use parts_scene::scene_over as parts_scene_over;
 #[path = "live/recording_control.rs"]
 mod recording_control;
 pub(super) use parts_scene::scene as parts_scene;
-pub(super) use recording_control::{parts_control, recording_note, status as parts_status};
+pub(super) use recording_control::{
+    RecordingStatus, parts_control, recording_note, status as parts_status,
+};

@@ -1498,3 +1498,59 @@ fn recorder_ready_installed_preparation_disables_the_real_control_until_validati
     }
     readiness::run();
 }
+
+#[cfg(windows)]
+#[test]
+fn paused_meeting_keeps_its_status_when_hex_expires() {
+    if isolated_api_test("paused_meeting_keeps_its_status_when_hex_expires") {
+        return;
+    }
+    let (_api, mut state, _) = Fixture::start();
+    crate::ui::live::parts_scene(&mut state, "paused");
+    state.live.as_mut().unwrap().panel_open = true;
+    let mut ui = rune::Runtime::with_text(
+        state,
+        crate::ui::view,
+        (390.0, 900.0),
+        rune::Env::default(),
+        rune::text::TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter")),
+    );
+    for expired in [false, true] {
+        if expired {
+            ui.update(|state, _| {
+                let (_, status) = command_status_sample(state);
+                state.apply_event(Event::Hex(Msg::ObservedStatus((
+                    Instant::now() - Duration::from_secs(11),
+                    status,
+                ))));
+            });
+        }
+        ui.settle_all();
+        ui.frame(0.0);
+        assert_eq!(ui.state.hex_status_unknown(), expired);
+        let elements = ui.elements();
+        let keyed = |key| {
+            elements
+                .iter()
+                .find(|element| element.key.as_deref() == Some(key))
+                .unwrap()
+        };
+        assert_eq!(
+            keyed("recording-open").label.as_deref(),
+            Some("Paused. Open the live meeting")
+        );
+        assert!(
+            keyed("meeting-recorded-time")
+                .text
+                .as_deref()
+                .unwrap()
+                .starts_with("Paused")
+        );
+        assert_eq!(
+            keyed("live-panel-title").text.as_deref(),
+            Some("Transcript")
+        );
+        assert!(keyed("live-panel-hide").focusable);
+        assert!(ui.find("new-meeting").is_none());
+    }
+}
