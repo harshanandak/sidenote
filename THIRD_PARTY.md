@@ -2,7 +2,8 @@
 
 Sidenote is AGPL-3.0-or-later. Dependencies retain their own licences.
 
-- [Hex](https://github.com/anomalyco/hex) is the recording and dictation application Sidenote accompanies, MIT.
+- [Hex](https://github.com/anomalyco/hex) is the recording and dictation application Sidenote accompanies. Copyright (c) 2026 Christopher Langton, MIT License. Recording capsule source ref: 7ed860ff.
+  Sidenote's recording pill adapts Hex's meeting capsule layout and motion.
 - [Rune](https://github.com/anomalyco/rune) supplies the UI crates, MIT, pinned to
   a138b97e654b8299b2a4cb518b8476b2b528c2c4 in Cargo.lock.
 - Bundled Inter fonts use the SIL Open Font License 1.1. The original notice is
