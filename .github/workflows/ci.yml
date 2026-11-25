@@ -292,6 +292,7 @@ jobs:
             ui::nav::tests::narrow_new_meeting_ \
             ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
+            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
             ui::live::recording_control::tests:: \
             ui::list::tests::meeting_row_uses_the_singular_for_one_task \

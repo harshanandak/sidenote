@@ -1371,34 +1371,37 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
         return;
     }
     let mut rt = page_with_tasks(DEFAULT_SIZE);
-    let all = core::ALL_KEY;
-    let global = Message {
+    let message = Message {
         role: "user".into(),
         text: "Across meetings".into(),
         ..Default::default()
     };
     rt.update(|s, _| {
         s.meeting_ui.tabs = true;
-        s.store.append_message(all, global.clone()).unwrap();
+        s.store.append_message(core::ALL_KEY, message).unwrap();
     });
+    let global = rt.state.store.load(core::ALL_KEY).unwrap().messages;
     rt.frame(0.0);
-    tap(&mut rt, "tick-0");
-    wait_for_tick(&mut rt, 0, true);
+    let tick = |rt: &mut Runtime<State>, index| {
+        let task = element(rt, &format!("tick-{index}")).label.unwrap();
+        rt.update(|s, _| s.toggle_task(&task));
+        wait_for_tick(rt, index, true);
+    };
+    tick(&mut rt, 0);
     assert!(!rt.state.saved.checked.is_empty());
     assert_eq!(rt.state.saved.checked, rt.state.tasks.checked[MEETING]);
     let checked = element(&rt, "tick-0").fill;
     rt.update(|s, _| s.set_ask_scope(true));
     rt.frame(0.0);
     assert_eq!(element(&rt, "tick-0").fill, checked);
-    tap(&mut rt, "tick-1");
-    wait_for_tick(&mut rt, 1, true);
+    tick(&mut rt, 1);
     assert_eq!(element(&rt, "tick-1").fill, checked);
-    assert_eq!(rt.state.saved.messages, [global.clone()]);
-    rt.update(|s, _| s.move_card(MEETING, 2, core::BoardColumn::Done));
+    assert_eq!(rt.state.saved.messages, global);
+    rt.update(|s, _| s.toggle_row(MEETING, 2));
     wait_for_tick(&mut rt, 2, true);
     assert_eq!(element(&rt, "tick-2").fill, checked);
-    assert_eq!(rt.state.ask_key(), all);
-    assert_eq!(rt.state.saved.messages, [global]);
+    assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+    assert_eq!(rt.state.saved.messages, global);
 }
 
 #[test]
