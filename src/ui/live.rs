@@ -1263,11 +1263,6 @@ fn stamp(seconds: u64) -> String {
     }
 }
 
-fn elapsed_stamp(seconds: u64) -> String {
-    let time = stamp(seconds);
-    format!("+{}", time.strip_prefix('0').unwrap_or(&time))
-}
-
 /// The live transcript above the bar, newest line at the bottom. A scroll area that follows the
 /// end: it keeps following new lines, stops when the reader scrolls up, and follows again once
 /// they are back at the bottom.
@@ -1405,7 +1400,8 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                 );
                 continue;
             }
-            let elapsed = elapsed_stamp(line.seconds);
+            let time = stamp(line.seconds);
+            let elapsed = format!("+{}", time.strip_prefix('0').unwrap_or(&time));
             rows = rows.child(
                 row()
                     .key(format!("live-line-{i}"))

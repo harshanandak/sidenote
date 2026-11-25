@@ -1436,7 +1436,8 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         );
         let [stop_x, stop_y, stop_w, stop_h] = rect_of(&rt, "hex-stop");
         let [pill_x, pill_y, _, pill_h] = rect_of(&rt, "ask-pill");
-        let [input_x, ..] = rect_of(&rt, "ask-input");
+        let [input_x, _, input_w, _] = rect_of(&rt, "ask-input");
+        assert!(input_w >= 90.0, "{size:?}: Ask input is squeezed");
         assert!(stop_x >= pill_x && stop_x + stop_w <= input_x);
         assert!(stop_y >= pill_y && stop_y + stop_h <= pill_y + pill_h);
         rt.update(|s, _| {
@@ -1988,13 +1989,13 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     };
     let (pane, dock, chip, pill) = (
         rect("meeting-pane"),
-        rect("meeting-bottom-bar"),
-        rect("ask-options"),
+        rect("ask-controls"),
+        rect("ask-prompt"),
         rect("ask-pill"),
     );
     assert!((dock[0] + dock[2] / 2.0 - pane[0] - pane[2] / 2.0).abs() < 1.0);
     assert_eq!(pill[3], 70.0);
-    assert!(chip[0] > pill[0] && chip[0] + chip[2] < pill[0] + pill[2]);
+    assert!(chip[0] == pill[0] && chip[1] + chip[3] <= pill[1]);
 }
 
 #[test]
@@ -2039,7 +2040,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     // The header's title and controls are in the notes column.
     let head = rect(&rt, "meeting-header");
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
-    assert_eq!(rect(&rt, "ask-pill")[2], 840.0, "Ask bar");
+    assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
     // The transcript sheet rises inside the notes column.
     rt.update(|s, _| s.transcript_open = true);
@@ -2316,21 +2317,16 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
         return;
     }
     // 800 wide with no sidebar, and 1000 wide with it (a page of 751): both are `narrow` and both
-    // have room for the strip and the 640 column, so the bar sits on the column's edge.
+    // have room for the strip and the 640 column. The 640-point dock is centered in the pane.
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
-        let (pill, main) = (
-            rect_of(&rt, "meeting-bottom-bar"),
-            rect_of(&rt, "meeting-main"),
-        );
+        let dock = rect_of(&rt, "ask-controls");
+        let pane = rect_of(&rt, "meeting-pane");
         assert_eq!(
-            pill[0], main[0],
-            "{size:?}: the Ask bar is off the notes edge"
-        );
-        assert_eq!(
-            pill[2], main[2],
-            "{size:?}: the Ask bar is not the column's width"
+            (dock[0], dock[2]),
+            (pane[0] + (pane[2] - 640.0) / 2.0, 640.0),
+            "{size:?}"
         );
     }
 }
@@ -2535,8 +2531,9 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         (main[0] - 8.0, 656.0),
         "task row {task:?}"
     );
-    // The Ask bar and the transcript sheet start on the notes edge too.
-    assert_eq!(r(&rt, "meeting-bottom-bar")[0], main[0], "Ask bar");
+    let pane = r(&rt, "meeting-pane");
+    let dock = r(&rt, "ask-controls");
+    assert_eq!(dock[0], pane[0] + (pane[2] - dock[2]) / 2.0, "Ask bar");
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);
     rt.settle_all();
