@@ -1465,12 +1465,19 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
     rt.frame(0.0);
     tap(&mut rt, "tick-0");
     wait_for_tick(&mut rt, 0, true);
+    assert!(!rt.state.saved.checked.is_empty());
+    assert_eq!(rt.state.saved.checked, rt.state.tasks.checked[MEETING]);
     let checked = element(&rt, "tick-0").fill;
     rt.update(|s, _| s.set_ask_scope(true));
     rt.frame(0.0);
     assert_eq!(element(&rt, "tick-0").fill, checked);
     tap(&mut rt, "tick-1");
     wait_for_tick(&mut rt, 1, true);
+    assert_eq!(element(&rt, "tick-1").fill, checked);
+    assert_eq!(rt.state.saved.messages, [global.clone()]);
+    rt.update(|s, _| s.move_card(MEETING, 2, core::BoardColumn::Done));
+    wait_for_tick(&mut rt, 2, true);
+    assert_eq!(element(&rt, "tick-2").fill, checked);
     assert_eq!(rt.state.ask_key(), all);
     assert_eq!(rt.state.saved.messages, [global]);
 }
