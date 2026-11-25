@@ -1364,18 +1364,14 @@ fn at_390_wide_the_ask_header_keeps_clear_off_the_edge_and_the_page_fades_out() 
     rt.frame(0.0);
     let rect =
         |rt: &Runtime<State>, key: &str| rt.presented(key).unwrap_or_else(|| panic!("{key}")).0;
-    let (pane, overlay, thread) = (
-        rect(&rt, "meeting-pane"),
-        rect(&rt, "ask-overlay"),
-        rect(&rt, "ask-thread"),
-    );
+    let (overlay, thread) = (rect(&rt, "ask-overlay"), rect(&rt, "ask-thread"));
     assert_eq!(
         (
-            thread[0] - pane[0],
+            thread[0] - overlay[0],
             overlay[0] + overlay[2] - (thread[0] + thread[2])
         ),
-        (16.0, 0.0),
-        "the panel aligns with the notes gutter and fills the dock"
+        (16.0, 16.0),
+        "the panel keeps the 16 px gutter on both sides"
     );
     let (caption, hide, clear) = (
         rect(&rt, "ask-caption"),
@@ -1392,7 +1388,7 @@ fn at_390_wide_the_ask_header_keeps_clear_off_the_edge_and_the_page_fades_out() 
         "the caption runs under Hide or Clear"
     );
     let scroll = rect(&rt, "meeting-scroll");
-    assert!(scroll[1] + scroll[3] <= overlay[1]);
+    assert_eq!(scroll[1] + scroll[3], overlay[1] + overlay[3]);
     assert!(rt.find("meeting-scroll-fade").is_none());
 }
 
