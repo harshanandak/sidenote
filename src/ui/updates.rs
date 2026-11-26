@@ -14,7 +14,7 @@ pub struct Updates {
     channel: Channel,
     listener: updates::ListenerStatus,
     listener_busy: bool,
-    listener_open: bool,
+    pub(super) listener_open: bool,
     listener_probe_busy: bool,
     listener_probed: Option<std::time::Instant>,
     recorder_gap: Option<heartbeat::Gap>,
