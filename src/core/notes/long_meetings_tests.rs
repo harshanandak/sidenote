@@ -1,4 +1,7 @@
-use super::{prompt, transcript};
+use super::{
+    long_meetings::{self, Failure, WINDOW_BYTES},
+    prompt, schema, transcript,
+};
 
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 60 * MINUTE_MS;
@@ -264,6 +267,188 @@ fn generated_fixtures_preserve_facts_unicode_density_and_joined_part_shape() {
                     assert!(chars > prompt::TRANSCRIPT_CAP)
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn every_generated_span_reaches_the_backend_with_its_original_timestamp() {
+    use crate::core::meetings::milliseconds;
+
+    for hours in [1, 2, 3] {
+        for density in [Density::Sparse, Density::Conversation, Density::Dense] {
+            let fixture = generate(hours, density);
+            let input = fixture.rendered();
+            let windows: Vec<_> = long_meetings::windows(&input).collect();
+            assert!(windows.len() > 1, "{hours}h {}", density.label());
+            assert_eq!(long_meetings::windows(&input).collect::<Vec<_>>(), windows);
+
+            let mut cursor = 0;
+            let mut expected_overlap = 0..0;
+            for window in &windows {
+                assert_eq!(window.primary.start, cursor);
+                assert!(window.primary.end > cursor);
+                assert_eq!(window.overlap, expected_overlap);
+                let primary = &input[window.primary.clone()];
+                let overlap = &input[window.overlap.clone()];
+                assert!(window.text.len() <= WINDOW_BYTES);
+                assert_eq!(window.text, [overlap, primary].concat());
+                assert!(primary.starts_with('[') && primary.ends_with('\n'));
+                cursor = window.primary.end;
+                let last = primary.lines().last().unwrap();
+                expected_overlap = cursor - last.len() - 1..cursor;
+            }
+            assert_eq!(cursor, input.len());
+
+            let mut index = 0;
+            let outputs = long_meetings::process(
+                &input,
+                |reader| {
+                    let mut received = String::new();
+                    reader.read_to_string(&mut received).unwrap();
+                    assert_eq!(received, windows[index].text);
+                    index += 1;
+                    let points: Vec<_> = received
+                        .lines()
+                        .filter_map(|line| {
+                            let (at, text) = line.strip_prefix('[')?.split_once(']')?;
+                            assert!(milliseconds(at).unwrap() < fixture.duration_ms);
+                            let fact = fixture
+                                .facts
+                                .each()
+                                .into_iter()
+                                .find(|f| text.contains(&f.text))?;
+                            Some(serde_json::json!({"type": "fact", "text": fact.text, "at": [at]}))
+                        })
+                        .collect();
+                    Ok::<_, &'static str>(
+                        serde_json::json!({
+                            "title": "Synthetic meeting",
+                            "context": [],
+                            "topics": [{"title": "Facts", "points": points}],
+                            "todo": [],
+                            "to_settle": []
+                        })
+                        .to_string(),
+                    )
+                },
+                |raw, chunk| {
+                    schema::parse(
+                        raw,
+                        "1-1",
+                        chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                        chunk,
+                        &[],
+                    )
+                },
+            )
+            .unwrap();
+            assert_eq!(index, windows.len());
+            assert_eq!(outputs.len(), windows.len());
+            for fact in fixture.facts.each() {
+                let at = stamp(fact.at_ms);
+                let points = outputs
+                    .iter()
+                    .flat_map(|summary| &summary.topics[0].points)
+                    .filter(|point| point.text == fact.text)
+                    .collect::<Vec<_>>();
+                assert!(!points.is_empty());
+                for point in points {
+                    assert_eq!(point.at, [at.as_str()]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn oversized_row_continues_on_utf8_boundaries_with_the_same_timestamp() {
+    const HEAD: &str = "[00:05:04.000] You (English): ";
+    let input = format!(
+        "{HEAD}{}{}\n",
+        "a".repeat(4094 - HEAD.len()),
+        "🌒éक".repeat(WINDOW_BYTES / 3)
+    );
+    let mut reconstructed = HEAD.to_owned();
+    let mut cursor = 0;
+    for window in long_meetings::windows(&input) {
+        assert_eq!(window.primary.start, cursor);
+        assert_eq!(window.overlap.end, cursor);
+        assert!(input.is_char_boundary(window.primary.end));
+        assert!(input.is_char_boundary(window.overlap.start));
+        assert!(window.text.len() <= WINDOW_BYTES);
+        let mut lines = window.text.lines();
+        if cursor == 0 {
+            assert_eq!(lines.clone().next().unwrap().len(), 4094);
+        } else {
+            let overlap = &input[window.overlap.clone()];
+            assert_eq!(lines.next().unwrap().strip_prefix(HEAD).unwrap(), overlap);
+        }
+        let primary = &input[window.primary.clone()];
+        let start = reconstructed.len();
+        for line in lines {
+            reconstructed.push_str(line.strip_prefix(HEAD).unwrap());
+        }
+        assert_eq!(
+            &reconstructed[if cursor == 0 { 0 } else { start }..],
+            primary.trim_end_matches('\n')
+        );
+        cursor = window.primary.end;
+    }
+    reconstructed.push('\n');
+    assert_eq!(reconstructed, input);
+}
+
+#[test]
+fn unread_input_malformed_output_and_context_refusal_never_complete() {
+    for hours in [1, 2, 3] {
+        for density in [Density::Sparse, Density::Conversation, Density::Dense] {
+            let input = generate(hours, density).rendered();
+            let count = long_meetings::windows(&input).count();
+            for (stop, failure) in [
+                (0, Failure::UnreadInput { window: 0 }),
+                (
+                    count / 2,
+                    Failure::BadOutput {
+                        window: count / 2,
+                        reason: "invalid chunk JSON",
+                    },
+                ),
+                (
+                    count - 1,
+                    Failure::Backend {
+                        window: count - 1,
+                        error: "context limit",
+                    },
+                ),
+            ] {
+                let mut calls = 0;
+                let result = long_meetings::process(
+                    &input,
+                    |reader| {
+                        let current = calls;
+                        calls += 1;
+                        if current == stop && matches!(&failure, Failure::UnreadInput { .. }) {
+                            reader.read_exact(&mut [0; 1]).unwrap();
+                            return Ok(r#"{"title":"valid"}"#.into());
+                        }
+                        reader.read_to_string(&mut String::new()).unwrap();
+                        if current == stop {
+                            return match &failure {
+                                Failure::Backend { error, .. } => Err(*error),
+                                _ => Ok(r#"{"title":"truncated""#.into()),
+                            };
+                        }
+                        Ok(r#"{"title":"valid"}"#.into())
+                    },
+                    |raw, _| {
+                        serde_json::from_str::<std::collections::BTreeMap<String, String>>(raw)
+                            .map_err(|_| "invalid chunk JSON")
+                    },
+                );
+                assert_eq!(result, Err(failure));
+                assert_eq!(calls, stop + 1);
             }
         }
     }
