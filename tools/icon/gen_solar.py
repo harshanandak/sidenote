@@ -34,6 +34,17 @@ ICONS = (
     ("PRIVACY", "lock-keyhole-minimalistic"),
     ("UPDATES", "download-minimalistic"),
     ("DIAGNOSTICS", "pulse"),
+    ("ADD", "add"), ("CHECK", "check"),
+    ("ALT_ARROW_DOWN", "alt-arrow-down"), ("ALT_ARROW_UP", "alt-arrow-up"),
+    ("ALT_ARROW_RIGHT", "alt-arrow-right"), ("ALT_ARROW_LEFT", "alt-arrow-left"),
+    ("SORT_VERTICAL", "sort-vertical"), ("CLOSE", "close"),
+    ("CLOSE_CIRCLE", "close-circle"), ("COPY", "copy"),
+    ("MAGNIFER", "magnifer"), ("EYE", "eye"), ("EYE_CLOSED", "eye-closed"),
+    ("MINUS", "minus"), ("MENU_DOTS", "menu-dots"), ("REFRESH", "refresh"),
+    ("PLAY", "play"), ("STOP", "stop"), ("STOP_CIRCLE", "stop-circle"),
+    ("CIRCLE", "circle"), ("PAUSE_CIRCLE", "pause-circle"),
+    ("RECORD_CIRCLE", "record-circle"), ("QUESTION_CIRCLE", "question-circle"),
+    ("HOURGLASS", "hourglass"), ("TRASH_BIN_TRASH", "trash-bin-trash"),
 )
 PAINT = {
     "fill": "none",

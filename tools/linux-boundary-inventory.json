@@ -431,6 +431,8 @@
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
+  "src/ui/icons.rs": "a7a80f3d9c2bf94e91af38f3f8434426245cc1cd7a4211deb516f625ba57d161",
+
   "src/ui/idle_cpu.rs": "e0d44a4a2aa72668e127baf5f100e1ad6267971c73ce46230d279701e94b27f0",
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",

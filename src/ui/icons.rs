@@ -122,6 +122,31 @@ pub(super) fn weighted(icon: &'static Icon, weight: IconWeight) -> &'static Icon
         "solar-lock-keyhole-minimalistic" => &solar::PRIVACY,
         "solar-download-minimalistic" => &solar::UPDATES,
         "solar-pulse" => &solar::DIAGNOSTICS,
+        "solar-add" => &solar::ADD,
+        "solar-check" => &solar::CHECK,
+        "solar-alt-arrow-down" | "settings-chevron-down" => &solar::ALT_ARROW_DOWN,
+        "solar-alt-arrow-up" | "settings-chevron-up" => &solar::ALT_ARROW_UP,
+        "solar-alt-arrow-right" => &solar::ALT_ARROW_RIGHT,
+        "solar-alt-arrow-left" => &solar::ALT_ARROW_LEFT,
+        "solar-sort-vertical" => &solar::SORT_VERTICAL,
+        "solar-close" => &solar::CLOSE,
+        "solar-close-circle" => &solar::CLOSE_CIRCLE,
+        "solar-copy" => &solar::COPY,
+        "solar-magnifer" => &solar::MAGNIFER,
+        "solar-eye" => &solar::EYE,
+        "solar-eye-closed" => &solar::EYE_CLOSED,
+        "solar-minus" => &solar::MINUS,
+        "solar-menu-dots" => &solar::MENU_DOTS,
+        "solar-refresh" => &solar::REFRESH,
+        "solar-play" => &solar::PLAY,
+        "solar-stop" => &solar::STOP,
+        "solar-stop-circle" => &solar::STOP_CIRCLE,
+        "solar-circle" => &solar::CIRCLE,
+        "solar-pause-circle" => &solar::PAUSE_CIRCLE,
+        "solar-record-circle" => &solar::RECORD_CIRCLE,
+        "solar-question-circle" => &solar::QUESTION_CIRCLE,
+        "solar-hourglass" => &solar::HOURGLASS,
+        "solar-trash-bin-trash" => &solar::TRASH_BIN_TRASH,
         _ => return icon,
     };
     &variants[weight as usize]
@@ -188,50 +213,58 @@ lucide!(
     r#"<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    REFRESH_CW,
+    LUCIDE_REFRESH_CW,
     "lucide-refresh-cw",
     r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 3v5h-5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 16H3v5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static REFRESH_CW: &Icon = &solar::REFRESH[REGULAR];
 lucide!(
     DEVICE,
     "lucide-monitor-smartphone",
     r#"<path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 19v-3.96 3.15" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 19h5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><rect width="6" height="10" x="16" y="12" rx="2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    PLUS,
+    LUCIDE_PLUS,
     "lucide-plus",
     r#"<path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 5v14" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static PLUS: &Icon = &solar::ADD[REGULAR];
 lucide!(
-    STOP,
+    LUCIDE_STOP,
     "lucide-square",
     r#"<rect width="18" height="18" x="3" y="3" rx="2" fill="currentColor" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static STOP: &Icon = &solar::STOP[REGULAR];
 lucide!(
-    CHECK,
+    LUCIDE_CHECK,
     "lucide-check",
     r#"<path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHECK: &Icon = &solar::CHECK[REGULAR];
 lucide!(
-    CHEVRON_DOWN,
+    LUCIDE_CHEVRON_DOWN,
     "lucide-chevron-down",
     r#"<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHEVRON_DOWN: &Icon = &solar::ALT_ARROW_DOWN[REGULAR];
 lucide!(
-    CHEVRON_RIGHT,
+    LUCIDE_CHEVRON_RIGHT,
     "lucide-chevron-right",
     r#"<path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHEVRON_RIGHT: &Icon = &solar::ALT_ARROW_RIGHT[REGULAR];
 lucide!(
-    CHEVRON_LEFT,
+    LUCIDE_CHEVRON_LEFT,
     "lucide-chevron-left",
     r#"<path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHEVRON_LEFT: &Icon = &solar::ALT_ARROW_LEFT[REGULAR];
 lucide!(
-    CHEVRONS_UP_DOWN,
+    LUCIDE_CHEVRONS_UP_DOWN,
     "lucide-chevrons-up-down",
     r#"<path d="m7 15 5 5 5-5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m7 9 5-5 5 5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHEVRONS_UP_DOWN: &Icon = &solar::SORT_VERTICAL[REGULAR];
 lucide!(
     ARROW_RIGHT,
     "lucide-arrow-right",
@@ -243,15 +276,17 @@ lucide!(
     r#"<path d="m5 12 7-7 7 7" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 19V5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    X,
+    LUCIDE_X,
     "lucide-x",
     r#"<path d="M18 6 6 18" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m6 6 12 12" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static X: &Icon = &solar::CLOSE[REGULAR];
 lucide!(
-    MORE,
+    LUCIDE_MORE,
     "lucide-ellipsis",
     r#"<circle cx="12" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="19" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="5" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static MORE: &Icon = &solar::MENU_DOTS[REGULAR];
 lucide!(
     WARNING,
     "lucide-triangle-alert",
@@ -273,10 +308,11 @@ lucide!(
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 16v-4" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8h.01" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    SEARCH,
+    LUCIDE_SEARCH,
     "lucide-search",
     r#"<path d="m21 21-4.34-4.34" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static SEARCH: &Icon = &solar::MAGNIFER[REGULAR];
 lucide!(
     PANEL_CLOSE,
     "lucide-panel-left",
@@ -298,30 +334,35 @@ lucide!(
     r#"<path d="M12 19v3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><rect x="9" y="2" width="6" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    CIRCLE,
+    LUCIDE_CIRCLE,
     "lucide-circle",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE: &Icon = &solar::CIRCLE[REGULAR];
 lucide!(
-    WAITING,
+    LUCIDE_WAITING,
     "lucide-circle-pause",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" x2="10" y1="15" y2="9" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><line x1="14" x2="14" y1="15" y2="9" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static WAITING: &Icon = &solar::PAUSE_CIRCLE[REGULAR];
 lucide!(
-    CIRCLE_DOT,
+    LUCIDE_CIRCLE_DOT,
     "lucide-circle-dot",
     r#"<circle cx="12" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE_DOT: &Icon = &solar::RECORD_CIRCLE[REGULAR];
 lucide!(
-    CIRCLE_DASHED,
+    LUCIDE_CIRCLE_DASHED,
     "lucide-circle-dashed",
     r#"<path d="M10.1 2.182a10 10 0 0 1 3.8 0" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.9 21.818a10 10 0 0 1-3.8 0" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.609 3.721a10 10 0 0 1 2.69 2.7" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.182 13.9a10 10 0 0 1 0-3.8" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.279 17.609a10 10 0 0 1-2.7 2.69" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M21.818 10.1a10 10 0 0 1 0 3.8" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.721 6.391a10 10 0 0 1 2.7-2.69" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.391 20.279a10 10 0 0 1-2.69-2.7" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE_DASHED: &Icon = &solar::QUESTION_CIRCLE[REGULAR];
 lucide!(
-    LOADER_CIRCLE,
+    LUCIDE_LOADER_CIRCLE,
     "lucide-loader-circle",
     r#"<path d="M21 12a9 9 0 1 1-6.219-8.56" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static LOADER_CIRCLE: &Icon = &solar::REFRESH[REGULAR];
 lucide!(
     BOT,
     "lucide-bot",
@@ -338,45 +379,53 @@ lucide!(
     r#"<path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="6.5" r=".5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17.5" cy="10.5" r=".5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="12.5" r=".5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8.5" cy="7.5" r=".5" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    CHEVRON_UP,
+    LUCIDE_CHEVRON_UP,
     "lucide-chevron-up",
     r#"<path d="m18 15-6-6-6 6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CHEVRON_UP: &Icon = &solar::ALT_ARROW_UP[REGULAR];
 lucide!(
-    COPY,
+    LUCIDE_COPY,
     "lucide-copy",
     r#"<rect width="14" height="14" x="8" y="8" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static COPY: &Icon = &solar::COPY[REGULAR];
 lucide!(
-    LOCK,
+    LUCIDE_LOCK,
     "lucide-lock",
     r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static LOCK: &Icon = &solar::PRIVACY[REGULAR];
 lucide!(
-    EYE,
+    LUCIDE_EYE,
     "lucide-eye",
     r#"<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static EYE: &Icon = &solar::EYE[REGULAR];
 lucide!(
-    EYE_OFF,
+    LUCIDE_EYE_OFF,
     "lucide-eye-off",
     r#"<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m2 2 20 20" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static EYE_OFF: &Icon = &solar::EYE_CLOSED[REGULAR];
 lucide!(
-    CIRCLE_X,
+    LUCIDE_CIRCLE_X,
     "lucide-circle-x",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m15 9-6 6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m9 9 6 6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE_X: &Icon = &solar::CLOSE_CIRCLE[REGULAR];
 lucide!(
-    DASH,
+    LUCIDE_DASH,
     "lucide-minus",
     r#"<path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static DASH: &Icon = &solar::MINUS[REGULAR];
 lucide!(
-    DONE,
+    LUCIDE_DONE,
     "lucide-circle-check",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m16 9-5.5 5.5L8 12" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static DONE: &Icon = &solar::TASKS[REGULAR];
 lucide!(
     SUMMARY,
     "lucide-sparkles",
@@ -428,10 +477,11 @@ lucide!(
     r#"<path d="M2 10v3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 6v11" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 3v18" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 8v7" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 5v13" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 10v3" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    TRASH,
+    LUCIDE_TRASH,
     "lucide-trash-2",
     r#"<path d="M10 11v6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 11v6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static TRASH: &Icon = &solar::TRASH_BIN_TRASH[REGULAR];
 lucide!(
     VOLUME_X,
     "lucide-volume-x",
@@ -608,15 +658,17 @@ lucide!(
     r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
 lucide!(
-    CIRCLE_STOP,
+    LUCIDE_CIRCLE_STOP,
     "lucide-circle-stop",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE_STOP: &Icon = &solar::STOP_CIRCLE[REGULAR];
 lucide!(
-    HOURGLASS,
+    LUCIDE_HOURGLASS,
     "lucide-hourglass",
     r#"<path d="M5 22h14" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 2h14" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static HOURGLASS: &Icon = &solar::HOURGLASS[REGULAR];
 
 #[cfg(test)]
 const GENERATED_LUCIDE_ICONS: &[&LazyLock<Icon>] = &[
@@ -627,44 +679,20 @@ const GENERATED_LUCIDE_ICONS: &[&LazyLock<Icon>] = &[
     &MEMORY,
     &DIARY,
     &SETTINGS,
-    &REFRESH_CW,
     &DEVICE,
-    &PLUS,
-    &STOP,
-    &CHECK,
-    &CHEVRON_DOWN,
-    &CHEVRON_RIGHT,
-    &CHEVRON_LEFT,
-    &CHEVRONS_UP_DOWN,
     &ARROW_RIGHT,
     &ARROW_UP,
-    &X,
-    &MORE,
     &WARNING,
     &ERROR,
     &HELP,
     &INFO,
-    &SEARCH,
     &PANEL_CLOSE,
     &PANEL_OPEN,
     &PROMPTS,
     &MIC,
-    &CIRCLE,
-    &WAITING,
-    &CIRCLE_DOT,
-    &CIRCLE_DASHED,
-    &LOADER_CIRCLE,
     &BOT,
     &MESSAGE_SQUARE,
     &PALETTE,
-    &CHEVRON_UP,
-    &COPY,
-    &LOCK,
-    &EYE,
-    &EYE_OFF,
-    &CIRCLE_X,
-    &DASH,
-    &DONE,
     &SUMMARY,
     &UPDATES,
     &CONNECTED,
@@ -675,7 +703,6 @@ const GENERATED_LUCIDE_ICONS: &[&LazyLock<Icon>] = &[
     &LANGUAGES,
     &BRAIN,
     &AUDIO_LINES,
-    &TRASH,
     &VOLUME_X,
     &FOLDER,
     &USER,
@@ -711,8 +738,6 @@ const GENERATED_LUCIDE_ICONS: &[&LazyLock<Icon>] = &[
     &MOUSE_POINTER,
     &NETWORK,
     &SHIELD_CHECK,
-    &CIRCLE_STOP,
-    &HOURGLASS,
 ];
 
 /// Existing controls share this adapter so text glyphs cannot drift from the SVG set.
@@ -795,11 +820,7 @@ lucide!(
     r#"<path d="M21 4h-7M10 4H3m18 8H10m-4 0H3m18 8h-3m-4 0H3M14 1v6M6 9v6m12 2v6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round"/>"#
 );
 
-pub static PLAY: Icon = Icon {
-    name: "sidenote-play",
-    view: 24.0,
-    body: r#"<path d="M8 4v16l12-8Z" fill="currentColor"/>"#,
-};
+pub static PLAY: &Icon = &solar::PLAY[REGULAR];
 
 #[cfg(test)]
 pub(super) fn assert_solar_weights(source: &'static Icon, name: &str) {
@@ -871,6 +892,78 @@ mod tests {
     }
 
     #[test]
+    fn action_kit_selector_and_status_glyphs_have_all_three_weights() {
+        for (source, name) in [
+            (REFRESH_CW, "solar-refresh"),
+            (PLUS, "solar-add"),
+            (STOP, "solar-stop"),
+            (PLAY, "solar-play"),
+            (TRASH, "solar-trash-bin-trash"),
+            (MORE, "solar-menu-dots"),
+            (CHEVRON_LEFT, "solar-alt-arrow-left"),
+            (CHECK, "solar-check"),
+            (CHEVRON_DOWN, "solar-alt-arrow-down"),
+            (CHEVRON_UP, "solar-alt-arrow-up"),
+            (CHEVRON_RIGHT, "solar-alt-arrow-right"),
+            (X, "solar-close"),
+            (COPY, "solar-copy"),
+            (SEARCH, "solar-magnifer"),
+            (LOCK, "solar-lock-keyhole-minimalistic"),
+            (EYE, "solar-eye"),
+            (EYE_OFF, "solar-eye-closed"),
+            (CIRCLE_X, "solar-close-circle"),
+            (DASH, "solar-minus"),
+            (&*SELECT_DOWN, "solar-alt-arrow-down"),
+            (&*SELECT_UP, "solar-alt-arrow-up"),
+            (CIRCLE, "solar-circle"),
+            (DONE, "solar-check-circle"),
+            (WAITING, "solar-pause-circle"),
+            (CIRCLE_DOT, "solar-record-circle"),
+            (CIRCLE_DASHED, "solar-question-circle"),
+            (LOADER_CIRCLE, "solar-refresh"),
+            (CIRCLE_STOP, "solar-stop-circle"),
+            (HOURGLASS, "solar-hourglass"),
+        ] {
+            assert_solar_weights(source, name);
+        }
+    }
+
+    #[test]
+    fn waiting_review_and_done_statuses_use_three_distinct_glyphs() {
+        let waiting = weighted(WAITING, IconWeight::Regular);
+        let review = weighted(CIRCLE_DOT, IconWeight::Regular);
+        let done = weighted(DONE, IconWeight::Regular);
+        assert_ne!(waiting.name, review.name);
+        assert_ne!(waiting.name, done.name);
+        assert_ne!(review.name, done.name);
+    }
+
+    fn module_glyph_check(path: &str, source: &str) -> Result<(), String> {
+        let icon_module =
+            path.ends_with("src/ui/icons.rs") || path.ends_with("src/ui/icons/solar.rs");
+        if !icon_module && (source.contains("<path") || source.contains("stroke-width")) {
+            return Err(format!(
+                "embedded glyph geometry outside the icon module: {path}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn glyph_geometry_source_check_rejects_a_negative_fixture() {
+        let negative = "<path stroke-width=\"2\" d=\"M0 0L1 1\"/>";
+        assert!(module_glyph_check("src/ui/rows.rs", negative).is_err());
+        assert!(module_glyph_check("src/ui/icons.rs", negative).is_ok());
+        for file in ["src/ui/theme.rs", "src/ui/rows.rs"] {
+            let source = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file),
+            )
+            .expect("owned UI source file");
+            assert!(module_glyph_check(file, &source).is_ok());
+        }
+    }
+
+    #[test]
     fn shell_lucide_icons_use_the_shared_stroke_and_requested_glyphs() {
         let manual = [&BUILDING_2, &CIRCLE_PAUSE, &SLIDERS];
         for icon in GENERATED_LUCIDE_ICONS.iter().copied().chain(manual) {
@@ -893,10 +986,8 @@ mod tests {
             (&*UPDATES, "lucide-download"),
             (&*PANEL_CLOSE, "lucide-panel-left"),
             (&*PANEL_OPEN, "lucide-panel-left"),
-            (&*STOP, "lucide-square"),
         ] {
             assert_eq!(icon.name, name);
         }
-        assert!(STOP.body.contains("fill=\"currentColor\""));
     }
 }
