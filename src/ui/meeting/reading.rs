@@ -218,7 +218,7 @@ fn fact(icon: &'static rune::Icon, p: Palette) -> El {
 }
 
 fn meeting_facts(m: &Meeting, p: Palette) -> Option<El> {
-    let date = m.started.map(|d| d.format("%-d %b").to_string());
+    let date = m.started.map(|d| d.format("%a %-d %b, %H:%M").to_string());
     let duration = m.minutes.map(|n| format!("{n} min"));
     let name = match (&date, &duration) {
         (Some(date), Some(duration)) => format!("Date: {date}. Duration: {duration}"),
@@ -418,6 +418,23 @@ pub(super) fn status_chip(
     )
 }
 
+fn people_fact(names: String, p: Palette) -> El {
+    fact(&icons::PEOPLE, p)
+        .key("meeting-people")
+        .role("text")
+        .label(format!("People: {names}"))
+        .focusable(true)
+        .focus_ring(2.0, 1.0, p.accent)
+        .child(
+            roles::FACT
+                .line(names.clone(), p.soft)
+                .a11y_hidden()
+                .help_when_truncated(names)
+                .shrink(),
+        )
+        .shrink()
+}
+
 /// `side` is the page gutter; the wide page puts the header in the notes column and passes 0.
 fn header(
     s: &State,
@@ -428,80 +445,59 @@ fn header(
     layer: &mut Vec<El>,
     sections: Option<El>,
 ) -> El {
-    let people = m.summary.people.len();
     let phone = super::phone(s);
-    // Keep the phone controls together regardless of how wide the facts are.
-    let mut first = row()
-        .key("meeting-controls")
+    let menu = more::menu(s, k, m, "meeting", p, layer);
+    let title = row()
+        .key("meeting-title-row")
         .w_full()
+        .gap(8.0)
+        .items_start()
+        .child(
+            // 26 on a page, 24 on a phone; the line is a quarter taller than the size.
+            text_title(&m.title, if phone { 24.0 } else { 26.0 }, p)
+                .max_lines(2)
+                .key("meeting-title")
+                .help(&m.title)
+                .grow(1.0)
+                .min_w(0.0),
+        )
+        .child(menu);
+    let mut facts_items = Vec::new();
+    facts_items.extend(meeting_facts(m, p));
+    if !m.summary.people.is_empty() {
+        facts_items.push(people_fact(m.summary.people.join(", "), p));
+    }
+    facts_items.extend(project::reading_chip(s, k, &m.id, p, layer));
+    let facts = (!facts_items.is_empty()).then(|| {
+        row()
+            .key("meeting-facts-row")
+            .w_full()
+            .flex_wrap()
+            .gaps(2.0, 8.0)
+            .items_center()
+            .children(facts_items)
+    });
+    let views = row()
+        .key("meeting-view-row")
+        .w_full()
+        .flex_wrap()
         .gaps(6.0, 6.0)
         .items_center()
-        .child(view_switch(s, k, p));
-    let mut rest = Vec::new();
-    if phone {
-        rest.extend(meeting_facts(m, p));
-    } else {
-        first = first.flex_wrap().children(meeting_facts(m, p));
+        .child(view_switch(s, k, p))
+        .children(status_chip(s, k, m, p, layer))
+        .child(row().key("meeting-sections-slot").children(sections));
+    let mut controls = col().key("meeting-controls").w_full();
+    if let Some(facts) = facts {
+        controls = controls.child(facts.mt(6.0));
     }
-    if people > 0 {
-        rest.push(
-            fact(&icons::PEOPLE, p)
-                .key("meeting-people")
-                .role("text")
-                .label(match people {
-                    1 => "1 person".to_string(),
-                    n => format!("{n} people"),
-                })
-                .help(m.summary.people.join(", "))
-                .focusable(true)
-                .focus_ring(2.0, 1.0, p.accent)
-                .child(roles::FACT.line(people.to_string(), p.soft).a11y_hidden()),
-        );
-    }
-    rest.extend(project::reading_chip(s, k, &m.id, p, layer));
-    rest.extend(status_chip(s, k, m, p, layer));
-    let menu = more::menu(s, k, m, "meeting", p, layer);
-    let meta = if phone {
-        let mut meta = col().key("meeting-meta").w_full().gap(6.0);
-        first = first.child(el().grow(1.0).h(28.0)).child(menu);
-        meta = meta.child(first);
-        if !rest.is_empty() || sections.is_some() {
-            meta = meta.child(
-                row()
-                    .key("meeting-controls-more")
-                    .w_full()
-                    .flex_wrap()
-                    .gaps(6.0, 6.0)
-                    .items_center()
-                    .children(rest)
-                    .child(row().key("meeting-sections-slot").children(sections)),
-            );
-        }
-        meta
-    } else {
-        row()
-            .key("meeting-meta")
-            .w_full()
-            .gap(6.0)
-            .items_start()
-            .child(first.children(rest).children(sections).grow(1.0).min_w(0.0))
-            .child(menu)
-    };
     col()
         .key("meeting-header")
         .w_full()
-        .gap(12.0)
         .px(side)
         .pt(18.0)
         .pb(22.0)
-        .child(
-            // 26 on a page, 24 on a phone; the line is a quarter taller than the size.
-            text_title(&m.title, if phone { 24.0 } else { 32.0 }, p)
-                .max_lines(2)
-                .key("meeting-title")
-                .help(&m.title),
-        )
-        .child(meta)
+        .child(title)
+        .child(controls.child(views.mt(16.0)))
         .children(crate::ui::live::parts_status(s, p))
         .children(project::form(s, k, &m.id, p))
 }

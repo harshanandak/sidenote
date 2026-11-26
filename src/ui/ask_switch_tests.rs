@@ -523,7 +523,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             ),
             (
                 folder.join("english-summary.json"),
-                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Maya","Tom"]}),
+                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Ravi"]}),
             ),
             (
                 folder.join("tasks.json"),
@@ -546,7 +546,11 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
     let date = chrono::DateTime::from_timestamp_millis(start)
         .unwrap()
         .with_timezone(&chrono::Local);
-    let facts = format!("Date: {}. Duration: 22 min", date.format("%-d %b"));
+    // S4 fact format change: was "%-d %b" (for example "6 Nov"), now includes weekday and time.
+    let facts = format!(
+        "Date: {}. Duration: 22 min",
+        date.format("%a %-d %b, %H:%M")
+    );
     rt.update(|s, tx| {
         let deadline = Instant::now() + Duration::from_secs(2);
         while s.areas.refresh_pending {
@@ -556,7 +560,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
                 .expect("area worker finished");
             s.apply_event(event);
         }
-        tx.focus("segment0", true);
+        tx.focus(more.as_str(), true);
     });
     rt.frame(0.0);
     let press = |rt: &mut Runtime<State>, key| {
@@ -566,20 +570,50 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
         });
         rt.frame(0.2);
     };
-    // Tab reaches both controls before the facts below them.
+    let (title, facts_row, view, menu_rect) = (
+        rect_of(&rt, "meeting-title"),
+        rect_of(&rt, "meeting-facts-row"),
+        rect_of(&rt, "meeting-view"),
+        rect_of(&rt, &more),
+    );
+    assert_eq!(menu_rect[1], title[1], "More stays on the title row");
+    assert_eq!(menu_rect[0] + menu_rect[2], 390.0 - 16.0, "More at row end");
+    assert_eq!(facts_row[1], title[1] + title[3] + 6.0, "facts below title");
+    assert_eq!(
+        view[1],
+        facts_row[1] + facts_row[3] + 16.0,
+        "view switch below facts"
+    );
+    let row_path = element(&rt, "meeting-facts-row").path;
+    assert!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.path.starts_with(&format!("{row_path}/")))
+            .all(|e| !e.key.as_deref().unwrap_or("").starts_with("help-hint")),
+        "the facts row has no help hints"
+    );
+    assert!(
+        !element(&rt, "meeting-status")
+            .path
+            .starts_with(&format!("{row_path}/")),
+        "the status button is not a fact"
+    );
+    let people_path = element(&rt, "meeting-people").path;
+    let names: Vec<_> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| e.path.starts_with(&format!("{people_path}/")))
+        .filter_map(|e| e.text)
+        .collect();
+    assert_eq!(names, vec!["Sam, Ravi".to_string()]);
+    // Tab leaves the title-row More button into the facts, then reaches the view switch and status.
     for (key, name) in [
-        (more.as_str(), "More actions"),
         ("meeting-facts", facts.as_str()),
-        ("meeting-people", "2 people"),
+        ("meeting-people", "People: Sam, Ravi"),
         (&project, "Suggested project: Atlas 2. Change it"),
-        ("meeting-status", "Transcript status: English only"),
     ] {
         press(&mut rt, Key::Tab);
-        let item = rt
-            .elements()
-            .into_iter()
-            .find(|e| e.key.as_deref() == Some(key))
-            .unwrap_or_else(|| panic!("missing {key}"));
+        let item = element(&rt, key);
         assert!(item.focusable && item.focused, "{key}");
         assert!(item.focus_visible, "{key}");
         assert_eq!(item.label.as_deref(), Some(name), "{key}");
@@ -589,6 +623,19 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             "{key}"
         );
     }
+    press(&mut rt, Key::Tab);
+    let segment = element(&rt, "segment0");
+    assert!(segment.focused && segment.focus_visible, "view switch");
+    assert_eq!(segment.rect[3], 24.0, "view switch");
+    press(&mut rt, Key::Tab);
+    let status = element(&rt, "meeting-status");
+    assert!(status.focusable && status.focused, "meeting-status");
+    assert!(status.focus_visible, "meeting-status");
+    assert_eq!(
+        status.label.as_deref(),
+        Some("Transcript status: English only")
+    );
+    assert_eq!(status.rect[3], 28.0, "meeting-status");
     let focused = |rt: &Runtime<State>, key| {
         rt.elements()
             .iter()
@@ -2346,7 +2393,8 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
     let date = chrono::DateTime::from_timestamp_millis(start)
         .unwrap()
         .with_timezone(&chrono::Local)
-        .format("%-d %b")
+        // S4 fact format change: was "%-d %b" (for example "6 Nov"), now includes weekday and time.
+        .format("%a %-d %b, %H:%M")
         .to_string();
     let both = serde_json::json!({"status":"complete","created_at_ms":start,"duration_ms":1320000});
     let date_only = serde_json::json!({"status":"complete","created_at_ms":start});
@@ -2381,8 +2429,17 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
 }
 
 #[test]
-fn a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls() {
-    if in_parent("a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls") {
+fn a_desktop_meeting_title_is_26_on_a_33_line() {
+    if in_parent("a_desktop_meeting_title_is_26_on_a_33_line") {
+        return;
+    }
+    // S4 title-size change: the header now passes 26 explicitly; display() rounds its line height to 33.
+    assert_eq!(rect_of(&page(), "meeting-title")[3], 33.0);
+}
+
+#[test]
+fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
+    if in_parent("a_phone_page_has_a_24_title_then_facts_then_the_view_switch") {
         return;
     }
     let rt = page_with_every_meta_item((390.0, 900.0));
@@ -2394,36 +2451,40 @@ fn a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls() {
     // The title is 24 on a 30 line.
     let title = r("meeting-title");
     assert_eq!((title[0], title[3]), (left, 30.0), "title {title:?}");
-    // Line one: the switch and the menu at opposite gutters.
-    let (view, facts, menu) = (r("meeting-view"), r("meeting-facts"), r(&more));
-    assert_eq!(menu[1], view[1], "line one");
+    // S4 header order change: facts were below the controls; they now sit between title and controls.
+    let (menu, facts_row, facts, view) = (
+        r(&more),
+        r("meeting-facts-row"),
+        r("meeting-facts"),
+        r("meeting-view"),
+    );
+    assert_eq!(menu[1], title[1], "More shares the title row");
     assert_eq!(
         menu[0] + menu[2],
         390.0 - 16.0,
         "the menu is at the right gutter"
     );
-    assert_eq!(view[0], left, "the switch is at the left gutter");
-    // The facts start 6 below the controls and wrap in reading order, ending with the section
-    // rail's slot.
-    let (people, chip, status, slot) = (
-        r("meeting-people"),
-        r(&project),
-        r("meeting-status"),
-        r("meeting-sections-slot"),
+    assert_eq!(
+        (facts_row[0], facts_row[1]),
+        (left, title[1] + title[3] + 6.0)
     );
-    assert_eq!((facts[0], facts[1]), (left, view[1] + view[3] + 6.0));
-    for (before, after) in [
-        (facts, people),
-        (people, chip),
-        (chip, status),
-        (status, slot),
-    ] {
+    assert_eq!(
+        (view[0], view[1]),
+        (left, facts_row[1] + facts_row[3] + 16.0)
+    );
+    // The facts wrap in reading order; the status stays with the view row rather than becoming a fact.
+    let (people, chip, status) = (r("meeting-people"), r(&project), r("meeting-status"));
+    for (before, after) in [(facts, people), (people, chip)] {
         assert!(
             after[1] >= before[1] + before[3]
                 || (after[1] >= before[1] && after[0] >= before[0] + before[2]),
             "{after:?} follows {before:?}"
         );
     }
+    assert!(
+        status[1] >= view[1] && (status[1] >= view[1] + view[3] || status[0] >= view[0] + view[2]),
+        "status {status:?} follows the switch {view:?}"
+    );
     assert_eq!(r("sec-context")[0], left, "notes gutter");
     assert_inside(&rt, 390.0);
     // Every fact stays reachable: each is on the page with its name.
@@ -2522,8 +2583,8 @@ pub(super) fn hex_engine_recording() -> sidenote::hex_engine::EngineState {
 }
 
 #[test]
-fn the_phone_menu_shares_the_switch_row_with_short_and_long_facts() {
-    if in_parent("the_phone_menu_shares_the_switch_row_with_short_and_long_facts") {
+fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
+    if in_parent("the_phone_header_keeps_short_and_long_facts_inside_the_page") {
         return;
     }
     use chrono::TimeZone;
@@ -2562,25 +2623,38 @@ fn the_phone_menu_shares_the_switch_row_with_short_and_long_facts() {
                 rt.settle_all();
             }
             let page = window - if rail { 57.0 } else { 0.0 };
-            let (view, menu) = (rect_of(&rt, "meeting-view"), rect_of(&rt, &more));
+            let (title, facts_row, view, menu) = (
+                rect_of(&rt, "meeting-title"),
+                rect_of(&rt, "meeting-facts-row"),
+                rect_of(&rt, "meeting-view"),
+                rect_of(&rt, &more),
+            );
             assert_eq!(
-                menu[1], view[1],
-                "page {page}, long facts {long}: the menu is on a line by itself"
+                menu[1], title[1],
+                "page {page}, long facts {long}: More stays on the title row"
+            );
+            assert!(
+                facts_row[1] >= title[1] + title[3] && view[1] >= facts_row[1] + facts_row[3],
+                "page {page}, long facts {long}: title/facts/view order"
             );
             if long {
                 let facts = element(&rt, "meeting-facts");
-                let people = element(&rt, "meeting-people");
+                let people_el = element(&rt, "meeting-people");
                 let project_chip = element(&rt, &project_key);
-                assert_eq!(
-                    facts.label.as_deref(),
-                    Some("Date: 28 Nov. Duration: 105 min")
-                );
-                assert_eq!(people.label.as_deref(), Some("12 people"));
+                let date = chrono::DateTime::from_timestamp_millis(start)
+                    .unwrap()
+                    .with_timezone(&chrono::Local)
+                    .format("%a %-d %b, %H:%M");
+                let facts_label = format!("Date: {date}. Duration: 105 min");
+                assert_eq!(facts.label.as_deref(), Some(facts_label.as_str()));
+                // S4 people presentation change: was a count ("12 people"), now the joined names.
+                let people_label = format!("People: {}", people.join(", "));
+                assert_eq!(people_el.label.as_deref(), Some(people_label.as_str()));
                 assert!(project_chip.label.as_deref().unwrap().contains(project));
                 let pane = rect_of(&rt, "meeting-pane");
-                for fact in [&facts, &people, &project_chip] {
+                for fact in [&facts, &people_el, &project_chip] {
                     let [x, y, w, h] = fact.rect;
-                    assert!(y >= view[1] + view[3], "page {page}: {:?}", fact.label);
+                    assert!(y + h <= view[1], "page {page}: {:?}", fact.label);
                     assert!(
                         w > 0.0
                             && h > 0.0
