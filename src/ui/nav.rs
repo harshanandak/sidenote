@@ -15,7 +15,7 @@ use sidenote::core::{self, UiPrefs};
 use std::collections::HashMap;
 
 /// The open sidebar, and the rail it folds to, in points.
-pub const WIDE: f32 = 230.0;
+pub const WIDE: f32 = 204.0;
 pub const RAIL: f32 = 56.0;
 /// A window this wide or narrower starts with the sidebar folded.
 pub const COLLAPSE_AT: f32 = 820.0;
@@ -202,7 +202,7 @@ pub fn width(s: &State) -> f32 {
 
 // ---- the sidebar ------------------------------------------------------------------------------
 
-const MAIN_H: f32 = 34.0;
+const MAIN_H: f32 = 30.0;
 const PAD: f32 = 8.0;
 const RAIL_ITEM_W: f32 = 36.0;
 const SIGNAL_D: f32 = 6.0;
@@ -236,7 +236,7 @@ fn main_row(place: Place, icon: El, p: Palette) -> El {
     let mut r = row()
         .w_full()
         .h(MAIN_H)
-        .gap(10.0)
+        .gap(9.0)
         .items_center()
         .px(PAD)
         .child(icon)
@@ -248,7 +248,7 @@ fn main_row(place: Place, icon: El, p: Palette) -> El {
     pressable(r)
         .key(place.key)
         .label(place.help)
-        .radius(7.0)
+        .radius(8.0)
         .fill(bg)
         .hover(hover)
         .on_press(place.press)
@@ -269,7 +269,7 @@ fn rail_item(place: Place, icon: El, p: Palette) -> El {
         .key(place.key)
         .label(place.help.clone())
         .help(place.help)
-        .radius(7.0)
+        .radius(8.0)
         .fill(bg)
         .hover(hover)
         .on_press(place.press)
@@ -491,8 +491,13 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .h_full()
         .min_h(0.0)
         .fill(p.side)
-        .px(PAD)
-        .pt(10.0)
+        .px(PAD);
+    if wide {
+        pane = pane.child(workspace_row(p));
+    } else {
+        pane = pane.pt(10.0);
+    }
+    pane = pane
         .child(top)
         .children(devices)
         .child(middle)
@@ -501,6 +506,40 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         pane = pane.items_center();
     }
     pane
+}
+
+/// The open sidebar's first row: the mark, the fixed workspace name, a decorative caret that
+/// opens nothing, then the collapse and search buttons.
+fn workspace_row(p: Palette) -> El {
+    row()
+        .key("nav-workspace")
+        .w_full()
+        .h(48.0)
+        .pl(6.0)
+        .pr(2.0)
+        .gap(2.0)
+        .items_center()
+        .child(logo().key("nav-logo"))
+        .child(roles::NAV.line("Sidenote", p.ink).pl(6.0))
+        .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.faint).a11y_hidden())
+        .child(el().grow(1.0))
+        .child(collapse(p))
+        .child(search(p))
+}
+
+/// The sidebar's collapse button. It lives in the workspace row and folds the sidebar.
+fn collapse(p: Palette) -> El {
+    super::widgets::icon_button(
+        &icons::PANEL_CLOSE,
+        "Hide sidebar (Ctrl+\\)",
+        "nav-collapse",
+        super::widgets::ButtonRole::Ghost,
+        p,
+    )
+    .size(28.0, 28.0)
+    .px(6.0)
+    .radius(8.0)
+    .on_press(|s: &mut State| s.toggle_sidebar())
 }
 
 /// The sidebar scene with every project shown.
@@ -753,39 +792,31 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
 
 pub(super) fn logo() -> El {
     const SIZE: f32 = 18.0;
-    // The small ink mark from the app icon, drawn as separate colour masks on Rune's device grid.
-    static PARTS: [(rune::Icon, &str); 4] = [
+    // The crisp 18 px mark: a rounded square, a white curve and an amber tip.
+    static PARTS: [(rune::Icon, &str); 3] = [
         (
             rune::Icon {
-                name: "sidenote-logo-frame",
-                view: 20.0,
-                body: r#"<rect width="20" height="20" rx="5" fill="currentColor"/>"#,
-            },
-            "#bcb9b0",
-        ),
-        (
-            rune::Icon {
-                name: "sidenote-logo-face",
-                view: 20.0,
-                body: r#"<rect x="1" y="1" width="18" height="18" rx="4" fill="currentColor"/>"#,
+                name: "sidenote-logo-square",
+                view: 18.0,
+                body: r#"<rect width="18" height="18" rx="5" fill="currentColor"/>"#,
             },
             "#1e1e1c",
         ),
         (
             rune::Icon {
-                name: "sidenote-logo-tip",
-                view: 20.0,
-                body: r#"<path d="M15.8 11.4 H17.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>"#,
+                name: "sidenote-logo-curve",
+                view: 18.0,
+                body: r#"<path d="M3 10 C3 7.4 4 4 6 4 C8 4 8 13 9.6 13 C11 13 11.4 10 13 10 H14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#,
             },
-            "#e3aa55",
+            "#fcfbf8",
         ),
         (
             rune::Icon {
-                name: "sidenote-logo-ink",
-                view: 20.0,
-                body: r#"<path d="M3.4 11.4 C3.4 8.8 4.3 5.1 6.3 5.1 C8 5.1 8 13.9 9.7 13.9 C11.1 13.9 11.7 11.4 13 11.4 H15.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><circle cx="3.4" cy="11.4" r="0.95" fill="currentColor"/>"#,
+                name: "sidenote-logo-tip",
+                view: 18.0,
+                body: r#"<path d="M14 10 H16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>"#,
             },
-            "#fcfbf8",
+            "#e3aa55",
         ),
     ];
     el().size(SIZE, SIZE)
@@ -867,7 +898,7 @@ fn profile(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec<El>
         pressable(trigger)
             .key("profile-button")
             .label("Profile and settings")
-            .radius(7.0)
+            .radius(8.0)
             .hover(p.chip),
         s.nav.profile_menu,
         p,
@@ -1128,6 +1159,62 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_top_row_geometry() {
+        // S1a sizes, rendered: the open sidebar is 204 wide (width adds the divider; old
+        // 230), nav rows are 30 high (old 34), and the first top row is 48 high with the
+        // collapse and search buttons inside the sidebar rather than the top bar.
+        let rt = new_meeting_runtime(1334.0, false);
+        let elements = rt.elements();
+        let find = |key| {
+            elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing {key}"))
+        };
+        let bar = find("top-bar");
+        let nav = find("nav");
+        assert_eq!(nav.rect[2], 204.0);
+        assert_eq!(width(&rt.state), 204.0 + 1.0);
+        assert_eq!(find("nav-meetings").rect[3], 30.0);
+        assert_eq!(find("nav-workspace").rect[3], 48.0);
+        for key in ["nav-search", "nav-collapse"] {
+            let control = find(key);
+            assert!(control.path.starts_with(&nav.path), "{key} is inside nav");
+            assert!(
+                !control.path.starts_with(&bar.path),
+                "{key} is not in top-bar"
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_logo_uses_the_new_mark() {
+        // S1a replaced the layered 20-unit mark with the crisp 18 px mark: a #1e1e1c square,
+        // a white curve and an #e3aa55 tip, and no #bcb9b0 frame.
+        let elements = new_meeting_runtime(1334.0, false).elements();
+        let logo = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("nav-logo"))
+            .expect("sidebar logo");
+        assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
+        let prefix = format!("{}/", logo.path);
+        let tints: Vec<_> = elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .filter_map(|e| e.text_color)
+            .collect();
+        assert_eq!(tints.len(), 3, "square, curve and tip");
+        for want in ["#1e1e1c", "#fcfbf8", "#e3aa55"] {
+            let color = rune::color::hex(want).expect("logo colour");
+            assert!(tints.contains(&color), "missing {want}");
+        }
+        assert!(
+            !tints.contains(&rune::color::hex("#bcb9b0").expect("old frame")),
+            "the old frame is gone"
+        );
+    }
+
+    #[test]
     fn profile_menu_accepts_enter_arrows_and_escape() {
         use rune::Key::{Down, Enter, Escape, Tab, Up};
         use rune::{Env, Runtime};
@@ -1170,9 +1257,10 @@ mod tests {
         let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
         let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
+        // S1a sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
-            (34.0, 230.0, expected)
+            (30.0, 204.0, expected)
         );
 
         let glyphs = [
