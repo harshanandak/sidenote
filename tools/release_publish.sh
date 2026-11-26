@@ -96,7 +96,7 @@ lookup_or_missing() {
 
 remote_tag_sha() {
     local object_info object_sha object_type
-    object_info=$(read_or_fail "Failed to resolve remote tag $tag." gh api "repos/$repo/git/refs/tags/$tag" --jq '.object.sha + " " + .object.type') || return 1
+    object_info=$(read_or_fail "Failed to resolve remote tag $tag." gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha + " " + .object.type') || return 1
     read -r object_sha object_type <<<"$object_info"
     if [[ $object_type == tag ]]; then
         object_sha=$(read_or_fail "Failed to dereference annotated tag $tag." gh api "repos/$repo/git/tags/$object_sha" --jq .object.sha) || return 1
@@ -209,7 +209,7 @@ if [[ $channel == dev ]]; then
             run_write "${rolling_delete[@]}"
         else
             ref_lookup_status=0
-            ref_info=$(lookup_or_missing 'not found|404' 'Failed to look up git ref tags/dev.' gh api "repos/$repo/git/refs/tags/dev") || ref_lookup_status=$?
+            ref_info=$(lookup_or_missing 'not found|404' 'Failed to look up git ref tags/dev.' gh api "repos/$repo/git/ref/tags/dev") || ref_lookup_status=$?
             case $ref_lookup_status in
                 0)
                     echo 'Rolling dev tag ref exists without a release; deleting it before create.'
