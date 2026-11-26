@@ -3316,7 +3316,10 @@ fn a_deleted_meeting_drops_late_notes_status_and_summary() {
     }
     use sidenote::core::meeting_delete::{Eligibility, Storage};
 
-    let mut rt = navigation_page(|| {});
+    let mut rt = navigation_page(|| {
+        let manifest = core::meetings_dir().join(MEETING).join("manifest.json");
+        std::fs::write(manifest, br#"{"status":"complete"}"#).unwrap();
+    });
     navigate(&mut rt, "meeting");
     let hex = core::meetings_dir();
     let folder = hex.join(MEETING);
