@@ -65,26 +65,38 @@ function New-ProofFixture([string]$Root, [string]$Source) {
     }
 }
 
-function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments) {
+function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture) {
     $start = [Diagnostics.ProcessStartInfo]::new($Exe)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.WorkingDirectory = Split-Path -Parent $Exe
+    $start.RedirectStandardOutput = $Capture.IsPresent
+    $start.RedirectStandardError = $Capture.IsPresent
     foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
     foreach ($entry in $Fixture.Env.GetEnumerator()) { $start.Environment[$entry.Key] = $entry.Value }
     $process = [Diagnostics.Process]::Start($start)
     try {
+        if ($Capture) {
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+        }
         if (-not $process.WaitForExit(120000)) {
             $process.Kill($true)
             $process.WaitForExit()
             throw "Timed out running $([IO.Path]::GetFileName($Exe))."
+        }
+        if ($Capture -and $process.ExitCode -ne 0) {
+            Write-Host "$($Arguments[0]) exited with code $($process.ExitCode)."
+            Write-Host ($stdout.GetAwaiter().GetResult())
+            Write-Host ($stderr.GetAwaiter().GetResult())
         }
         $process.ExitCode
     } finally { $process.Dispose() }
 }
 
 function Invoke-UpdateCommand($Fixture, [string]$Command) {
-    Invoke-ProofProcess $Fixture $Fixture.Exe @($Command, '--peers-dir', $Fixture.Peers)
+    $capture = $Command -in @('--update-window-start', '--update-status')
+    Invoke-ProofProcess $Fixture $Fixture.Exe @($Command, '--peers-dir', $Fixture.Peers) -Capture:$capture
 }
 
 function Assert-Report($Fixture, $Report, [string]$Version) {
@@ -223,12 +235,21 @@ try {
     if (Get-CimInstance Win32_Process -Filter "Name = 'hex.exe' OR Name = 'hex.com' OR Name = 'sidenote.exe' OR Name = 'hex-meetings.exe'") {
         throw 'The runner already has a Hex or Sidenote process.'
     }
-    if ((Invoke-ProofProcess $fixture $setup @('--silent', '--installto', $fixture.Install)) -ne 0) {
-        throw 'Setup failed.'
+    [void](Get-ScheduledTask -TaskPath '\')
+    $setupLog = Join-Path $root.FullName 'setup.log'
+    $setupExit = Invoke-ProofProcess $fixture $setup @('--silent', '--installto', $fixture.Install, '--log', $setupLog)
+    if (Test-Path -LiteralPath $setupLog) {
+        Select-String -LiteralPath $setupLog -Pattern 'hook| WARN | ERROR ' | ForEach-Object { Write-Host $_.Line }
     }
-    Start-ScheduledTask -TaskPath '\' -TaskName $fixture.Task
-    $listener = Wait-Proof { Get-Listener $fixture } 'The clean installation did not start its isolated listener.'
+    if ($setupExit -ne 0) { throw "Setup exited with code $setupExit." }
     $reportPath = Join-Path $fixture.Updates 'update-report.json'
+    if (Test-Path -LiteralPath $reportPath) {
+        $hookStatus = (Read-Json $reportPath).status
+        Write-Host "Setup hook reported $($hookStatus.phase). $($hookStatus.error)"
+    }
+    # Setup runs the fast hook, then stops app processes. Let normal startup reconcile its listener.
+    if ((Invoke-UpdateCommand $fixture '--update-window-start') -ne 0) { throw 'Clean install startup failed.' }
+    $listener = Wait-Proof { Get-Listener $fixture } 'The clean installation did not start its isolated listener.'
     if ((Invoke-UpdateCommand $fixture '--update-status') -ne 0) { throw 'Clean install status failed.' }
     Assert-Report $fixture (Read-Json $reportPath) $n
     $initialPointer = Assert-Fixture $fixture $n
