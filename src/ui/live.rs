@@ -461,21 +461,27 @@ impl Live {
         if meeting.device.is_some() {
             return false;
         }
-        match self
-            .folder
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .and_then(|id| id.to_str())
-        {
-            Some(id) => meeting.id == id,
-            None => meeting
-                .started
-                .map(|t| t.timestamp_millis())
-                .or_else(|| meeting.id.split_once('-')?.0.parse::<i64>().ok())
-                .is_some_and(|made| {
-                    made >= self.wall_start.timestamp_millis().saturating_sub(120_000)
-                }),
+        if let Some(folder) = &self.folder {
+            return folder
+                .file_name()
+                .is_some_and(|id| id == meeting.id.as_str());
         }
+        {
+            let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(id) = &feed.hint {
+                return meeting.id == *id;
+            }
+            if let Some(folder) = &feed.folder {
+                return folder
+                    .file_name()
+                    .is_some_and(|id| id == meeting.id.as_str());
+            }
+        }
+        meeting
+            .started
+            .map(|t| t.timestamp_millis())
+            .or_else(|| meeting.id.split_once('-')?.0.parse::<i64>().ok())
+            .is_some_and(|made| made >= self.wall_start.timestamp_millis().saturating_sub(120_000))
     }
 
     pub fn scene_pending(mut self, id: &str) -> Self {
@@ -1945,6 +1951,19 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         pane = pane.child(bar(s, k, p, narrow, layer));
     }
     pane
+}
+
+#[cfg(test)]
+pub(super) fn scene_wait_for_summary(s: &mut State, id: &str) {
+    let mut live = Live::scene(Phase::Making, None);
+    live.known = s.known_ids();
+    {
+        let mut feed = live.feed.lock().unwrap();
+        feed.hint = Some(id.into());
+        feed.transcript = Some(Transcript::Ready);
+    }
+    s.live = Some(live);
+    s.live_open = true;
 }
 
 #[cfg(test)]
