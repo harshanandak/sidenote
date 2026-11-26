@@ -367,7 +367,7 @@ fn pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard() {
     let pause = element(&rt, "meeting-pause");
     assert_eq!(
         (pause.rect[2], pause.rect[3], pause.radius),
-        (28.0, 28.0, 14.0)
+        (32.0, 32.0, 16.0)
     );
     assert_eq!(pause.fill, p.bg);
     assert_eq!(
