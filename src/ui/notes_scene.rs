@@ -157,7 +157,7 @@ pub fn settings(s: &mut State, mode: &str) {
 }
 pub fn today(s: &mut State, found: bool) {
     prepare(s);
-    s.go_home();
+    s.go_meetings();
     s.ai_notes.settings.as_mut().unwrap().helper = None;
     if !found {
         s.ai_notes.found = HELPERS.map(|h| (h, false)).into();
@@ -318,6 +318,6 @@ pub fn list(s: &mut State) {
             m
         })
         .collect();
-    s.go_home();
+    s.go_meetings();
     s.refresh_list();
 }

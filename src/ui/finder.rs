@@ -337,10 +337,9 @@ impl State {
         }
     }
 
-    /// Puts the cursor in the Ask bar with `question` in it. The Ask bar lives on Home and on a
-    /// meeting, so from any other page this goes to Home first.
+    /// Focuses the current Ask bar, falling back to the Meetings list.
     pub fn focus_ask(&mut self, question: &str) {
-        if !self.companies.open && (self.page() != Page::Meetings || self.on_live()) {
+        if !matches!(self.page(), Page::Home | Page::Meetings | Page::Companies) || self.on_live() {
             self.go_meetings();
         }
         self.question = TextEdit::new(question);
@@ -584,6 +583,7 @@ mod tests {
             }
             rt.frame(0.2);
             assert!(rt.state.finder.is_none());
+            assert!(rt.state.page() == Page::Home);
             assert_eq!(rt.state.question.text, QUERY);
             assert!(rt.state.question.focused);
         }

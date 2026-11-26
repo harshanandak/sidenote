@@ -391,7 +391,7 @@
 
   "src/sync_owner/mcp.rs": "0f59d5b4431ac3b617b0621351e09005116e2d09492693abc47da3fbf614e724",
 
-  "src/ui/ai_notes.rs": "395c53fc257b253ee44b676303366b2c4ee7b226e61661985822b53face8218b",
+  "src/ui/ai_notes.rs": "c726bdde5e7d473845de9bea27710e2796b947b81d6386c4e9dfaf9cfdcf030c",
 
   "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
 
@@ -401,7 +401,7 @@
 
   "src/ui/area.rs": "98e13ced4fe3ce0b1ad44649aa25e29a25caf7dbfaea88e0f892985f81a3137e",
 
-  "src/ui/area_scene.rs": "ed9d0a3291369f5ab6a8a3e2c0da8a04bb05ba7155a065cd2604c9da7b1bf160",
+  "src/ui/area_scene.rs": "6fcec92bb48e84a1c987b20dec14ed1c033e2a3cc066b6ed430b028dcce1cc42",
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
@@ -409,7 +409,7 @@
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
-  "src/ui/check.rs": "9d16a335a21dcd9ff90a3a8d7d24665f9a9134f51dfbc10d734a97fe4e1d79f9",
+  "src/ui/check.rs": "c8721a1773bf0ef5f8bdbdcbaffb97f0d4bfcbedd9dbca9ac347c9a723077fe6",
 
   "src/ui/cloud_ask.rs": "0b3cd72ff4fabf3bfdf64e0017c44851bef8113df24feede14e991364312e0ae",
 
@@ -417,17 +417,17 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "38c3dc20d67b4d75c1a9ff755e0a7d9fa1fb2272384c78da80143b460cb53da2",
+  "src/ui/hex.rs": "4e01b4d8fa4e080c99d136d3f44b2e2c230ab4c4e96343db8be04738d85a7207",
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
-  "src/ui/hex/connection/stop_tests.rs": "6d8a99f15429dddbbb0e109b8184d598b8cb3deb36765190e8cbff14cd0cb4b2",
+  "src/ui/hex/connection/stop_tests.rs": "c8b215009135fc1867fc002722cf51fc8232f2ec2cce0bdf7c271ec99c450be6",
 
   "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
-  "src/ui/hex/settings.rs": "3c9eb5b2b722bc381ebef161074fbe97b291a520b1f7f560ac4d5dca80d94ab5",
+  "src/ui/hex/settings.rs": "003e10a30569824e2daff7d12248c19c35a6514bb6be1ea883ffb2f96891f753",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -437,25 +437,25 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "bea4b07eb3fe109bca7ab6bc03c1dc0943682d65fb3d179779391d55a4c32620",
+  "src/ui/live.rs": "659bbdd2034b906de1228ddeec3482d7e95eb093c75c03d8cb0bc2fed3da57bd",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
-  "src/ui/meeting_delete.rs": "5f5f1662ecba8afe9172cc84ea7c401ff4b7fc79d76393dc4fa11d42d2e60c6c",
+  "src/ui/meeting_delete.rs": "03329ea06154edc06fad7e4f80811e789763ddff0dc8901da4c3f9a1748d4e04",
 
-  "src/ui/memory.rs": "271cd5370c09e4d49c2d3f0b1cf7d187909d8778d72f1c4ce0d4e34386f133a8",
+  "src/ui/memory.rs": "ed9bab3d8209a346c5f72dff814611cfaeee7c26200c4c3cdb90b6fba00a6c55",
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "edf861b3fa552a4d9fd361b2d509819bff0d549688d8ff28671b09ceac355209",
+  "src/ui/mod.rs": "32d393602e615b4f111b416bc09c2b2d38388242405ead1f55f6aeeb686dafa7",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
   "src/ui/notes_status.rs": "8ec8eafd29ce72054c45c842f8d967a68954d34866c8a561b2817a5da7709469",
 
-  "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
+  "src/ui/project_merge.rs": "90932e67967138d3a7ab461d059a8c6fd0009ce728af4fb92cc381f170fafcd6",
 
-  "src/ui/recording_state_tests.rs": "8b6e09c129511d1b8dad4213f59425c891265c1f101d03574812c56676590181",
+  "src/ui/recording_state_tests.rs": "a81698a309d39320766c53513eaa0277e0ee2e0f715d446afdefa9cd485167e4",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 

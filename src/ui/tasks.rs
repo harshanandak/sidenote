@@ -31,9 +31,16 @@ pub type BoardKey = (u64, u64, core::TaskFilter, Option<String>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
+    Home,
     Meetings,
     Tasks,
     People,
+}
+
+impl View {
+    pub(super) fn is_base(self) -> bool {
+        matches!(self, Self::Home | Self::Meetings)
+    }
 }
 
 /// A project name being edited in its group header.
@@ -688,7 +695,7 @@ impl State {
             self.rebuild_tasks();
         } else {
             self.close_panel();
-            self.go_home();
+            self.reset_navigation();
         }
     }
 

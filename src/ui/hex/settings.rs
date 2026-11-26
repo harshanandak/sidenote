@@ -277,6 +277,9 @@ fn back(s: &mut State) {
     let dest = s.hex.shell.back.take();
     s.go_home();
     if let Some(dest) = dest {
+        if dest.page != nav::Page::Home {
+            s.view = tasks::View::Meetings;
+        }
         s.filter = dest.filter;
         s.selected = dest.selected;
         s.live_open = dest.live;

@@ -487,10 +487,7 @@ impl CheckState {
 
 impl State {
     pub fn on_check(&self) -> bool {
-        self.check_open
-            && !self.memory_open
-            && self.view == super::tasks::View::Meetings
-            && self.selected.is_none()
+        self.check_open && !self.memory_open && self.view.is_base() && self.selected.is_none()
     }
 
     pub fn open_check(&mut self) {

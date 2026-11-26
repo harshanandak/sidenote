@@ -1270,7 +1270,7 @@ pub fn scene_publication(s: &mut State, home: bool) {
         data: Some(Box::new(crate::ui::refresh::Data::read(options))),
     }));
     if home {
-        s.go_home();
+        s.go_meetings();
     }
 }
 
