@@ -197,12 +197,16 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
     let tiles = if narrow { col() } else { row() };
     let hello = list::text_title(&greeting(hour, owner), PAGE_TITLE, p).key("home-greeting");
     let date = roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft);
-    let tasks = tile(
-        "home-tasks-tile",
-        format!("{open} tasks need you"),
-        Some(format!("{late} late")),
-        p,
-    );
+    // Task tiles and cards follow the Tasks feature switch, like the sidebar row.
+    let on = s.config.features.tasks;
+    let tasks = on.then(|| {
+        tile(
+            "home-tasks-tile",
+            format!("{open} tasks need you"),
+            Some(format!("{late} late")),
+            p,
+        )
+    });
     let meetings = tile("home-meetings-tile", meetings_label(recent.len()), None, p);
     col()
         .w_full()
@@ -211,16 +215,10 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
         .py(24.0)
         .gap(16.0)
         .child(col().gap(4.0).child(hello).child(date))
-        .child(tiles.gap(12.0).child(tasks).child(meetings))
+        .child(tiles.gap(12.0).children(tasks).child(meetings))
         .child(daily_brief(&recent, summary.map(String::as_str), p))
-        .child(task_card("home-needs-you", "Needs you", &needs, today, p))
-        .child(task_card(
-            "home-waiting",
-            "Waiting on others",
-            &waiting,
-            today,
-            p,
-        ))
+        .children(on.then(|| task_card("home-needs-you", "Needs you", &needs, today, p)))
+        .children(on.then(|| task_card("home-waiting", "Waiting on others", &waiting, today, p)))
 }
 
 pub(super) fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -443,6 +441,14 @@ mod tests {
         for key in ["home-greeting", "home-tasks-tile", "home-meetings-tile"] {
             assert!(rt.find(key).is_some(), "missing {key}");
         }
+        rt.update(|s, _| s.config.features.tasks = false);
+        rt.settle_all();
+        rt.frame(0.0);
+        for key in ["home-tasks-tile", "home-needs-you", "home-waiting"] {
+            assert!(rt.find(key).is_none(), "{key} shown with Tasks off");
+        }
+        assert!(rt.find("home-meetings-tile").is_some());
+        rt.update(|s, _| s.config.features.tasks = true);
 
         let root = tempfile::tempdir().unwrap();
         let sample = meeting(root.path(), TODAY, r#"{"title":"Workshop"}"#);
