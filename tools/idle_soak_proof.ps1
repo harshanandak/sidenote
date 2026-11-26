@@ -88,7 +88,7 @@ try { Assert-IdleSoakNoLiveHex @([pscustomobject]@{Name='hex.exe'}) } catch { $h
 Assert-Proof $hexRefused 'a fake live Hex process was not refused'
 Write-Output 'CASE live-hex: refused before sampling'
 $installRoot=Join-Path $proofRoot 'synthetic-install-root'
-$installed=Join-Path $installRoot 'Sidenote\sidenote.exe'
+$installed=Join-Path (Join-Path $installRoot 'Sidenote') 'sidenote.exe'
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $installed) | Out-Null
 [IO.File]::WriteAllText($installed,'installed fixture bytes')
 $installRefused=$false
