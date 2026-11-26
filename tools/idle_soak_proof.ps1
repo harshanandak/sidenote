@@ -18,7 +18,7 @@ function New-Fixture([string]$Path,[string]$EndState='completed',[int]$Hours=24,
 function Invoke-ProofCase([string]$Name,[string]$Fixture,[switch]$NoApprove,[switch]$Prepopulate) {
     $caseRoot=Join-Path $proofRoot ($Name+'-case')
     if ($Prepopulate) { New-Item -ItemType Directory -Path $caseRoot | Out-Null; Set-Content -LiteralPath (Join-Path $caseRoot 'already.txt') -Value 'not empty' }
-    $engine=Join-Path $PSHOME 'pwsh.exe'; if (-not (Test-Path -LiteralPath $engine)) { $engine=Join-Path $PSHOME 'powershell.exe' }
+    $engine=(Get-Process -Id $PID).Path
     $arguments=@('-NoProfile','-File',$soak,'-FixtureSamplesPath',$Fixture,'-SyntheticDataRoot',$caseRoot,'-CandidateExePath',$candidate)
     if (-not $NoApprove) { $arguments+='-ApproveSyntheticDataRoot' }
     $output=& $engine @arguments 2>&1|Out-String
