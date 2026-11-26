@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "f8e21b67c997f2184192ccc3897d23639eed1044598e51f1f653b963ecbd20f5",
 
-  "src/ui/ask_switch_tests.rs": "873d8014e033c917efbf790f4a64315002dee800dc97d9d62175f1c9fa883191",
+  "src/ui/ask_switch_tests.rs": "4e528a2d0fb8d74ae91060365341ca520c7feec6d871bc655a01ff8a13e159b2",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -453,7 +453,7 @@
 
   "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
 
-  "src/ui/recording_state_tests.rs": "0fe68189f5c8ad38713e61abf1f3f192d4a60e9930adad7be38f3212cc1c940f",
+  "src/ui/recording_state_tests.rs": "91277a9948ca0182b88e8c9d89b4124431aca3515ac2e12f1d98680303b9b05c",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 

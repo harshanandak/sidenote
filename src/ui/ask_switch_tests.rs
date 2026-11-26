@@ -2093,9 +2093,22 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     );
     assert_eq!(pill[0], pane[0]);
     assert!(pill[2] <= dock[2]);
-    assert_eq!(pill[3], 70.0);
+    assert_eq!(pill[3], 48.0);
+    assert_eq!(rect("ask-options")[3], 32.0);
+    assert_eq!(rect("ask-send")[3], 32.0);
+    let input = rect("ask-input");
+    assert_eq!(input[1] + input[3] / 2.0, pill[1] + pill[3] / 2.0);
     assert_eq!(chip[0], pill[0]);
-    assert!(chip[1] + chip[3] <= pill[1]);
+    assert!((24.0..=28.0).contains(&chip[3]));
+    assert!((0.0..=6.0).contains(&(pill[1] - chip[1] - chip[3])));
+    assert!(pill[1] + pill[3] - chip[1] <= 84.0);
+
+    rt.update(|s, _| s.runner_found.clear());
+    rt.settle_all();
+    rt.frame(0.0);
+    assert_eq!(rect_of(&rt, "ask-pill")[3], 48.0);
+    assert_eq!(rect_of(&rt, "ask-recheck")[3], 32.0);
+    assert!(rt.find("ask-input").is_none());
 }
 
 #[test]
@@ -3104,6 +3117,18 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
                 rt.settle_all();
                 rt.frame(0.0);
                 let closed = rect_of(&rt, "ask-pill");
+                assert_eq!(closed[3], 48.0);
+                let actions = if phase == "paused" {
+                    ["meeting-transcript", "meeting-resume", "meeting-generate"]
+                } else {
+                    ["meeting-transcript", "meeting-pause", "hex-stop"]
+                };
+                for key in actions {
+                    let [_, y, width, height] = rect_of(&rt, key);
+                    assert!(width >= 24.0, "{key} at {width}");
+                    assert_eq!(height, 32.0, "{key}");
+                    assert!(y >= closed[1] && y + height <= closed[1] + closed[3]);
+                }
                 rt.update(|s, _| s.live.as_mut().unwrap().panel_open = true);
                 for answer in [false, true] {
                     if answer {
