@@ -60,9 +60,34 @@ function Get-IdleSoakCandidate([string]$Path,[string[]]$InstallRoots=@(),[switch
 function Assert-IdleSoakNoLiveHex([object[]]$Processes) {
     if (@($Processes|Where-Object {$_.Name -in @('hex.exe','hex.com')}).Count) { throw 'a live Hex process is present; the idle soak requires a synthetic environment without live Hex' }
 }
+# The proof substitutes the Win32 boundary while native qualification is suspended.
+function Get-IdleSoakWin32Imports {
+    @'
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr CreateJobObjectW(IntPtr attributes, IntPtr name);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern bool CreateProcessW(string app, StringBuilder args, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
+        ref StartupInfo startup, out ProcessInfo process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, int size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")]
+    private static extern bool TerminateProcess(IntPtr process, uint code);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+'@
+}
 function Initialize-IdleSoakJobType {
     if (-not ('IdleSoakJob' -as [type])) {
-        Add-Type -TypeDefinition @'
+        $definition=@'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -102,26 +127,7 @@ public sealed class IdleSoakJob : IDisposable {
         public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
         public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
     }
-    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
-    private static extern IntPtr CreateJobObjectW(IntPtr attributes, IntPtr name);
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern bool CreateProcessW(string app, StringBuilder args, IntPtr processAttributes,
-        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
-        ref StartupInfo startup, out ProcessInfo process);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, int size, IntPtr returned);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, int size);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern uint ResumeThread(IntPtr thread);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-    [DllImport("kernel32.dll")]
-    private static extern bool TerminateProcess(IntPtr process, uint code);
-    [DllImport("kernel32.dll")]
-    private static extern bool CloseHandle(IntPtr handle);
+    /* WIN32_IMPORTS */
 
     private IntPtr job, process;
     public int RootProcessId { get; private set; }
@@ -171,31 +177,7 @@ public sealed class IdleSoakJob : IDisposable {
     }
 }
 '@
-    }
-}
-function Start-IdleSoakJob([string]$CandidatePath,[string]$Root) {
-    if ($env:OS -ne 'Windows_NT') { throw 'native idle soak collection requires Windows' }
-    Initialize-IdleSoakJobType
-    $environment=@{
-        APPDATA=(Join-Path $Root 'appdata')
-        LOCALAPPDATA=(Join-Path $Root 'localappdata')
-        HOME=(Join-Path $Root 'home')
-        USERPROFILE=(Join-Path $Root 'home')
-        SIDENOTE_DATA_DIR=(Join-Path $Root 'state')
-        SIDENOTE_STATE_DIR=(Join-Path $Root 'state')
-        SIDENOTE_HEX_DIR=(Join-Path $Root 'meetings')
-        SIDENOTE_PEERS_DIR=(Join-Path $Root 'peers')
-        SIDENOTE_CAPTURES_DIR=(Join-Path $Root 'captures')
-    }
-    $previous=@{}
-    try {
-        foreach ($name in $environment.Keys) {
-            $previous[$name]=[Environment]::GetEnvironmentVariable($name)
-            [Environment]::SetEnvironmentVariable($name,$environment[$name])
-        }
-        [IdleSoakJob]::new($CandidatePath,('"' + $CandidatePath + '"'),$Root)
-    } finally {
-        foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name,$previous[$name]) }
+        Add-Type -TypeDefinition ($definition.Replace('/* WIN32_IMPORTS */',(Get-IdleSoakWin32Imports)))
     }
 }
 function Get-IdleSoakProcessTree([int]$RootProcessId) {
@@ -383,6 +365,14 @@ function Write-IdleSoakReport($Result,[string]$Root) {
     if ($Result.failure_reasons.Count) { foreach ($reason in $Result.failure_reasons) { $lines+="- $reason" } } else { $lines+='- none' }
     [IO.File]::WriteAllText($markdownPath,($lines -join "`n")+"`n")
 }
+function Complete-IdleSoakReport($samples,$candidate,$root,$source,[double]$runSeconds,[double]$warmupSeconds,[double]$timeoutSeconds,[string]$collectionError) {
+    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $runSeconds $warmupSeconds $collectionError
+    $result|Add-Member -NotePropertyMembers @{generated_at_utc=([DateTimeOffset]::UtcNow.ToString('o'));sample_source=$source;candidate=$candidate;thresholds=([pscustomobject]$script:IdleSoakThresholds);
+        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;total_elapsed_seconds=$runSeconds;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
+        cpu_samples=@($samples.cpu_samples);resource_samples=@($samples.resource_samples)}
+    Write-IdleSoakReport $result $root
+    $result
+}
 function Invoke-IdleSoak {
     if ($DurationHours -le 0 -or $CpuSampleSeconds -le 0 -or $ResourceSampleSeconds -le 0) { throw 'duration and sample intervals must be positive' }
     $measurementSeconds=$DurationHours*3600.0; $warmupSeconds=$WarmupMinutes*60.0; $runSeconds=$warmupSeconds+$measurementSeconds
@@ -397,28 +387,14 @@ function Invoke-IdleSoak {
     } else {
         if ($RootProcessId -gt 0 -and $LaunchCandidate) { throw 'use either a root process id or -LaunchCandidate' }
         if ($RootProcessId -le 0 -and -not $LaunchCandidate) { throw 'use -LaunchCandidate or supply fixture samples' }
-        $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $processes=try { @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { @() }
         Assert-IdleSoakNoLiveHex $processes
-        if ($LaunchCandidate -and @($processes|Where-Object {$_.Name -eq 'sidenote.exe'}).Count) { throw 'a live Sidenote process is present; use an isolated test environment' }
-        $job=$null
-        try {
-            if (-not $LaunchCandidate) { throw 'an existing process may already have untracked descendants; use -LaunchCandidate' }
-            $job=Start-IdleSoakJob $candidate.path $root
-            $samples=Invoke-IdleSoakSampler $job $runSeconds $warmupSeconds $CpuSampleSeconds $ResourceSampleSeconds $timeoutSeconds
-        } catch {
-            $collectionError=$_.Exception.Message
-            $samples=[pscustomobject]@{end_state='unobservable';cpu_samples=@();resource_samples=@()}
-        } finally {
-            if ($null -ne $job) { $job.Dispose() }
-        }
+        $collectionError='broker-created work outside the Job Object cannot be accounted for; native qualification is suspended'
+        if ($RootProcessId -gt 0) { $collectionError='an existing process may already have untracked descendants' }
+        $samples=[pscustomobject]@{end_state='unobservable';cpu_samples=@();resource_samples=@()}
         $source='process-tree'
     }
-    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $runSeconds $warmupSeconds $collectionError
-    $result|Add-Member -NotePropertyMembers @{generated_at_utc=([DateTimeOffset]::UtcNow.ToString('o'));sample_source=$source;candidate=$candidate;thresholds=([pscustomobject]$script:IdleSoakThresholds);
-        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;total_elapsed_seconds=$runSeconds;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
-        cpu_samples=@($samples.cpu_samples);resource_samples=@($samples.resource_samples)}
-    Write-IdleSoakReport $result $root
-    $result
+    Complete-IdleSoakReport $samples $candidate $root $source $runSeconds $warmupSeconds $timeoutSeconds $collectionError
 }
 if ($MyInvocation.InvocationName -ne '.') {
     try {

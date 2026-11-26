@@ -1,6 +1,40 @@
 $ErrorActionPreference='Stop'
 $soak=Join-Path $PSScriptRoot 'idle_soak.ps1'
 . $soak
+function Get-IdleSoakWin32Imports {
+    @'
+    public static string ProofCase;
+    public static double ProofElapsed;
+    public static int ProofLaunches, ProofAssignments, ProofJobCloses;
+    private static IntPtr CreateJobObjectW(IntPtr attributes, IntPtr name) { return (IntPtr)1; }
+    private static bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, int size) {
+        return job == (IntPtr)1 && kind == 9 && limits.Basic.Flags == 0x2000;
+    }
+    private static bool CreateProcessW(string app, StringBuilder args, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
+        ref StartupInfo startup, out ProcessInfo info) {
+        ProofLaunches++;
+        info = new ProcessInfo { Process = (IntPtr)2, Thread = (IntPtr)3, ProcessId = 100 };
+        return flags == 4 && !inheritHandles;
+    }
+    private static bool AssignProcessToJobObject(IntPtr job, IntPtr process) {
+        ProofAssignments++;
+        return job == (IntPtr)1 && process == (IntPtr)2;
+    }
+    private static uint ResumeThread(IntPtr thread) { return ProofAssignments == 1 && thread == (IntPtr)3 ? 1U : uint.MaxValue; }
+    private static uint WaitForSingleObject(IntPtr handle, uint milliseconds) {
+        return ProofCase == "warmup-crash" && ProofElapsed >= 4 ? 0U : 258U;
+    }
+    private static bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, int size, IntPtr returned) {
+        // PID 101 ran between t=25 and t=26. The OS returns its final user and kernel ticks in the job totals.
+        info = new Accounting();
+        if (ProofCase == "short-lived-child" && ProofElapsed >= 26) { info.UserTime = 7500000; info.KernelTime = 12500000; }
+        return job == (IntPtr)1 && kind == 1 && (ProofCase != "final-cpu-query" || ProofElapsed < 112);
+    }
+    private static bool TerminateProcess(IntPtr process, uint code) { return true; }
+    private static bool CloseHandle(IntPtr handle) { if (handle == (IntPtr)1) ProofJobCloses++; return true; }
+'@
+}
 Initialize-IdleSoakJobType
 $proofRoot=Join-Path ([IO.Path]::GetTempPath()) ('sidenote-synthetic-idle-proof-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $proofRoot | Out-Null
@@ -111,54 +145,50 @@ function Invoke-NativeProof([string]$Name) {
     $ResourceSampleSeconds=10.0
     $LaunchCandidate=$Name -ne 'untracked-root'
     $RootProcessId=if ($LaunchCandidate) {0} else {100}
-    $state=@{elapsed=-2.0;disposed=$false}
+    [IdleSoakJob]::ProofCase=$Name
+    [IdleSoakJob]::ProofElapsed=-2.0
+    [IdleSoakJob]::ProofLaunches=[IdleSoakJob]::ProofAssignments=[IdleSoakJob]::ProofJobCloses=0
     function Get-CimInstance {
+        if ($Name -eq 'final-resource-query' -and [IdleSoakJob]::ProofElapsed -ge 112) { throw 'resource query failed' }
         if ($Name -eq 'entry-live-hex') { [pscustomobject]@{Name='hex.exe'} }
         else { [pscustomobject]@{ProcessId=100;ParentProcessId=99;KernelModeTime=0;UserModeTime=0;ExecutablePath=$candidate} }
     }
     function Start-Sleep {}
-    function Get-IdleSoakElapsedSeconds { $state.elapsed+=2.0; $state.elapsed }
-    function Read-IdleSoakResourceSample { [pscustomobject]@{working_set_bytes=200MB;private_bytes=150MB;handle_count=300;missing=$false} }
-    function Start-IdleSoakJob {
-        if ($Name -eq 'entry-live-hex') { throw 'the sampler was reached with live Hex' }
-        if ($Name -eq 'untracked-root') { throw 'an existing process reached job launch' }
-        $job=[pscustomobject]@{RootProcessId=100;state=$state;caseName=$Name}
-        $job|Add-Member ScriptMethod HasExited { $this.caseName -eq 'warmup-crash' -and $this.state.elapsed -ge 4 }
-        $job|Add-Member ScriptMethod GetCpuSeconds {
-            if ($this.caseName -eq 'final-cpu-query' -and $this.state.elapsed -ge 112) { throw 'CPU query failed' }
-            # PID 101 ran between t=25 and t=26 and never appeared in a process snapshot.
-            if ($this.caseName -eq 'short-lived-child' -and $this.state.elapsed -ge 26) { 2.0 } else { 0.0 }
-        }
-        $job|Add-Member ScriptMethod Dispose { $this.state.disposed=$true }
-        $job
-    }
-    if ($Name -eq 'final-resource-query') {
-        function Get-IdleSoakProcessTree {
-            if ($state.elapsed -ge 112) { throw 'resource query failed' }
-            [pscustomobject]@{ProcessId=100}
-        }
-    }
+    function Get-IdleSoakElapsedSeconds { [IdleSoakJob]::ProofElapsed+=2.0; [IdleSoakJob]::ProofElapsed }
+    function Get-Process { [pscustomobject]@{WorkingSet64=200MB;PrivateMemorySize64=150MB;HandleCount=300} }
     if ($Name -eq 'entry-live-hex') {
         $reason=try { Invoke-IdleSoak|Out-Null } catch { $_.Exception.Message }
-        Assert-Proof ($reason -like 'a live Hex process is present*') 'the native entry did not refuse live Hex'
+        Assert-Proof ($reason -like 'a live Hex process is present*' -and [IdleSoakJob]::ProofLaunches -eq 0) 'the native entry did not refuse live Hex before launch'
         Write-Output 'CASE entry-live-hex: refused before sampling'
         return
     }
-    $result=Invoke-IdleSoak
-    Assert-Proof (($Name -eq 'untracked-root' -or $state.disposed) -and -not $result.passed) "$Name did not produce a failed collection"
+    if ($Name -in @('untracked-root','brokered-work')) {
+        $result=Invoke-IdleSoak
+        Assert-Proof ($result.end_state -eq 'unobservable' -and [IdleSoakJob]::ProofLaunches -eq 0) "$Name did not refuse before launch"
+    } else {
+        $root=Assert-IdleSoakSyntheticRoot $SyntheticDataRoot $true
+        $candidateInfo=Get-IdleSoakCandidate $candidate
+        $job=[IdleSoakJob]::new($candidateInfo.path,$candidateInfo.path,$root)
+        try { $samples=Invoke-IdleSoakSampler $job 112 12 $CpuSampleSeconds $ResourceSampleSeconds 113 }
+        finally { $job.Dispose() }
+        Assert-Proof ([IdleSoakJob]::ProofLaunches -eq 1 -and [IdleSoakJob]::ProofAssignments -eq 1 -and [IdleSoakJob]::ProofJobCloses -eq 1) "$Name did not bind and close the job"
+        $result=Complete-IdleSoakReport $samples $candidateInfo $root 'process-tree' 112 12 113 ''
+    }
+    Assert-Proof (-not $result.passed) "$Name did not produce a failed collection"
     Assert-Proof ((Test-Path -LiteralPath $result.report_json_path) -and (Test-Path -LiteralPath $result.report_markdown_path)) "$Name did not write both reports"
     $report=Get-Content -LiteralPath $result.report_json_path -Raw|ConvertFrom-Json
     $reason=switch ($Name) {
         'warmup-crash' { Assert-Proof ($report.end_state -eq 'crash' -and $report.resource_samples.Count -eq 0) 'expected a crash before resource sampling'; 'crash' }
         'short-lived-child' { Assert-Proof ($report.cpu_samples[-1].total_cpu_seconds -eq 2.0) 'short-lived child CPU was dropped'; 'average idle cpu exceeds one percent' }
-        'untracked-root' { 'process-tree cpu is unobservable' }
+        'untracked-root' { 'process-tree cpu is unobservable: an existing process may already have untracked descendants' }
+        'brokered-work' { 'process-tree cpu is unobservable: broker-created work outside the Job Object' }
         'final-cpu-query' { 'final cpu samples do not cover' }
         'final-resource-query' { 'final resource samples do not cover' }
     }
     Assert-Proof (($report.failure_reasons -join ' ') -like "*$reason*") "$Name did not report $reason"
     Write-Output "CASE ${Name}: $reason"
 }
-foreach ($name in @('entry-live-hex','untracked-root','warmup-crash','short-lived-child','final-cpu-query','final-resource-query')) {
+foreach ($name in @('entry-live-hex','untracked-root','brokered-work','warmup-crash','short-lived-child','final-cpu-query','final-resource-query')) {
     Invoke-NativeProof $name
 }
 $installRoot=Join-Path $proofRoot 'synthetic-install-root'
