@@ -2658,11 +2658,12 @@ fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
                             && i.rect[0] >= title[0] - 0.5
                             && i.rect[0] < title_right
                     })
-                    .map(|i| i.rect)
+                    // Ink right edge: Rune pads each glyph mask by one clear pixel a side (text/area.rs).
+                    .map(|i| i.rect[0] + i.rect[2] - 1.0)
                     .collect();
                 assert!(
-                    !glyphs.is_empty() && glyphs.iter().all(|r| r[0] + r[2] <= title_right + 0.5),
-                    "page {page}: title glyphs are missing or cross the title box {title:?}: {glyphs:?}"
+                    !glyphs.is_empty() && glyphs.iter().all(|&right| right <= title_right + 0.5),
+                    "page {page}: title glyph ink is missing or crosses the title box {title:?}: {glyphs:?}"
                 );
                 let pane = rect_of(&rt, "meeting-pane");
                 for fact in [&facts, &people, &project_chip] {
