@@ -3362,14 +3362,12 @@ fn a_no_id_summary_never_claims_a_meeting() {
     let source = hex.join(MEETING);
     let held = hex.with_file_name("held-no-id-source");
     std::fs::rename(&source, &held).unwrap();
-
     write_result(
         &hex.join("1800000060000-4"),
         "A nearby meeting finished first.",
     );
     refresh_navigation(&mut rt);
     assert!(rt.state.live.is_some() && rt.state.live_ready.is_none());
-
     const RESULT: &str = "The real folder finished.";
     std::fs::rename(&held, &source).unwrap();
     write_result(&source, RESULT);
@@ -3387,21 +3385,22 @@ fn a_no_id_wait_has_a_bounded_end() {
     const NOTES: &str = "Synthetic personal notes before leaving.";
     let mut rt = pending_summary_page("complete");
     show_summary_wait(&mut rt, None);
-    let copy = "Recording saved. Its summary will appear in Meetings.";
-    assert_rendered(&rt, copy, true);
+    assert_rendered(&rt, live::NO_ID_COPY, true);
     assert_rendered(&rt, "Writing the summary", false);
     assert!(rt.find("live-go-meetings").is_some());
     assert!(rt.find("live-back").is_none());
 
     rt.update(|s, _| s.live_notes = TextEdit::new(NOTES));
     let recovery = core::state_dir().join("unsaved-notes");
-    std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
+    let copy = recovery.join(format!("{MEETING_START}-close-{}-0.md", std::process::id()));
+    std::fs::create_dir_all(&copy).unwrap();
     tap(&mut rt, "live-go-meetings");
     assert!(rt.state.on_live() && rt.state.live.as_ref().unwrap().close_failed);
     assert_eq!(rt.state.live_notes.text, NOTES);
     assert!(rt.find("live-save-warning").is_some());
-
-    std::fs::remove_file(&recovery).unwrap();
+    std::fs::remove_dir(&copy).unwrap();
+    rt.update(|s, _| assert!(s.live_close()));
+    rt.frame(0.0);
     tap(&mut rt, "live-go-meetings");
     assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert_destination(&rt, "home");
@@ -3552,7 +3551,6 @@ fn source_loss_retries_close_and_drops_late_generated_notes() {
 
     std::fs::remove_dir(&notes).unwrap();
     std::fs::remove_file(&recovery).unwrap();
-
     const RESULT: &str = "Late notes after a refused source-loss close.";
     std::fs::write(&manifest, manifest_bytes).unwrap();
     finish_generated_notes(&folder, &status, job, RESULT);

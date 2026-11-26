@@ -27,6 +27,7 @@ use std::{
 };
 
 type Work = Box<dyn FnOnce() + Send>;
+pub(super) const NO_ID_COPY: &str = "Recording saved. Its summary will appear in Meetings.";
 pub(super) struct NoteWriter {
     tx: mpsc::Sender<Work>,
     stopped: Arc<AtomicBool>,
@@ -208,6 +209,7 @@ pub(super) fn summary_skip(s: &State) -> Option<sidenote::core::notes::SummarySk
 pub(super) fn scene_making(s: &mut State, status: &str) {
     hex::scene(s, false);
     let mut live = Live::scene(Phase::Making, Some("Weekly planning"));
+    live.feed.lock().unwrap_or_else(|e| e.into_inner()).hint = Some("1800000000000-1".into());
     live.feed
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1702,19 +1704,12 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
             .items_start()
             .gap(16.0)
             .child(text_title(&heading(s), if narrow { 28.0 } else { 36.0 }, p))
-            .child(
-                roles::SECTION
-                    .wrap(
-                        "Recording saved. Its summary will appear in Meetings.",
-                        p.ink,
-                    )
-                    .role("status"),
-            )
+            .child(roles::SECTION.wrap(NO_ID_COPY, p.ink).role("status"))
             .children((!s.live_notes.text.is_empty()).then(|| your_notes(&s.live_notes.text, p)))
             .child(
                 link("Go to Meetings", p)
-                    .key("live-go-meetings")
-                    .on_press(|s: &mut State| s.finish_no_id_wait()),
+                    .on_press(|s: &mut State| s.finish_no_id_wait())
+                    .key("live-go-meetings"),
             );
     }
 
@@ -2185,6 +2180,7 @@ mod writer_tests {
         live.wall_start = DateTime::from_timestamp_millis(1794303362394 + 1000)
             .unwrap()
             .with_timezone(&Local);
+        live.feed.lock().unwrap().hint = Some("1794303362394-45464".into());
         live.folder = Some(folder.clone());
         state.live = Some(live);
         state.live_open = true;
@@ -2291,7 +2287,7 @@ mod writer_tests {
     }
 
     #[test]
-    fn folder_timestamp_matches_without_hex_id_or_manifest_start() {
+    fn no_id_never_matches_without_hex_id_or_manifest_start() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("artifacts/live-match-test")
             .join("1794303362394-45464");
@@ -2302,7 +2298,7 @@ mod writer_tests {
         live.wall_start = DateTime::from_timestamp_millis(1794303362394 + 120_000)
             .unwrap()
             .with_timezone(&Local);
-        assert!(live.matches_meeting(&meeting));
+        assert!(!live.matches_meeting(&meeting));
         live.wall_start += chrono::Duration::milliseconds(1);
         assert!(!live.matches_meeting(&meeting));
         live.wall_start -= chrono::Duration::milliseconds(1);
@@ -2355,7 +2351,7 @@ mod writer_tests {
         meeting.started = Some(live.wall_start - chrono::Duration::minutes(20));
         assert!(!live.matches_meeting(&meeting));
         meeting.started = Some(live.wall_start);
-        assert!(live.matches_meeting(&meeting));
+        assert!(!live.matches_meeting(&meeting));
         live.folder = Some(PathBuf::from("1234-1"));
         assert!(!live.matches_meeting(&meeting));
         meeting.id = "1234-1".into();
