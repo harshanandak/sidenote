@@ -1538,9 +1538,7 @@ impl State {
                 // A stop the owner asked for is not a failure: only the question comes back.
                 if message != core::ask::STOPPED {
                     self.ask_errors.insert(id.to_string(), message);
-                    if result.is_ok()
-                        && let Some(question) = &failed
-                    {
+                    if let Some(question) = failed.as_ref().filter(|_| result.is_ok()) {
                         let mut retry = question.clone();
                         retry.id = retry.id.filter(|_| retain);
                         self.ask_settings.retry_questions.insert(id.into(), retry);
