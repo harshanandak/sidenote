@@ -674,6 +674,7 @@ fn transcript_key(s: &mut State, e: &rune::KeyEvent, tx: &mut Tx) -> bool {
         tx.blur();
     } else {
         s.close_transcript_sheet();
+        tx.focus("meeting-transcript", true);
     }
     true
 }

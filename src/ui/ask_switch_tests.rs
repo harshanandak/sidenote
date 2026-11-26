@@ -2000,12 +2000,13 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
             .0
     };
     let (pane, dock, chip, pill) = (
-        rect("meeting-pane"),
+        rect("meeting-title"),
         rect("meeting-bottom-bar"),
         rect("ask-prompt"),
         rect("ask-pill"),
     );
-    assert!((dock[0] + dock[2] / 2.0 - pane[0] - pane[2] / 2.0).abs() < 1.0);
+    assert_eq!(pill[0], pane[0]);
+    assert!(pill[2] <= dock[2]);
     assert_eq!(pill[3], 70.0);
     assert_eq!(chip[0], pill[0]);
     assert!(chip[1] + chip[3] <= pill[1]);
@@ -2053,7 +2054,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     // The header's title and controls are in the notes column.
     let head = rect(&rt, "meeting-header");
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
-    assert_eq!(rect(&rt, "ask-pill")[2], 840.0, "Ask bar");
+    assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
     rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
     rt.frame(0.0);
@@ -2335,16 +2336,13 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
         return;
     }
     // 800 wide with no sidebar, and 1000 wide with it (a page of 751): both are `narrow` and both
-    // have room for the strip and the 640 column. The dock spans the pane with 16-point gutters.
+    // have room for the strip and the 640 column, so the bar sits on the column's edge.
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
-        let [dock, pane] = ["meeting-bottom-bar", "meeting-pane"].map(|key| rect_of(&rt, key));
-        assert_eq!(
-            (dock[0], dock[2]),
-            (pane[0] + 16.0, pane[2] - 32.0),
-            "{size:?}"
-        );
+        let dock = rect_of(&rt, "meeting-bottom-bar");
+        let main = rect_of(&rt, "meeting-main");
+        assert_eq!((dock[0], dock[2]), (main[0], main[2]), "{size:?}");
     }
 }
 
@@ -2548,8 +2546,8 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         (main[0] - 8.0, 656.0),
         "task row {task:?}"
     );
-    let pane = r(&rt, "meeting-pane");
-    assert_eq!(r(&rt, "meeting-bottom-bar")[0], pane[0] + 16.0);
+    // The Ask bar and the transcript sheet start on the notes edge too.
+    assert_eq!(r(&rt, "meeting-bottom-bar")[0], main[0], "Ask bar");
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);
     rt.settle_all();

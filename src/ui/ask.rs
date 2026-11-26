@@ -401,6 +401,8 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
     // The thread floats over the meeting, so it takes at most about half the pane.
     let max_h = if s.on_live() {
         (super::live::limits(s).thread - 44.0).max(0.0)
+    } else if s.transcript_open && !s.meeting_ui.tabs {
+        (s.pane_h.get() * 0.22).clamp(96.0, 220.0)
     } else {
         (s.pane_h.get() * 0.5).clamp(180.0, 460.0)
     };
@@ -413,7 +415,7 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
             stick_bottom: false,
         })
         .child(messages);
-    let panel = panel.max_w(840.0).self_center();
+    let panel = panel.max_w(COLUMN).self_center();
     Some(with_note(panel.child(hairline(p)).child(list), p))
 }
 
@@ -671,7 +673,7 @@ const ACTION: f32 = 28.0;
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
-fn action(s: &State, p: Palette, pending: bool) -> El {
+fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
     let slot = col().key("ask-action").size(ACTION, ACTION).shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
     if pending {
@@ -713,6 +715,7 @@ fn action(s: &State, p: Palette, pending: bool) -> El {
             .focus_ring(1.0, 1.0, p.faint)
             .preserve_focus_on_press(true)
             .transition(replace)
+            .button_disabled(empty)
             .on_press_tx(|s: &mut State, tx| {
                 let q = s.question.text.clone();
                 submit(s, &q, tx);
@@ -774,16 +777,18 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let inset = if s.on_live() {
+    let gutter = if s.companies.open {
+        0.0
+    } else if s.selected.is_some() && !s.meeting_ui.tabs {
+        super::meeting::gutter(s)
+    } else if s.on_live() {
         super::live::gutter(s)
     } else {
         16.0
     };
-    let gutter = if s.companies.open { 0.0 } else { inset };
-    let width = if s.on_live() { COLUMN } else { 840.0 };
     let mut stack = col()
         .w_full()
-        .max_w(width + 2.0 * gutter)
+        .max_w(COLUMN + 2.0 * gutter)
         .px(gutter)
         .gap(6.0);
     if s.back.is_some() && !(s.selected.is_some() && !s.meeting_ui.tabs && s.transcript_open) {
@@ -882,7 +887,7 @@ pub fn overlay_with(
                     .w_full(),
             );
         }
-        stack = stack.child(disclosure.max_w(840.0).self_center());
+        stack = stack.child(disclosure.max_w(COLUMN).self_center());
     }
     if !s.has_agent() && !pending && s.runner_error.is_none() {
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
@@ -902,7 +907,7 @@ pub fn overlay_with(
         } else {
             (stack, lead)
         };
-        let dock = col().key("meeting-bottom-bar").w_full().child(pill);
+        let dock = col().key("ask-controls").w_full().child(pill);
         return place(s, stack.children(lead).child(dock));
     }
     let empty = s.question.text.trim().is_empty();
@@ -1008,11 +1013,6 @@ pub fn overlay_with(
                 .self_start()
                 .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
         }));
-    let dock = if s.on_live() {
-        dock
-    } else {
-        dock.key("meeting-bottom-bar")
-    };
     let (stack, lead) = if s.on_live() && s.app_w.get() < 380.0 {
         (stack.children(lead.map(El::self_start)), None)
     } else {
@@ -1021,7 +1021,7 @@ pub fn overlay_with(
     let pill = row()
         .key("ask-pill")
         .w_full()
-        .max_w(width)
+        .max_w(COLUMN)
         .h(70.0)
         .min_h(70.0)
         .gap(if compact { 2.0 } else { 4.0 })
@@ -1036,7 +1036,7 @@ pub fn overlay_with(
         .child(input)
         .children(model)
         .child(ask_options(s, k, p, show_prompt, layer))
-        .children((!empty || pending).then(|| action(s, p, pending)));
+        .child(action(s, p, pending, empty));
     place(s, stack.child(dock.child(pill)))
 }
 
@@ -1051,7 +1051,7 @@ fn with_note(stack: El, p: Palette) -> El {
 }
 
 fn place(s: &State, stack: El) -> El {
-    if s.on_live() {
+    if s.on_live() || (s.selected.is_some() && !s.meeting_ui.tabs && !s.companies.open) {
         col()
             .key("ask-overlay")
             .w_full()
