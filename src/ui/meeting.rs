@@ -24,7 +24,6 @@ pub struct ReadingUi {
     pub tabs: bool,
     pub templates: std::collections::BTreeMap<String, String>,
     pub time_open: bool,
-    pub recording_hover: bool,
     pub status_open: bool,
     pub(super) rail: reading::RailVisit,
     sections: std::cell::RefCell<sections::Visit>,
@@ -43,7 +42,6 @@ impl ReadingUi {
             tabs: prefs.meeting_tabs,
             templates: prefs.meeting_summary_templates.clone(),
             time_open: false,
-            recording_hover: false,
             status_open: false,
             rail: reading::RailVisit::default(),
             sections: Default::default(),
@@ -676,6 +674,7 @@ fn transcript_key(s: &mut State, e: &rune::KeyEvent, tx: &mut Tx) -> bool {
         tx.blur();
     } else {
         s.close_transcript_sheet();
+        tx.focus("meeting-transcript", true);
     }
     true
 }

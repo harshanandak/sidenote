@@ -245,7 +245,11 @@ fn meeting_facts(m: &Meeting, p: Palette) -> Option<El> {
 }
 
 fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
-    let selected = usize::from(s.meeting_tab == Tab::Notes);
+    let selected = if s.transcript_open {
+        2
+    } else {
+        usize::from(s.meeting_tab == Tab::Notes)
+    };
     row()
         .key("meeting-view")
         .role("radiogroup")
@@ -255,7 +259,7 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
         .padding(2.0)
         .radius(8.0)
         .fill(p.chip)
-        .equal_columns(2)
+        .equal_columns(3)
         .child(
             el().key("indicator")
                 .h(24.0)
@@ -267,16 +271,20 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                 .grid_cell(selected),
         )
         .children(
-            [(Tab::Summary, "Summary"), (Tab::Notes, "Your notes")]
+            ["Summary", "Your notes", "Transcript"]
                 .into_iter()
                 .enumerate()
-                .map(|(index, (tab, name))| {
+                .map(|(index, name)| {
                     let on = index == selected;
                     row()
-                        .key(format!("segment{index}"))
+                        .key(if index == 2 {
+                            "meeting-transcript".into()
+                        } else {
+                            format!("segment{index}")
+                        })
                         .role("radio")
                         .label(name)
-                        .position_in_set(index + 1, 2)
+                        .position_in_set(index + 1, 3)
                         .focusable(true)
                         .focus_selected(on)
                         .focus_ring(2.0, 1.0, p.accent)
@@ -286,8 +294,21 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                         .radius(6.0)
                         .hover(p.button_hover)
                         .on_press_tx(move |s: &mut State, tx| {
-                            s.set_meeting_tab(tab);
-                            tx.blur();
+                            if index == 2 {
+                                s.toggle_transcript();
+                                if s.transcript_open && tx.by_keys() {
+                                    tx.focus_when_shown("transcript-filter", true);
+                                }
+                            } else {
+                                if s.transcript_open {
+                                    s.close_transcript_sheet();
+                                }
+                                s.set_meeting_tab(if index == 0 {
+                                    Tab::Summary
+                                } else {
+                                    Tab::Notes
+                                });
+                            }
                         })
                         .child(
                             rune::text(name)
@@ -908,12 +929,7 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
 }
 
 pub fn transcript_height(s: &State) -> f32 {
-    (s.meeting_ui.window_h.get() * 0.45).clamp(140.0, 380.0)
-}
-
-/// Saved-meeting dock control. The pause lane can fill `meeting-recording-slot`.
-pub(super) fn recording_control(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
-    crate::ui::live::parts_control(s, k, p, layer)
+    (s.pane_h.get() * 0.34).clamp(124.0, 320.0)
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -925,16 +941,17 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // The wide grid already sets the notes 44 points in from its edge, so its column has no
     // gutter of its own; below the grid's width the notes keep the page gutter.
     let side = super::gutter(s);
+    let overlay_thread =
+        super::phone(s) && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
+    let bottom_pad = 16.0
+        + if overlay_thread {
+            s.overlay_h.get()
+        } else {
+            0.0
+        };
     // With no gutter and the tasks stacked, their rows hang 8 either side of the column, so the
     // scroll area is 8 wider each side there, as the tasks column's is on the wide grid.
     let hang = if strip && !wide { 8.0 } else { 0.0 };
-    let phone_sheet = s.transcript_open && super::phone(s);
-    let fade = if phone_sheet { 28.0 } else { 0.0 };
-    let bottom_pad = if s.transcript_open {
-        fade + 32.0
-    } else {
-        s.overlay_h.get() + 16.0
-    };
     let mut visit = s.meeting_ui.sections.borrow_mut();
     visit.sync(m, s.meeting_tab, strip);
     let mut sections = Vec::new();
@@ -953,9 +970,10 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     }
     let mut main = col()
         .key("meeting-main")
-        .on_key(|s: &mut State, e, _| {
+        .on_key(|s: &mut State, e, tx| {
             if e.key == Key::Escape && s.transcript_open {
                 s.close_transcript_sheet();
+                tx.focus("meeting-transcript", true);
                 true
             } else {
                 false
@@ -975,90 +993,85 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         frame.w_full()
     };
     main = main.child(
-        frame
-            .grow(1.0)
-            .min_w(0.0)
-            .min_h(0.0)
-            .child(
-                scroll(
-                    doc.max_w(COLUMN + 2.0 * (side + hang))
-                        .px(side + hang)
-                        .pt(6.0)
-                        .pb(bottom_pad),
-                    "meeting-scroll",
-                )
-                .grow(1.0),
+        frame.grow(1.0).min_w(0.0).min_h(0.0).child(
+            scroll(
+                doc.max_w(COLUMN + 2.0 * (side + hang))
+                    .px(side + hang)
+                    .pt(6.0)
+                    .pb(bottom_pad),
+                "meeting-scroll",
             )
-            // Ease the clipped document into the open phone transcript sheet.
-            .children(phone_sheet.then(|| {
-                el().key("meeting-scroll-fade")
-                    .pin(Some(0.0), None, Some(0.0), Some(0.0))
-                    .h(fade)
-                    .linear_gradient(std::f32::consts::PI, [(0.0, p.bg.alpha(0.0)), (1.0, p.bg)])
-            })),
+            .grow(1.0),
+        ),
     );
-    let panel = s.transcript_open.then(|| {
-        col()
+    if s.transcript_open {
+        let panel = col()
             .key("meeting-transcript-view")
             .focus_return("meeting-transcript")
             .w_full()
-            .h(transcript_height(s))
-            .min_h(transcript_height(s))
-            .max_h(transcript_height(s))
-            .child(transcript_panel(s, k, m, true, p))
+            .min_h(0.0)
+            .grow(1.0)
+            .child(transcript_panel(s, k, m, true, p));
+        main = main.child(
+            col()
+                .key("meeting-transcript-dock")
+                .w_full()
+                .px(side)
+                .mb(6.0)
+                .shrink()
+                .min_h(0.0)
+                .children(
+                    super::phone(s).then(|| hairline(p).key("meeting-transcript-divider").mb(8.0)),
+                )
+                .child(
+                    col()
+                        .key("meeting-transcript-surface")
+                        .w_full()
+                        .h(transcript_height(s))
+                        .min_h(0.0)
+                        .shrink()
+                        .radius(14.0)
+                        .clip_rounded(14.0)
+                        .fill(p.card)
+                        .border(1.0, p.line)
+                        .child(panel)
+                        .child(
+                            quiet_button("Hide transcript", "meeting-hide-transcript", p)
+                                .h(36.0)
+                                .self_end()
+                                .mr(8.0)
+                                .on_press_tx(|s: &mut State, tx| {
+                                    s.close_transcript_sheet();
+                                    tx.focus("meeting-transcript", true);
+                                }),
+                        ),
+                ),
+        );
+    }
+    let dock = col()
+        .key("meeting-bottom-bar")
+        .w_full()
+        .child(ask::overlay_with(
+            s,
+            k,
+            p,
+            narrow,
+            layer,
+            crate::ui::live::parts_control(s, p),
+            None,
+        ));
+    main = main.child(if overlay_thread {
+        dock.pin(Some(0.0), None, Some(0.0), Some(0.0))
+    } else {
+        dock
     });
-    main = main.children(panel.map(|panel| {
-        col()
-            .key("meeting-transcript-dock")
-            .w_full()
-            .items_start()
-            .shrink()
-            .px(side)
-            .pb(36.0)
-            .children(phone_sheet.then(|| {
-                hairline(p)
-                    .key("meeting-transcript-divider")
-                    .w_full()
-                    .mb(8.0)
-            }))
-            .child(
-                col()
-                    .key("meeting-transcript-surface")
-                    .max_w(COLUMN)
-                    .w_full()
-                    .radius(14.0)
-                    .clip_rounded(14.0)
-                    .fill(p.card)
-                    .border(1.0, p.line)
-                    .child(panel)
-                    .child(hairline(p))
-                    .child(
-                        row()
-                            .w_full()
-                            .items_center()
-                            .flex_wrap()
-                            .gaps(4.0, 0.0)
-                            .justify_between()
-                            .child(recording_control(s, k, p, layer))
-                            .child(
-                                quiet_button("Hide transcript", "meeting-hide-transcript", p)
-                                    .h(36.0)
-                                    .mr(8.0)
-                                    .on_press_tx(|s: &mut State, tx| {
-                                        s.close_transcript_sheet();
-                                        tx.focus("meeting-transcript", true);
-                                    }),
-                            ),
-                    ),
-            )
-    }));
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
         columns = columns.pr(EDGE);
         // The tasks' rows hang 8 either side of their column, like the mock, so the text gap to the
         // notes is the 40 and the rows' hairlines and check circles are not cut by the scroll area.
         let tasks = scroll(
-            col().px(8.0).pb(bottom_pad).child(
+            col().px(8.0).pb(24.0).child(
                 col()
                     .key("meeting-tasks-column")
                     .w(TASKS)
@@ -1107,12 +1120,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     if let Some(note) = &s.notice {
         pane = pane.child(notice_bar(note, p));
     }
-    pane.child(head)
-        .child(columns)
-        .children((!s.transcript_open).then(|| {
-            let control = recording_control(s, k, p, layer);
-            ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
-        }))
+    pane.child(head).child(columns)
 }
 
 /// The grid row, `width` wide: the 44 point strip kept for the section rail, then `notes`. The
@@ -1183,6 +1191,7 @@ mod tests {
     fn reading_page(id: &str, width: f32, session: Option<live::Live>) -> Runtime<State> {
         let mut state = State::new();
         state.meeting_ui.tabs = false;
+        crate::ui::scene_agents(&mut state, &["codex"]);
         state.selected = Some(id.into());
         state.live = session;
         state.load_saved();
@@ -1238,6 +1247,9 @@ mod tests {
                 let viewport = element(&rt, "meeting-scroll");
                 let dock = element(&rt, "ask-overlay");
                 assert!(last_line.rect[1] >= viewport.rect[1]);
+                assert!(
+                    last_line.rect[1] + last_line.rect[3] <= viewport.rect[1] + viewport.rect[3]
+                );
                 assert!(last_line.rect[1] + last_line.rect[3] <= dock.rect[1]);
             }
 
@@ -1448,22 +1460,19 @@ mod tests {
             rt.frame(0.0);
 
             let [left, top, w, h] = element(&rt, "meeting-transcript-surface").rect;
-            for key in [
-                "meeting-transcript",
-                "meeting-resume",
-                "meeting-generate",
-                "meeting-hide-transcript",
-            ] {
+            let pill = element(&rt, "ask-pill").rect;
+            assert_eq!((left, w), (pill[0], pill[2]));
+            assert!(top + h <= pill[1]);
+            for key in ["meeting-resume", "meeting-generate"] {
                 let [x, y, button_w, button_h] = element(&rt, key).rect;
                 assert!(x >= left && x + button_w <= left + w, "{key} at {width}");
-                assert!(y >= top && y + button_h <= top + h, "{key} at {width}");
+                assert!(
+                    y >= pill[1] && y + button_h <= pill[1] + pill[3],
+                    "{key} at {width}"
+                );
             }
-            let [hide_x, hide_y, ..] = element(&rt, "meeting-hide-transcript").rect;
-            let [x, y, w, h] = element(&rt, "meeting-recording-control").rect;
-            assert!(
-                hide_x >= x + w || hide_y >= y + h,
-                "Hide overlaps at {width}"
-            );
+            let [_, y, _, h] = element(&rt, "meeting-hide-transcript").rect;
+            assert!(y + h <= pill[1], "Hide overlaps the dock at {width}");
             rt.update(|s, _| {
                 let session = &mut s.live.as_mut().unwrap().session;
                 session.as_mut().unwrap().phase = meeting_parts::Phase::Ended;

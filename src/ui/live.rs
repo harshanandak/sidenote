@@ -1459,8 +1459,7 @@ fn bar(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El 
         .as_ref()
         .filter(|l| l.panel_open && cap >= 44.0)
         .map(|_| transcript_panel(s, p, cap));
-    let control = parts_control(s, k, p, layer);
-    ask::overlay_with(s, k, p, narrow, layer, Some(control), panel)
+    ask::overlay_with(s, k, p, narrow, layer, parts_control(s, p), panel)
 }
 
 /// The notes editor: plain text, several lines, under the "Meeting at HH:MM" heading.
