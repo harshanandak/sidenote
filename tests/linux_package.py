@@ -35,7 +35,7 @@ def remove(path):
 def fixture(name):
     p = ROOT / name
     os.close(directory(p, fresh=True))
-    for name in ['tools/linux_test_env.sh', 'tools/linux_test_runner.py', 'tools/license_choices.json', 'LICENSE', 'THIRD_PARTY.md', 'assets/fonts/Inter-LICENSE.txt', 'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt', 'assets/icon/png/256.png']:
+    for name in ['tools/linux_test_env.sh', 'tools/linux_test_runner.py', 'tools/license_choices.json', 'LICENSE', 'THIRD_PARTY.md', 'assets/fonts/Inter-LICENSE.txt', 'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt', 'assets/licenses/solar-LICENSE.txt', 'assets/icon/png/256.png']:
         copy(REPO / name, p / name)
     put((p / 'tools/pack_linux.py'), CODE)
     put((p / 'tests/linux_package.py'), TEST_CODE)

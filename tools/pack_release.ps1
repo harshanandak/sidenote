@@ -91,7 +91,8 @@ try {
     $notices = @('LICENSE', 'THIRD_PARTY.md', 'assets/fonts/Inter-LICENSE.txt',
         'assets/fonts/Fraunces-LICENSE.txt', 'assets/fonts/Figtree-LICENSE.txt',
         'assets/fonts/NotoSansDevanagari-LICENSE.txt', 'assets/fonts/NotoSansTelugu-LICENSE.txt',
-        'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt')
+        'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt',
+        'assets/licenses/solar-LICENSE.txt')
     foreach ($notice in $notices) {
         $destination = Join-Path $stage $notice
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
