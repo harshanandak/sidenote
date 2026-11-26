@@ -568,22 +568,9 @@ fn new_menu(s: &State, p: Palette, page: Palette, layer: &mut Vec<El>) -> El {
         |s| s.nav.new_menu = !s.nav.new_menu,
     );
     if s.nav.new_menu {
-        let mut menu = col().child(record_meeting_row(s, page, layer));
-        if s.config.features.annotations {
-            let annotation = menu_row(
-                "New annotation",
-                page,
-                None,
-                Some(&icons::ANNOTATIONS),
-                None,
-            )
-            .key("nav-new-annotation")
-            .on_press(|s: &mut State| {
-                s.nav.new_menu = false;
-                s.open_annotations_with_note();
-            });
-            menu = menu.child(annotation);
-        }
+        // No "New annotation" row: the note editor needs a selected capture, so there is
+        // nothing to open from here yet.
+        let menu = col().child(record_meeting_row(s, page, layer));
         let anchor = (
             "nav-new-menu",
             "nav-new-menu",
@@ -681,7 +668,10 @@ pub(super) fn record_meeting_row(s: &State, p: Palette, layer: &mut Vec<El>) -> 
     match blocked {
         None => row
             .help("Start recording a meeting")
-            .on_press(|s: &mut State| s.new_meeting()),
+            .on_press(|s: &mut State| {
+                s.nav.new_menu = false;
+                s.new_meeting()
+            }),
         Some(reason) => row
             .label(format!("Record a meeting ({reason})"))
             .help(reason)
@@ -1151,7 +1141,7 @@ mod tests {
                 assert_eq!((row.help.as_deref(), row.focusable), (Some(reason), false));
                 assert!(
                     rt.find("nav-new-annotation").is_none(),
-                    "New annotation needs the feature"
+                    "no New annotation row"
                 );
                 if cfg!(target_os = "linux") {
                     assert!(
@@ -1191,8 +1181,9 @@ mod tests {
     }
 
     #[test]
-    fn new_menu_trigger_opens_record_and_annotation_rows() {
-        // Pressing the chip opens the menu with both rows; gating-off lives in the blocked test.
+    fn new_menu_trigger_opens_the_record_row() {
+        // Pressing the chip opens the menu. Even with annotations on there is no "New
+        // annotation" row (was present): the note editor needs a selected capture.
         let mut rt = new_meeting_runtime(1334.0, false);
         rt.update(|s, _| s.config.features.annotations = true);
         let (x, y) = rt.find("nav-new-menu").expect("New chip");
@@ -1201,7 +1192,7 @@ mod tests {
         rt.pointer_up(x, y);
         rt.frame(0.2);
         assert!(rt.find("new-meeting").is_some());
-        assert!(rt.find("nav-new-annotation").is_some());
+        assert!(rt.find("nav-new-annotation").is_none());
     }
 
     #[test]
