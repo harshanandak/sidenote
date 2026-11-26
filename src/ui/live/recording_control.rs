@@ -68,9 +68,14 @@ pub(in crate::ui) fn recording_note(s: &State, p: Palette) -> Option<El> {
     })
 }
 pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
+    use crate::ui::{
+        icons,
+        widgets::{ButtonRole, icon_button},
+    };
     let m = session(s);
     let recording = is_recording(s, &m);
     let live = s.on_live();
+    let compact = s.app_w.get() - crate::ui::nav::width(s) < 600.0;
     let open = if live {
         s.live.as_ref().is_some_and(|l| l.panel_open)
     } else {
@@ -103,7 +108,7 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
     )
     .key("meeting-transcript")
     .label(label)
-    .size(52.0, 40.0)
+    .size(if compact { 32.0 } else { 52.0 }, 40.0)
     .radius(20.0)
     .hover(p.chip)
     .on_hover_change(|s: &mut State, hovered, _| s.meeting_ui.recording_hover = hovered)
@@ -127,32 +132,22 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
     let mut control = row()
         .key("meeting-recording-control")
         .items_center()
-        .padding(2.0)
-        .h(44.0)
-        .min_w(56.0)
+        .gap(2.0)
         .radius(22.0)
         .fill(if recording { p.chip } else { p.card })
-        .border(1.0, p.line)
-        .shadow(3.0, 16.0, p.shadow)
         .child(transcript);
-    let status = (live && recording).then(|| {
-        let words = super::super::nav::recording_words(s, false);
-        if s.narrow.get() {
-            roles::META.wrap(words, p.ink)
+    let button = |name, key, glyph| {
+        if compact {
+            icon_button(glyph, name, key, ButtonRole::Ghost, p).size(28.0, 44.0)
         } else {
-            roles::META.line(words, p.ink).px(8.0)
+            quiet_button(name, key, p).h(44.0)
         }
-        .key("live-recording-status")
-    });
-    let (above, inline) = if s.narrow.get() {
-        (status, None)
-    } else {
-        (None, status)
     };
     if recording {
         // Two bars distinguish Pause here from Stop on other pages.
         let bar = |key: &'static str| el().key(key).w(3.0).h(9.0).radius(1.0).fill(p.ink);
-        control = control.children(inline).child(
+        control = control.children((live && !s.narrow.get()).then(|| recording_status(s, p)));
+        control = control.child(
             pressable(
                 row()
                     .key("meeting-pause-bars")
@@ -168,6 +163,7 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
             .h(28.0)
             .radius(14.0)
             .fill(p.bg)
+            .hover(p.button_hover)
             .center()
             .button_disabled(s.hex_record_busy())
             .on_press(|s: &mut State| s.meeting_pause()),
@@ -177,7 +173,7 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
         .is_some_and(|m| m.phase != SavedPhase::Ended || !m.parts.is_empty())
     {
         control = control.child(
-            quiet_button("Resume", "meeting-resume", p)
+            button("Resume", "meeting-resume", &icons::MIC)
                 .button_disabled(s.hex_record_busy())
                 .on_press(|s: &mut State| s.meeting_resume()),
         );
@@ -188,14 +184,14 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
         && !recording
     {
         control = control.child(
-            quiet_button(
+            button(
                 if m.stale() {
                     "Update notes"
                 } else {
                     "Generate notes"
                 },
                 "meeting-generate",
-                p,
+                &icons::FILE_TEXT,
             )
             .button_disabled(s.hex_record_busy())
             .on_press(|s: &mut State| s.meeting_generate()),
@@ -203,15 +199,9 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
     }
     let owner = s.live.as_ref().and_then(|l| l.session.as_ref());
     if recording && (live || owner.is_some_and(|m| s.selected.as_ref() == Some(&m.id))) {
-        use crate::ui::icons::STOP;
-        use crate::ui::widgets::{ButtonRole, icon_button};
         let expected = hex::recording_id(s);
         let reason = hex::stop_blocked(s);
-        let stop = if s.narrow.get() {
-            icon_button(&STOP, "Stop recording", "hex-stop", ButtonRole::Ghost, p).size(28.0, 28.0)
-        } else {
-            quiet_button("Stop", "hex-stop", p)
-        };
+        let stop = button("Stop", "hex-stop", &icons::STOP);
         control = control.child(
             stop.label(
                 reason.map_or_else(|| "Stop recording".into(), |why| format!("Stop ({why})")),
@@ -223,15 +213,21 @@ pub(in crate::ui) fn parts_control(s: &State, k: &Kit, p: Palette, layer: &mut V
             .on_press(move |s: &mut State| s.hex_record_stop(expected.clone())),
         );
     }
-    if let Some(status) = above {
-        col().gap(4.0).items_center().child(status).child(control)
-    } else {
-        control
-    }
+    control
+}
+
+fn recording_status(s: &State, p: Palette) -> El {
+    roles::META
+        .line(crate::ui::nav::recording_words(s, false), p.ink)
+        .key("live-recording-status")
 }
 
 pub(in crate::ui) fn status(s: &State, p: Palette) -> Option<El> {
-    let m = session(s)?;
+    let session = session(s);
+    if s.on_live() && s.narrow.get() && is_recording(s, &session) {
+        return Some(recording_status(s, p));
+    }
+    let m = session?;
     if m.phase == SavedPhase::Ended {
         return None;
     }
@@ -249,7 +245,6 @@ pub(in crate::ui) fn status(s: &State, p: Palette) -> Option<El> {
         } else {
             Phase::Paused
         });
-    // The recording line over the notes carries the notes state during recording.
     if phase == Phase::Recording {
         return None;
     }
@@ -286,7 +281,14 @@ mod tests {
     #[test]
     fn live_recording_shows_elapsed_time_beside_pause() {
         crate::test_paths::isolate();
-        for (width, narrow) in [(1334.0, false), (390.0, true), (360.0, true)] {
+        for (width, height, narrow) in [
+            (1334.0, 900.0, false),
+            (390.0, 900.0, true),
+            (360.0, 900.0, true),
+            (1334.0, 600.0, false),
+            (390.0, 600.0, true),
+            (360.0, 600.0, true),
+        ] {
             let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
             let mut state = State::new();
             crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
@@ -307,7 +309,7 @@ mod tests {
             let mut rt = Runtime::with_text(
                 state,
                 view,
-                (width, 900.0),
+                (width, height),
                 Env::default(),
                 TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
             );
@@ -323,6 +325,7 @@ mod tests {
             let status = keyed("live-recording-status");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
+            assert!(pause.rect[1] >= 0.0 && pause.rect[1] + pause.rect[3] <= height);
             assert_eq!(pause.label.as_deref(), Some("Pause recording"));
             assert!(rt.find("meeting-generate").is_none());
             assert_eq!(status.text.as_deref(), Some("Recording 12:34"));
