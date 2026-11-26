@@ -1,0 +1,68 @@
+schemaVersion: forge.config/1
+values:
+  lanes:
+    tiers:
+      security:
+        - .forge/config.yaml
+        - .github/workflows/**
+        - Cargo.toml
+        - Cargo.lock
+        - crates/sidenote-sync/**
+        - tools/local_build.ps1
+      code:
+        - src/**
+        - crates/**
+        - tools/**
+    roles:
+      builder: { harness: codex, model: gpt-6.2-sol, effort: high }
+      fixer: { harness: codex, model: gpt-6.2-sol, effort: high }
+      reviewer: { harness: codex, model: gpt-6.1-sol, effort: high }
+      tester: { harness: codex, model: gpt-6.1-terra, effort: max }
+blocks:
+  accounts:
+    source:
+      builtin: forge/accounts
+    config:
+      maxCommits: 500
+  agent:
+    source:
+      builtin: forge/agent
+  work:
+    source:
+      builtin: forge/work
+    config:
+      idPrefix: sidenote
+      claimTtlSeconds: 7200
+      lanes:
+        max: 3
+        discardIgnored: [ target/, node_modules/, dist/, .agents/, .claude/ ]
+      labelOrder:
+        - p0
+        - p1
+        - p2
+        - p3
+        - p4
+      labels:
+        required:
+          - prefix: "area:"
+          - oneOf: [ p0, p1, p2, p3 ]
+  memory:
+    source:
+      builtin: forge/memory
+    config:
+      scope: sidenote
+  check:
+    source:
+      builtin: forge/check
+    config:
+      gate:
+        requiredChecks: [ "CI Gate" ]
+        receiptChecks: [ "typecheck", "structure" ]
+      # Local commands go through the guarded wrapper; tests and Clippy run only in hosted CI.
+      commands:
+        typecheck: python -I tools/check.py --fast
+        structure: powershell -NoProfile -File tools/local_build.ps1 fmt --all -- --check
+templates:
+  - template: harsha/delivery@0.1.2
+    digest: sha256:8197e282d3febdf98dc5774f7c330dedc3110c82c200d23a69eed19edce6f047
+    importedAt: 2026-11-25T13:33:50.932Z

@@ -934,11 +934,17 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
     .child(crate::ui::memory::settled::meeting_footer(s, m, p).mt(20.0))
 }
 
+pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
+
 pub fn transcript_height(s: &State) -> f32 {
     // Leave room for transcript rows when the time controls wrap on a phone.
     let time_controls =
         super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
-    let minimum = if time_controls { 256.0 } else { 124.0 };
+    let minimum = if time_controls {
+        TIME_CONTROLS_MIN_HEIGHT
+    } else {
+        124.0
+    };
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
@@ -951,6 +957,14 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // The wide grid already sets the notes 44 points in from its edge, so its column has no
     // gutter of its own; below the grid's width the notes keep the page gutter.
     let side = super::gutter(s);
+    let overlay_thread =
+        super::phone(s) && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
+    let bottom_pad = 16.0
+        + if overlay_thread {
+            s.overlay_h.get()
+        } else {
+            0.0
+        };
     // With no gutter and the tasks stacked, their rows hang 8 either side of the column, so the
     // scroll area is 8 wider each side there, as the tasks column's is on the wide grid.
     let hang = if strip && !wide { 8.0 } else { 0.0 };
@@ -1000,7 +1014,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 doc.max_w(COLUMN + 2.0 * (side + hang))
                     .px(side + hang)
                     .pt(6.0)
-                    .pb(16.0),
+                    .pb(bottom_pad),
                 "meeting-scroll",
             )
             .grow(1.0),
@@ -1050,21 +1064,23 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 ),
         );
     }
-    main = main.child(
-        col()
-            .key("meeting-bottom-bar")
-            .w_full()
-            .px(side)
-            .child(ask::overlay_with(
-                s,
-                k,
-                p,
-                narrow,
-                layer,
-                crate::ui::live::parts_control(s, p),
-                None,
-            )),
-    );
+    let dock = col()
+        .key("meeting-bottom-bar")
+        .w_full()
+        .child(ask::overlay_with(
+            s,
+            k,
+            p,
+            narrow,
+            layer,
+            crate::ui::live::parts_control(s, p),
+            None,
+        ));
+    main = main.child(if overlay_thread {
+        dock.pin(Some(0.0), None, Some(0.0), Some(0.0))
+    } else {
+        dock
+    });
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
         columns = columns.pr(EDGE);
@@ -1245,10 +1261,12 @@ mod tests {
                         .unwrap()
                 };
                 let viewport = element(&rt, "meeting-scroll");
+                let dock = element(&rt, "ask-overlay");
                 assert!(last_line.rect[1] >= viewport.rect[1]);
                 assert!(
                     last_line.rect[1] + last_line.rect[3] <= viewport.rect[1] + viewport.rect[3]
                 );
+                assert!(last_line.rect[1] + last_line.rect[3] <= dock.rect[1]);
             }
 
             rt.update(|s, _| s.toggle_transcript());
@@ -1434,6 +1452,7 @@ mod tests {
         crate::test_paths::isolate();
         let folder = core::meetings_dir().join(ID);
         std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("english-summary.json"), b"{}").unwrap();
         std::fs::write(
             folder.join("english-transcript.md"),
             "[00:00:06.000] Maya (English): Ready?\n[00:00:27.000] Tom (English): Start the review.\n",
@@ -1449,7 +1468,9 @@ mod tests {
         rt.settle_all();
         rt.frame(0.0);
 
-        assert!(element(&rt, "transcript-jump").focusable);
+        let is_jump =
+            |e: rune::ElementInfo| e.focusable && e.label.as_deref() == Some("Go to a time");
+        assert!(rt.elements().into_iter().any(is_jump));
         let scroll = element(&rt, "transcript-scroll").rect;
         assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
         let [_, y, _, h] = element(&rt, "transcript-copy").rect;

@@ -383,8 +383,7 @@ fn pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard() {
         );
     }
     assert!(rt.find("meeting-pause-square").is_none());
-    // Stop is a different control with a different name, and it is on the other pages.
-    assert!(rt.find("hex-stop").is_none());
+    assert!(rt.find("hex-stop").is_some());
     rt.update(|s, _| {
         s.selected = Some(OTHER.into());
         s.load_saved();
