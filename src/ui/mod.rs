@@ -2427,7 +2427,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.live_document_h.set(h as f32);
     }
     if s.selected.is_some()
-        && s.meeting_ui.tabs
+        && (s.meeting_ui.tabs || meeting::phone(s))
         && let Some(h) = cx.layout_with("ask-overlay", |r| r[3].round() as i32)
     {
         s.overlay_h.set(h as f32);

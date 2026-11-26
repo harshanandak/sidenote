@@ -2157,6 +2157,47 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
 
 /// Long notes: the last row ends below where the old 150 fade began, and is still clear of it.
 #[test]
+fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
+    if in_parent("the_dock_leaves_the_last_notes_row_clear_on_a_phone") {
+        return;
+    }
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with((390.0, 600.0), || {
+        let path = core::meetings_dir().join(MEETING).join("english-summary.json");
+        let summary = serde_json::json!({
+            "title": "Beta launch plan",
+            "context": ["The group reviewed the launch plan. ".repeat(45)],
+            "verify": ["Confirm the launch date."],
+        });
+        std::fs::write(path, summary.to_string()).unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
+    rt.update(|s, _| {
+        s.meeting_ui.tabs = false;
+        scene_agents(s, &["codex"]);
+        s.saved.messages.push(Message {
+            role: "assistant".into(),
+            text: "An earlier answer about the launch. ".repeat(30),
+            ..Default::default()
+        });
+    });
+    rt.frame(0.0);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(meeting::phone(&rt.state));
+    assert!(rect_of(&rt, "ask-thread")[3] > 78.0);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-scroll"));
+    rt.settle_all();
+    rt.frame(0.0);
+    let last = rect_of(&rt, "verify-0");
+    let dock = rect_of(&rt, "ask-overlay");
+    assert!(
+        last[1] >= rect_of(&rt, "meeting-scroll")[1] && last[1] + last[3] <= dock[1],
+        "the last summary row {last:?} is not clear of the dock {dock:?}"
+    );
+}
+
+#[test]
 fn the_dock_leaves_the_last_notes_row_clear() {
     if in_parent("the_dock_leaves_the_last_notes_row_clear") {
         return;
