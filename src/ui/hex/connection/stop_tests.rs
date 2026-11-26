@@ -798,10 +798,8 @@ fn stale_stop_refuses_replacement_recording_through_ui_and_engine() {
 }
 
 fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
-    let mut layer = Vec::new();
-    let (pill, action, _) =
-        crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
-    rune_kit::root(rune::row().children(pill).children(action), layer)
+    let (pill, action) = crate::ui::nav::actions(state, crate::ui::theme::palette(false), false);
+    rune_kit::root(rune::row().children(pill).children(action), Vec::new())
 }
 
 #[test]
@@ -1784,13 +1782,10 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
 #[cfg(any(target_os = "linux", all(windows, feature = "recorder-ready-proof")))]
 fn meeting_control(state: &State, _: &mut rune::Cx<State>) -> rune::El {
     let mut layer = Vec::new();
-    let (button, _) = crate::ui::nav::new_meeting_button(
-        state,
-        crate::ui::theme::palette(false),
-        false,
-        &mut layer,
-    );
-    rune_kit::root(button, layer)
+    rune_kit::root(
+        crate::ui::nav::record_meeting_row(state, crate::ui::theme::palette(false), &mut layer),
+        layer,
+    )
 }
 
 #[cfg(all(windows, feature = "recorder-ready-proof"))]

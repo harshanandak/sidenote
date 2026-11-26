@@ -2356,13 +2356,7 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 
 const TITLEBAR_H: f32 = 48.0;
 
-fn titlebar(
-    s: &State,
-    cx: &mut Cx<State>,
-    p: theme::Palette,
-    narrow: bool,
-    layer: &mut Vec<El>,
-) -> (El, Option<&'static str>) {
+fn titlebar(s: &State, cx: &mut Cx<State>, p: theme::Palette, narrow: bool) -> El {
     let insets = cx.chrome_insets();
     cx.caption_color(p.ink);
     let gutter = if narrow {
@@ -2381,10 +2375,10 @@ fn titlebar(
         .children(s.on_hex().then(nav::logo))
         .children((!s.on_hex()).then(|| nav::toggle(s, p)))
         .children((s.on_hex() || !s.sidebar_is_open()).then(|| nav::search(p)));
-    let (pill, action, blocked) = if s.on_hex() {
-        (None, None, None)
+    let (pill, action) = if s.on_hex() {
+        (None, None)
     } else {
-        nav::actions(s, p, narrow, layer)
+        nav::actions(s, p, narrow)
     };
     let center = row().h(TITLEBAR_H).center().min_w(0.0).children(pill);
     let right = row()
@@ -2410,7 +2404,7 @@ fn titlebar(
         .child(left.h(TITLEBAR_H))
         .child(center)
         .child(right);
-    (bar, blocked)
+    bar
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -2529,23 +2523,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         meeting::pane(s, &k, p, narrow, &mut layer)
     };
-    let (bar, blocked) = titlebar(s, cx, p, window_narrow, &mut layer);
-    let notice = blocked.map(|reason| {
-        row()
-            .w_full()
-            .pl(8.0)
-            .pr(8.0 + cx.chrome_insets().trailing)
-            .py(4.0)
-            .justify_end()
-            .child(
-                roles::META
-                    .wrap(reason, p.soft)
-                    .min_w(0.0)
-                    .max_w(440.0)
-                    .role("status")
-                    .key("new-meeting-status"),
-            )
-    });
+    let bar = titlebar(s, cx, p, window_narrow);
     let mut main = col()
         .key("main")
         .grow(1.0)
@@ -2553,7 +2531,6 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .min_h(0.0)
         .fill(p.bg)
-        .children(notice)
         .children((!on_hex).then(|| page_actions(s, p)).flatten())
         .children(updates::recorder_gap_notice(s, p));
     if let Some(bar) = hex::error_bar(s, p) {

@@ -393,7 +393,7 @@
 
   "src/ui/ai_notes.rs": "3202445a5cf349915eb7ce8fb5083e8849dca594f24ad26d1e61ca1a21f80eeb",
 
-  "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
+  "src/ui/annotations.rs": "50695d4047c4bd92840d02e57f0c7d640e37fe11546476b514c0527a464fa164",
 
   "src/ui/annotations/notebooks.rs": "b01a26b59d7c308ea9b6b071ff7c93afab8271d55ddfb4fe616c76411616645d",
 
@@ -421,11 +421,11 @@
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
-  "src/ui/hex/connection/stop_tests.rs": "f5cddef3a9d27da3571e1332c230eafc5ec33a2fff8e0ec489705e91b059c283",
+  "src/ui/hex/connection/stop_tests.rs": "dff44a18a6c10121a40367ddad95a397da13591bdf00dd827301ce93d10f26a6",
 
   "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
-  "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
+  "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
   "src/ui/hex/settings.rs": "7d5df04622fbeae8b98c050f0c72f8ffc63492c1a72abf4376215afb4c9bc6c0",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "8d7494b7d33a0b4b24a9ee90aaa44bf0a51f5545b93ec25ac860e34b21022ce8",
+  "src/ui/mod.rs": "ef0cbabfff35e6e1509112220342aa0ef76aeae7d849ef6738ada7455d4096e0",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -455,7 +455,7 @@
 
   "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
 
-  "src/ui/recording_state_tests.rs": "c27e375bef6b71cc79dbf5b996d05904f9a219a806f31968db145c000b3047db",
+  "src/ui/recording_state_tests.rs": "e31ed834e9edd0e4b875d1594eee1e5e629b5df387a54a62da658d4f4908d097",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 
@@ -465,7 +465,7 @@
 
   "src/ui/theme.rs": "2e887406b7948ce0cbdffeed222c31233af6adde1765834a8fb5ea7b99dbf917",
 
-  "src/ui/updates.rs": "27541fef2da079140847c8b77684c5aa2a5c54e9f91d80df9e2fb7a0915f275f",
+  "src/ui/updates.rs": "d293edf1469f2b55c6c775213fa0baadcc29b2b33dfa97b75714f6da3d84355f",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 

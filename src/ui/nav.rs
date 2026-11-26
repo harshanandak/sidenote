@@ -58,6 +58,8 @@ pub struct NavCache {
     /// "Show all" under Projects. Kept across rebuilds for the session, never saved.
     pub show_all: bool,
     pub profile_menu: bool,
+    /// The sidebar "+ New" menu. Kept across rebuilds like the profile menu.
+    pub new_menu: bool,
 }
 
 impl State {
@@ -85,6 +87,7 @@ impl State {
         let mut cache = NavCache {
             show_all: self.nav.show_all,
             profile_menu: self.nav.profile_menu,
+            new_menu: self.nav.new_menu,
             ..NavCache::default()
         };
         for m in &self.meetings {
@@ -493,7 +496,9 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .fill(p.side)
         .px(PAD);
     if wide {
-        pane = pane.child(workspace_row(p));
+        pane = pane
+            .child(workspace_row(p))
+            .child(new_menu(s, p, page, layer));
     } else {
         pane = pane.pt(10.0);
     }
@@ -542,6 +547,57 @@ fn collapse(p: Palette) -> El {
     .on_press(|s: &mut State| s.toggle_sidebar())
 }
 
+/// The "+ New" chip under the workspace row and its two rows. The chip lives in the sidebar;
+/// the popover sits in the page colours, like the profile menu.
+fn new_menu(s: &State, p: Palette, page: Palette, layer: &mut Vec<El>) -> El {
+    let chip = row()
+        .w_full()
+        .h(32.0)
+        .px(10.0)
+        .gap(8.0)
+        .items_center()
+        .radius(9.0)
+        .fill(p.chip)
+        .child(icons::draw(&icons::PLUS, 16.0, p.ink))
+        .child(roles::NAV.bold().line("New", p.ink).grow(1.0))
+        .child(icons::draw(&icons::CHEVRON_DOWN, 13.0, p.soft).a11y_hidden());
+    let trigger = menu_trigger(
+        pressable(chip).key("nav-new-menu").label("New"),
+        s.nav.new_menu,
+        p,
+        |s| s.nav.new_menu = !s.nav.new_menu,
+    );
+    if s.nav.new_menu {
+        let mut menu = col().child(record_meeting_row(s, page, layer));
+        if s.config.features.annotations {
+            let annotation = menu_row(
+                "New annotation",
+                page,
+                None,
+                Some(&icons::ANNOTATIONS),
+                None,
+            )
+            .key("nav-new-annotation")
+            .on_press(|s: &mut State| {
+                s.nav.new_menu = false;
+                s.open_annotations_with_note();
+            });
+            menu = menu.child(annotation);
+        }
+        let anchor = (
+            "nav-new-menu",
+            "nav-new-menu",
+            rune::Side::Bottom,
+            rune::Align::Start,
+            WIDE - 2.0 * PAD,
+        );
+        menu_surface(&super::theme::kit(&page), page, layer, menu, anchor, |s| {
+            s.nav.new_menu = false
+        });
+    }
+    col().w_full().pt(2.0).pb(8.0).child(trigger)
+}
+
 /// The sidebar scene with every project shown.
 pub fn scene_all(s: &mut State) {
     s.nav.show_all = true;
@@ -583,37 +639,23 @@ fn recording_status(s: &State) -> super::live::RecordingStatus {
     super::live::RecordingStatus::for_phase(s, phase)
 }
 
-pub(super) fn actions(
-    s: &State,
-    p: Palette,
-    narrow: bool,
-    layer: &mut Vec<El>,
-) -> (Option<El>, Option<El>, Option<&'static str>) {
+pub(super) fn actions(s: &State, p: Palette, narrow: bool) -> (Option<El>, Option<El>) {
     if s.annotations.open {
-        return (None, Some(super::annotations::new_button(s, p)), None);
+        return (None, Some(super::annotations::new_button(s, p)));
     }
     if recording_status(s) == super::live::RecordingStatus::Paused {
-        return (Some(recording_pill(s, p, narrow)), None, None);
+        return (Some(recording_pill(s, p, narrow)), None);
     }
     let recording = s.hex_recording();
+    // The "+ New" menu holds the entry point now; the top bar keeps only pills.
     let pill = (recording && (s.on_live() || !meeting_shows_pause(s)))
         .then(|| recording_pill(s, p, narrow));
-    if !recording || s.hex_status_unknown() {
-        let (button, blocked) = new_meeting_button(s, p, narrow, layer);
-        (pill, Some(button), blocked)
-    } else {
-        (pill, None, None)
-    }
+    (pill, None)
 }
 
-pub(super) fn new_meeting_button(
-    s: &State,
-    p: Palette,
-    narrow: bool,
-    layer: &mut Vec<El>,
-) -> (El, Option<&'static str>) {
-    let listener_problem = super::updates::listener_problem(s);
-    let blocked = match listener_problem {
+/// Blocked reason (and Hex-check text) for the "Record a meeting" row; shared with its tests.
+fn new_meeting_blocked(s: &State) -> (Option<&'static str>, Option<&'static str>) {
+    let blocked = match super::updates::listener_problem(s) {
         Some(_) => None,
         None => hex::start_blocked(s),
     };
@@ -622,38 +664,30 @@ pub(super) fn new_meeting_button(
         Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
         _ => None,
     };
-    let b = super::widgets::button(
-        progress.unwrap_or(if narrow { "+" } else { "+ New meeting" }),
-        "new-meeting",
-        super::widgets::ButtonRole::Secondary,
-        p,
-    )
-    .h(28.0)
-    .px(if narrow { 8.0 } else { 10.0 })
-    .radius(14.0);
-    if let Some(error) = listener_problem {
-        return (
-            super::updates::listener_popover(s, b, error, p, layer),
-            None,
-        );
+    (blocked, progress)
+}
+
+/// The sidebar menu's "Record a meeting" row: the validated new-meeting action with its
+/// blocked state. The reason shows in the row itself; there is no separate status line.
+pub(super) fn record_meeting_row(s: &State, p: Palette, layer: &mut Vec<El>) -> El {
+    const NAME: &str = "Record a meeting";
+    if let Some(error) = super::updates::listener_problem(s) {
+        let row = menu_row(NAME, p, None, Some(&icons::MIC), None).key("new-meeting");
+        return super::updates::listener_popover(s, row, error, p, layer);
     }
-    let action = match blocked {
-        None => b
-            .label("New meeting")
+    let (blocked, progress) = new_meeting_blocked(s);
+    let detail = blocked.filter(|_| !cfg!(target_os = "linux"));
+    let row = menu_row(NAME, p, detail, Some(&icons::MIC), None).key("new-meeting");
+    match blocked {
+        None => row
             .help("Start recording a meeting")
             .on_press(|s: &mut State| s.new_meeting()),
-        Some(reason) => b
-            .label(format!("New meeting ({reason})"))
+        Some(reason) => row
+            .label(format!("Record a meeting ({reason})"))
             .help(reason)
             .opacity(if progress.is_some() { 1.0 } else { 0.5 })
             .disabled(true),
-    };
-    let notice = if cfg!(target_os = "linux") || progress.is_some() {
-        None
-    } else {
-        blocked
-    };
-    (action, notice)
+    }
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
@@ -1053,6 +1087,9 @@ mod tests {
         crate::test_paths::isolate();
         let mut state = State::new();
         state.go_home();
+        // The gating test turns annotations on; everything else here needs it off on any
+        // channel, since dev builds default it on.
+        state.config.features.annotations = false;
         crate::ui::updates::settings_fixture(&mut state);
         state.listener_probed(
             Some(sidenote::updates::ListenerStatus {
@@ -1075,87 +1112,96 @@ mod tests {
     }
 
     #[test]
-    fn blocked_new_meeting_keeps_status_below_native_titlebar() {
-        let reason = if cfg!(target_os = "linux") {
-            "Recording is not available on Linux yet."
-        } else {
-            "Checking the meeting listener"
-        };
-        let label = format!("New meeting ({reason})");
+    fn blocked_record_meeting_row_shows_reason_in_sidebar_menu() {
+        // S1 moved the entry point from the top bar into the sidebar "+ New" menu: the old
+        // button and status line are gone, and the reason shows as the row's description.
         for width in [390.0, 1334.0] {
-            let elements = new_meeting_runtime(width, true).elements();
-            let find = |key| {
-                elements
+            // A preparing listener blocks with its reason; a ready one still waits on Hex.
+            for preparing in [true, false] {
+                let reason = if cfg!(target_os = "linux") {
+                    "Recording is not available on Linux yet."
+                } else {
+                    ["Checking the meeting listener", "Checking for Hex"][usize::from(!preparing)]
+                };
+                let mut rt = new_meeting_runtime(width, preparing);
+                rt.update(|s, _| {
+                    s.drawer_open.set(true);
+                    s.nav.new_menu = true;
+                });
+                rt.frame(0.0);
+                let elements = rt.elements();
+                let find = |key: &str| {
+                    elements
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some(key))
+                        .unwrap_or_else(|| panic!("missing {key}"))
+                };
+                let bar = find("top-bar");
+                let stray = elements
                     .iter()
-                    .find(|e| e.key.as_deref() == Some(key))
-                    .unwrap_or_else(|| panic!("missing {key} at width {width}"))
-            };
-            let bar = find("top-bar");
-            let button = find("new-meeting");
-            assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
-            assert!(button.path.starts_with(&bar.path));
-            assert!(button.rect[1] + button.rect[3] <= bar.rect[1] + bar.rect[3]);
-            assert_eq!(button.label.as_deref(), Some(label.as_str()));
-            assert!(!button.focusable);
-            let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
-            if cfg!(target_os = "linux") {
-                assert!(status.is_none());
-            } else {
-                let status = status.expect("visible start-blocked reason");
-                assert_eq!(status.role, "status");
-                assert!(!status.path.starts_with(&bar.path));
-                assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
+                    .filter(|e| e.key.as_deref() == Some("new-meeting"))
+                    .any(|row| row.path.starts_with(&bar.path));
+                assert!(!stray, "new-meeting in top-bar");
+                let trigger = find("nav-new-menu");
+                assert!(trigger.path.starts_with(&find("nav").path));
+                assert_eq!(trigger.label.as_deref(), Some("New"));
+                let row = find("new-meeting");
+                let want = format!("Record a meeting ({reason})");
+                assert_eq!(row.label.as_deref(), Some(want.as_str()));
+                assert_eq!((row.help.as_deref(), row.focusable), (Some(reason), false));
+                assert!(
+                    rt.find("nav-new-annotation").is_none(),
+                    "New annotation needs the feature"
+                );
+                if cfg!(target_os = "linux") {
+                    assert!(
+                        !elements.iter().any(|e| e.text.as_deref() == Some(reason)),
+                        "no separate Linux status line"
+                    );
+                } else {
+                    let mut shown = elements
+                        .iter()
+                        .filter(|e| e.text.as_deref() == Some(reason));
+                    let desc = shown.next().expect("reason in the row");
+                    assert!(shown.next().is_none(), "reason shows once");
+                    assert!(desc.path.starts_with(&row.path), "reason in its row");
+                    let name = elements
+                        .iter()
+                        .find(|e| e.text.as_deref() == Some("Record a meeting"))
+                        .expect("row name");
+                    assert_eq!(desc.text.as_deref(), Some(reason));
+                    assert_eq!(desc.rect[3], roles::META.lh);
+                    assert!(desc.rect[1] >= name.rect[1] + name.rect[3]);
+                    let [x, y, w, h] = desc.rect;
+                    let [bx, by, bw, bh] = row.rect;
+                    let inside = x >= bx - 0.5
+                        && y >= by - 0.5
+                        && x + w <= bx + bw + 0.5
+                        && y + h <= by + bh + 0.5;
+                    assert!(inside, "reason shows inside the row");
+                }
+                assert!(
+                    !elements
+                        .iter()
+                        .any(|e| e.key.as_deref() == Some("new-meeting-status")),
+                    "no separate status line"
+                );
             }
         }
     }
 
-    #[cfg(windows)]
     #[test]
-    fn narrow_new_meeting_gives_blocked_reason_its_own_line() {
-        let elements = new_meeting_runtime(360.0, true).elements();
-        let button = elements
-            .iter()
-            .find(|e| e.key.as_deref() == Some("new-meeting"))
-            .unwrap();
-        let checking = elements
-            .iter()
-            .find(|e| e.text.as_deref() == Some("Checking the meeting listener"))
-            .expect("short checking message");
-        assert!(checking.rect[1] >= button.rect[1] + button.rect[3] + 5.0);
-        assert_eq!(checking.rect[3], roles::META.lh);
-        let button_right = button.rect[0] + button.rect[2];
-        let checking_right = checking.rect[0] + checking.rect[2];
-        assert!((button_right - checking_right).abs() < 0.5);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
-        let elements = new_meeting_runtime(360.0, false).elements();
-        let button = elements
-            .iter()
-            .find(|e| e.key.as_deref() == Some("new-meeting"))
-            .unwrap();
-        let mut labels = elements
-            .iter()
-            .filter(|e| e.text.as_deref() == Some("Checking for Hex"));
-        let [x, y, w, h] = labels.next().expect("short checking message").rect;
-        let [bx, by, bw, bh] = button.rect;
-        assert!(
-            x >= bx - 0.5 && y >= by - 0.5 && x + w <= bx + bw + 0.5 && y + h <= by + bh + 0.5,
-            "progress shows inside the button"
-        );
-        assert!(
-            labels.next().is_none(),
-            "no separate status line below the button"
-        );
-        assert_eq!(
-            button.label.as_deref(),
-            Some("New meeting (Checking for Hex)")
-        );
-        assert_eq!(button.help.as_deref(), Some("Checking for Hex"));
-        assert!(!button.focusable, "the button is disabled while checking");
-        assert!(button.rect[0] + button.rect[2] <= 360.0 + 0.5);
+    fn new_menu_trigger_opens_record_and_annotation_rows() {
+        // Pressing the chip opens the menu with both rows; gating-off lives in the blocked test.
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| s.config.features.annotations = true);
+        let (x, y) = rt.find("nav-new-menu").expect("New chip");
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.2);
+        assert!(rt.find("new-meeting").is_some());
+        assert!(rt.find("nav-new-annotation").is_some());
     }
 
     #[test]
@@ -1257,7 +1303,7 @@ mod tests {
         let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
         let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
-        // S1a sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
+        // S1 sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
             (30.0, 204.0, expected)

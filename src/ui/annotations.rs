@@ -225,6 +225,12 @@ fn hex_hints(settings: &[sidenote::hex_engine::Setting]) -> (Option<String>, boo
     (shortcut, disabled)
 }
 impl State {
+    /// Open Annotations from the "+ New" menu with the note editor open for the chosen
+    /// capture, without pretending a capture was reviewed.
+    pub fn open_annotations_with_note(&mut self) {
+        self.open_annotations();
+        self.annotations.note_open = true;
+    }
     pub fn open_annotations(&mut self) {
         if !self.config.features.annotations {
             return;

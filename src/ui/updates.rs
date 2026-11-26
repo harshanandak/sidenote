@@ -687,7 +687,7 @@ pub fn listener_popover(
     use super::widgets;
     let trigger = trigger
         .child(widgets::dot(6.0, p.warn).key("listener-error-dot"))
-        .label("New meeting. Recording is unavailable")
+        .label("Record a meeting. Recording is unavailable")
         .on_press(|s: &mut State| s.updates.listener_open = !s.updates.listener_open);
     let retry = widgets::retry_action(
         widgets::notice_action(
