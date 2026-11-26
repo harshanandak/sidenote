@@ -14,14 +14,38 @@ SOURCE = f"https://raw.githubusercontent.com/iconify/icon-sets/{COMMIT}/json/sol
 SHA256 = "8a5c2c7c8f4f7b98e08a527839f13c920d3315dfac41366369658d1252c67e7d"
 SOURCE_LIMIT = 16 * 1024 * 1024
 OUTPUT = Path(__file__).resolve().parents[2] / "src/ui/icons/solar.rs"
-ICONS = (("CLOCK", "clock-circle"), ("FOLDER", "folder"))
+ICONS = (
+    ("CLOCK", "clock-circle"),
+    ("FOLDER", "folder"),
+    ("HOME", "home-smile"),
+    ("MEETINGS", "document"),
+    ("TASKS", "check-circle"),
+    ("PEOPLE", "users-group-rounded"),
+    ("MEMORY", "pin"),
+    ("DIARY", "calendar-minimalistic"),
+    ("ANNOTATIONS", "pen"),
+    ("SETTINGS", "settings"),
+    ("DEVICE", "monitor-smartphone"),
+    ("GENERAL", "user"),
+    ("PROMPTS", "notebook-minimalistic"),
+    ("EXPERIMENTAL", "flask"),
+    ("CONNECTED_APPS", "link"),
+    ("APPEARANCE", "sun"),
+    ("PRIVACY", "lock-keyhole-minimalistic"),
+    ("UPDATES", "download-minimalistic"),
+    ("DIAGNOSTICS", "pulse"),
+)
 PAINT = {
     "fill": "none",
     "stroke": "currentColor",
     "stroke-linecap": "round",
     "stroke-width": "1.5",
 }
-GEOMETRY = {"path": ("d",), "circle": ("cx", "cy", "r")}
+GEOMETRY = {
+    "path": ("d",),
+    "circle": ("cx", "cy", "r"),
+    "ellipse": ("cx", "cy", "rx", "ry"),
+}
 NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 PATH_TOKEN = re.compile(r"[MmZzLlHhVvCcSsQqTtAa, \t\r\n]|" + NUMBER.pattern)
 
@@ -58,8 +82,8 @@ def outline_shapes(body):
             numbers = NUMBER.findall(path)
         else:
             numbers = [attrs[k] for k in keys]
-            if not all(NUMBER.fullmatch(n) for n in numbers) or float(attrs["r"]) <= 0:
-                raise ValueError("invalid SVG circle geometry")
+            if not all(NUMBER.fullmatch(n) for n in numbers) or any(float(n) <= 0 for n in numbers[2:]):
+                raise ValueError("invalid SVG ellipse or circle geometry")
         if not numbers or not all(-1024 <= float(n) <= 1024 for n in numbers):
             raise ValueError("SVG coordinates out of range")
 
@@ -82,8 +106,8 @@ def generate(data):
             raise ValueError(f"unexpected view box for {name}")
         lines.extend(("solar_icon!(", f"    {entry},", f'    "{name}",'))
         lines.extend(f'    r#"{shape}"#,' for shape in outline_shapes(icon["body"]))
-        lines.extend((");", ""))
-    return "\n".join(lines).encode("utf-8")
+        lines.append(");")
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def self_test():
@@ -97,6 +121,8 @@ def self_test():
     assert outline_shapes(body) == [circle, '<path d="M4 8L12 16" stroke-linejoin="round"/>']
     assert outline_shapes('<path fill="none" stroke="currentColor" stroke-linecap="round"'
                           ' stroke-width="1.5" d="M0 0L1 1"/>') == ['<path d="M0 0L1 1"/>']
+    ellipse = '<ellipse cx="9" cy="17" rx="7" ry="4"/>'
+    assert outline_shapes(wrap(ellipse)) == [ellipse]
     dataset = {
         "width": 24,
         "height": 24,
@@ -113,6 +139,8 @@ def self_test():
 
     for bad in (
         wrap(circle + "<script/>"),
+        wrap('<ellipse cx="9" cy="17" rx="7" ry="0"/>'),
+        wrap('<ellipse cx="9" cy="17" rx="7" ry="4" transform="scale(2)"/>'),
         wrap(circle + "<style/>"),
         wrap('<image href="https://example.invalid/icon.svg"/>'),
         wrap('<use href="#local"/>'),

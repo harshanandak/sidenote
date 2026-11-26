@@ -312,6 +312,8 @@ pub fn test_helper(h: Helper, model: &str) -> Result<Duration, String> {
 }
 
 #[cfg(test)]
+mod long_meetings_tests;
+#[cfg(test)]
 pub(crate) mod tests;
 
 /// Fixed policy result for the independent scripts entry points; never migrate missing settings.
