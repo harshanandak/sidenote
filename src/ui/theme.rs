@@ -1,8 +1,7 @@
-//! Colours, fonts and the type scale. Light and dark follow the system setting. Greys carry
-//! structure and hierarchy (`bg`, `card`, `raised`, `side`, `line`, then the text greys
-//! `ink`, `body`, `soft`, `faint`); the coral accent marks the one main action and the focus ring, and nothing
-//! else (not links, progress, selection or decoration); green, amber and red mean status only. Every text token keeps 4.5:1 on the fills it sits on, in both modes
-//! (`text_tokens_keep_four_and_a_half_to_one`). docs/design/typography.md lists the ratios.
+//! Colours, fonts and the type scale. Named base colours feed meaning tokens, which the
+//! component palette maps to the fields used by today's renderers. The caller supplies the
+//! light/dark setting. Classic uses coral for the main action and focus, and green for status
+//! and enabled switches. docs/design/typography.md lists the text contrast ratios.
 use rune::{Color, Family, TextStyle};
 use rune_kit::{Kit, PaletteSeed};
 
@@ -42,8 +41,9 @@ pub struct Palette {
     /// The primary button: the accent, with ink that keeps 4.5:1 on it.
     pub button_fill: Color,
     pub button_ink: Color,
-    /// A switch that is on: grey, so the accent stays the one main action.
+    /// Classic uses the positive status green for an enabled switch in both modes.
     pub switch_on: Color,
+    /// The enabled knob is white in light mode and deep green in dark mode.
     pub switch_knob: Color,
     pub button_border: Color,
     pub danger: Color,
@@ -58,84 +58,195 @@ fn hex(value: &str) -> Color {
     rune::color::hex(value).expect("valid theme colour")
 }
 
-pub fn palette(dark: bool) -> Palette {
-    let c = if dark {
-        [
-            "#1a1a18",
-            "#242422",
-            "#141413",
-            "#e9e7e1",
-            "#bcb9b0",
-            "#b0ada4",
-            "#302f2c",
-            "#ee8566",
-            "#69c995",
-            "#1b2c22",
-            "#e3aa55",
-            "#33281a",
-            "#b49ee3",
-            "#2a2a27",
-            "#2f2f2c",
-            "#363019",
-            "#00000066",
-            "#000000b3",
-        ]
-    } else {
-        [
-            "#fcfbf8",
-            "#ffffff",
-            "#f3f2ed",
-            "#1e1e1c",
-            "#5d5b55",
-            "#6b6861",
-            "#e6e3db",
-            "#b8452a",
-            "#1d7a4c",
-            "#e4f3eb",
-            "#9a5800",
-            "#fcf0dc",
-            "#6a4ea3",
-            "#efede7",
-            "#eceae4",
-            "#fff3c4",
-            "#1e1e1c1f",
-            "#1e1e1c73",
-        ]
+#[derive(Clone, Copy)]
+struct TextTokens {
+    primary: Color,
+    body: Color,
+    secondary: Color,
+    tertiary: Color,
+}
+
+struct SurfaceTokens {
+    fill: Color,
+    text: TextTokens,
+}
+
+struct MeaningTokens {
+    page: SurfaceTokens,
+    sidebar: SurfaceTokens,
+    surface: Color,
+    floating_surface: Color,
+    border_subtle: Color,
+    border_strong: Color,
+    mark: Color,
+    accent_solid: Color,
+    accent_on: Color,
+    accent_hover_overlay: Color,
+    accent_pressed_overlay: Color,
+    focus_ring: Color,
+    positive: Color,
+    positive_fill: Color,
+    on_positive: Color,
+    warning: Color,
+    warning_fill: Color,
+    danger: Color,
+    danger_outline: Color,
+    open_status: Color,
+    quiet_fill: Color,
+    quiet_hover_overlay: Color,
+    quiet_pressed_overlay: Color,
+    selected_fill: Color,
+    search_highlight: Color,
+    shadow: Color,
+    scrim: Color,
+}
+
+mod classic {
+    use super::{MeaningTokens, SurfaceTokens, TextTokens, hex};
+
+    const GREY_0: &str = "#ffffff";
+    const GREY_10: &str = "#fcfbf8";
+    const GREY_50: &str = "#f3f2ed";
+    const GREY_75: &str = "#efede7";
+    const GREY_100: &str = "#eceae4";
+    const GREY_125: &str = "#e9e7e1";
+    const GREY_150: &str = "#e6e3db";
+    const GREY_200: &str = "#dcd9d2";
+    const GREY_225: &str = "#d6d3cc";
+    const GREY_300: &str = "#bcb9b0";
+    const GREY_350: &str = "#b0ada4";
+    const GREY_400: &str = "#95928a";
+    const GREY_500: &str = "#77746d";
+    const GREY_550: &str = "#6b6861";
+    const GREY_600: &str = "#5d5b55";
+    const GREY_700: &str = "#3e3d39";
+    const GREY_800: &str = "#302f2c";
+    const GREY_810: &str = "#2f2f2c";
+    const GREY_825: &str = "#2a2a28";
+    const GREY_830: &str = "#2a2a27";
+    const GREY_850: &str = "#242422";
+    const GREY_900: &str = "#1e1e1c";
+    const GREY_925: &str = "#1a1a18";
+    const GREY_950: &str = "#141413";
+    const SLATE_900: &str = "#1f2328";
+
+    const CORAL_400: &str = "#ee8566";
+    const CORAL_700: &str = "#b8452a";
+    const GREEN_50: &str = "#e4f3eb";
+    const GREEN_400: &str = "#69c995";
+    const GREEN_700: &str = "#1d7a4c";
+    const GREEN_900: &str = "#1b2c22";
+    const GREEN_950: &str = "#12251a";
+    const AMBER_50: &str = "#fcf0dc";
+    const AMBER_100: &str = "#fff3c4";
+    const AMBER_400: &str = "#e3aa55";
+    const AMBER_700: &str = "#9a5800";
+    const AMBER_900: &str = "#363019";
+    const AMBER_950: &str = "#33281a";
+    const RED_100: &str = "#efc5c5";
+    const RED_300: &str = "#f29b99";
+    const RED_700: &str = "#a92b30";
+    const RED_800: &str = "#704345";
+    const VIOLET_400: &str = "#b49ee3";
+    const VIOLET_700: &str = "#6a4ea3";
+
+    const BLACK_08: &str = "#00000008";
+    const BLACK_14: &str = "#00000014";
+    const BLACK_29: &str = "#00000029";
+    const BLACK_66: &str = "#00000066";
+    const BLACK_B3: &str = "#000000b3";
+    const WHITE_0F: &str = "#ffffff0f";
+    const WHITE_14: &str = "#ffffff14";
+    const WHITE_1F: &str = "#ffffff1f";
+    const WHITE_24: &str = "#ffffff24";
+    const GREY_900_1F: &str = "#1e1e1c1f";
+    const GREY_900_73: &str = "#1e1e1c73";
+
+    pub(super) fn meaning(dark: bool) -> MeaningTokens {
+        let pick = |light, night| hex(if dark { night } else { light });
+        let text = TextTokens {
+            primary: pick(GREY_900, GREY_125),
+            body: pick(GREY_700, GREY_225),
+            secondary: pick(GREY_600, GREY_300),
+            tertiary: pick(GREY_550, GREY_350),
+        };
+        let accent = pick(CORAL_700, CORAL_400);
+        MeaningTokens {
+            page: SurfaceTokens {
+                fill: pick(GREY_10, GREY_925),
+                text,
+            },
+            sidebar: SurfaceTokens {
+                fill: pick(GREY_50, GREY_950),
+                text,
+            },
+            surface: pick(GREY_0, GREY_850),
+            floating_surface: pick(GREY_0, GREY_825),
+            border_subtle: pick(GREY_150, GREY_800),
+            border_strong: pick(GREY_200, GREY_800),
+            mark: pick(GREY_400, GREY_500),
+            accent_solid: accent,
+            accent_on: pick(GREY_0, SLATE_900),
+            accent_hover_overlay: pick(BLACK_14, WHITE_14),
+            accent_pressed_overlay: pick(BLACK_29, WHITE_24),
+            focus_ring: accent,
+            positive: pick(GREEN_700, GREEN_400),
+            positive_fill: pick(GREEN_50, GREEN_900),
+            on_positive: pick(GREY_0, GREEN_950),
+            warning: pick(AMBER_700, AMBER_400),
+            warning_fill: pick(AMBER_50, AMBER_950),
+            danger: pick(RED_700, RED_300),
+            danger_outline: pick(RED_100, RED_800),
+            open_status: pick(VIOLET_700, VIOLET_400),
+            quiet_fill: pick(GREY_75, GREY_830),
+            quiet_hover_overlay: pick(BLACK_08, WHITE_0F),
+            quiet_pressed_overlay: pick(BLACK_14, WHITE_1F),
+            selected_fill: pick(GREY_100, GREY_810),
+            search_highlight: pick(AMBER_100, AMBER_900),
+            shadow: pick(GREY_900_1F, BLACK_66),
+            scrim: pick(GREY_900_73, BLACK_B3),
+        }
     }
-    .map(|s| rune::color::hex(s).expect("palette colours are valid hex"));
+}
+
+pub fn palette(dark: bool) -> Palette {
+    component_palette(&classic::meaning(dark))
+}
+
+fn component_palette(tokens: &MeaningTokens) -> Palette {
     Palette {
-        bg: c[0],
-        card: c[1],
-        raised: hex(if dark { "#2a2a28" } else { "#ffffff" }),
-        side: c[2],
-        ink: c[3],
-        body: hex(if dark { "#d6d3cc" } else { "#3e3d39" }),
-        soft: c[4],
-        faint: c[5],
-        line: c[6],
-        mark: hex(if dark { "#77746d" } else { "#95928a" }),
-        accent: c[7],
-        ok: c[8],
-        okbg: c[9],
-        warn: c[10],
-        warnbg: c[11],
-        open: c[12],
-        chip: c[13],
-        sel: c[14],
-        hit: c[15],
-        shadow: c[16],
-        scrim: c[17],
-        button_fill: c[7],
-        button_ink: hex(if dark { "#1f2328" } else { "#ffffff" }),
-        switch_on: c[8],
-        switch_knob: hex(if dark { "#12251a" } else { "#ffffff" }),
-        button_border: if dark { c[6] } else { hex("#dcd9d2") },
-        danger: hex(if dark { "#f29b99" } else { "#a92b30" }),
-        danger_border: hex(if dark { "#704345" } else { "#efc5c5" }),
-        button_hover: hex(if dark { "#ffffff0f" } else { "#00000008" }),
-        button_pressed: hex(if dark { "#ffffff1f" } else { "#00000014" }),
-        button_primary_hover: hex(if dark { "#ffffff14" } else { "#00000014" }),
-        button_primary_pressed: hex(if dark { "#ffffff24" } else { "#00000029" }),
+        bg: tokens.page.fill,
+        card: tokens.surface,
+        raised: tokens.floating_surface,
+        side: tokens.sidebar.fill,
+        ink: tokens.page.text.primary,
+        body: tokens.page.text.body,
+        soft: tokens.page.text.secondary,
+        faint: tokens.page.text.tertiary,
+        line: tokens.border_subtle,
+        mark: tokens.mark,
+        accent: tokens.focus_ring,
+        ok: tokens.positive,
+        okbg: tokens.positive_fill,
+        warn: tokens.warning,
+        warnbg: tokens.warning_fill,
+        open: tokens.open_status,
+        chip: tokens.quiet_fill,
+        sel: tokens.selected_fill,
+        hit: tokens.search_highlight,
+        shadow: tokens.shadow,
+        scrim: tokens.scrim,
+        button_fill: tokens.accent_solid,
+        button_ink: tokens.accent_on,
+        switch_on: tokens.positive,
+        switch_knob: tokens.on_positive,
+        button_border: tokens.border_strong,
+        danger: tokens.danger,
+        danger_border: tokens.danger_outline,
+        button_hover: tokens.quiet_hover_overlay,
+        button_pressed: tokens.quiet_pressed_overlay,
+        button_primary_hover: tokens.accent_hover_overlay,
+        button_primary_pressed: tokens.accent_pressed_overlay,
     }
 }
 
@@ -238,6 +349,83 @@ pub fn fonts() -> &'static [&'static [u8]] {
         list.push(Box::leak(bytes.into_boxed_slice()));
     }
     Box::leak(list.into_boxed_slice())
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+
+    #[test]
+    fn classic_palette_matches_shipped_light_and_dark_colours() {
+        for dark in [false, true] {
+            let p = palette(dark);
+            for (name, actual, light, night) in [
+                ("bg", p.bg, "#fcfbf8", "#1a1a18"),
+                ("card", p.card, "#ffffff", "#242422"),
+                ("raised", p.raised, "#ffffff", "#2a2a28"),
+                ("side", p.side, "#f3f2ed", "#141413"),
+                ("ink", p.ink, "#1e1e1c", "#e9e7e1"),
+                ("body", p.body, "#3e3d39", "#d6d3cc"),
+                ("soft", p.soft, "#5d5b55", "#bcb9b0"),
+                ("faint", p.faint, "#6b6861", "#b0ada4"),
+                ("line", p.line, "#e6e3db", "#302f2c"),
+                ("mark", p.mark, "#95928a", "#77746d"),
+                ("accent", p.accent, "#b8452a", "#ee8566"),
+                ("ok", p.ok, "#1d7a4c", "#69c995"),
+                ("okbg", p.okbg, "#e4f3eb", "#1b2c22"),
+                ("warn", p.warn, "#9a5800", "#e3aa55"),
+                ("warnbg", p.warnbg, "#fcf0dc", "#33281a"),
+                ("open", p.open, "#6a4ea3", "#b49ee3"),
+                ("chip", p.chip, "#efede7", "#2a2a27"),
+                ("sel", p.sel, "#eceae4", "#2f2f2c"),
+                ("hit", p.hit, "#fff3c4", "#363019"),
+                ("shadow", p.shadow, "#1e1e1c1f", "#00000066"),
+                ("scrim", p.scrim, "#1e1e1c73", "#000000b3"),
+                ("button_fill", p.button_fill, "#b8452a", "#ee8566"),
+                ("button_ink", p.button_ink, "#ffffff", "#1f2328"),
+                ("switch_on", p.switch_on, "#1d7a4c", "#69c995"),
+                ("switch_knob", p.switch_knob, "#ffffff", "#12251a"),
+                ("button_border", p.button_border, "#dcd9d2", "#302f2c"),
+                ("danger", p.danger, "#a92b30", "#f29b99"),
+                ("danger_border", p.danger_border, "#efc5c5", "#704345"),
+                ("button_hover", p.button_hover, "#00000008", "#ffffff0f"),
+                ("button_pressed", p.button_pressed, "#00000014", "#ffffff1f"),
+                (
+                    "primary_hover",
+                    p.button_primary_hover,
+                    "#00000014",
+                    "#ffffff14",
+                ),
+                (
+                    "primary_pressed",
+                    p.button_primary_pressed,
+                    "#00000029",
+                    "#ffffff24",
+                ),
+            ] {
+                assert_eq!(
+                    actual,
+                    hex(if dark { night } else { light }),
+                    "{name}, dark={dark}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn component_palette_maps_meanings_independently() {
+        let mut meaning = classic::meaning(false);
+        meaning.focus_ring = hex("#ff0000");
+        meaning.accent_solid = hex("#0000ff");
+        meaning.sidebar.text.primary = hex("#ffffff");
+        let p = component_palette(&meaning);
+        assert_eq!(p.accent, meaning.focus_ring);
+        assert_eq!(p.button_fill, meaning.accent_solid);
+        assert_eq!(p.switch_on, meaning.positive);
+        assert_eq!(p.ink, meaning.page.text.primary);
+        assert_eq!(p.side, meaning.sidebar.fill);
+        assert_eq!(p.raised, meaning.floating_surface);
+    }
 }
 
 #[cfg(test)]
