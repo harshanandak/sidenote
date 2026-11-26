@@ -2163,7 +2163,9 @@ fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
     }
     let detect = hex::SKIP_INSTALL_DETECT.replace(true);
     let mut rt = page_with((390.0, 600.0), || {
-        let path = core::meetings_dir().join(MEETING).join("english-summary.json");
+        let path = core::meetings_dir()
+            .join(MEETING)
+            .join("english-summary.json");
         let summary = serde_json::json!({
             "title": "Beta launch plan",
             "context": ["The group reviewed the launch plan. ".repeat(45)],
