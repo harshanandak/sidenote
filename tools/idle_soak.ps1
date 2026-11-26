@@ -71,6 +71,11 @@ function Read-IdleSoakResourceSample($Tree) {
     }
     [pscustomobject]@{working_set_bytes=$workingSet;private_bytes=$privateBytes;handle_count=$handles;missing=$missing}
 }
+function Get-IdleSoakSkippedDeadlines([double]$Next,[double]$Elapsed,[double]$Interval) {
+    $skipped=@()
+    while ($Next+$Interval -le $Elapsed) { $skipped+=$Next; $Next+=$Interval }
+    $skipped
+}
 function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[double]$DurationSeconds,[double]$WarmupSeconds,[double]$CpuInterval,[double]$ResourceInterval,[double]$TimeoutSeconds) {
     $firstTree=Get-IdleSoakProcessTree $RootProcessId
     if (-not $firstTree) { throw 'the root process is not running' }
@@ -85,6 +90,8 @@ function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[doub
         try { $tree=Get-IdleSoakProcessTree $RootProcessId } catch { $queryFailed=$true; $tree=$null }
         if (-not $tree -and -not $queryFailed) { $endState='crash'; break }
         if ($elapsed -ge $nextCpu -or $finishing) {
+            $skipped=@(Get-IdleSoakSkippedDeadlines $nextCpu $elapsed $CpuInterval)
+            foreach ($deadline in $skipped) { $cpuSamples+=[pscustomobject]@{elapsed_seconds=$deadline;total_cpu_seconds=$null;missing=$true} }
             if ($tree) {
                 foreach ($row in $tree) {
                     $key='{0}:{1}' -f $row.ProcessId,$row.CreationDate
@@ -93,15 +100,17 @@ function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[doub
                 $totalCpu=0.0; foreach ($value in $cpuByKey.Values) { $totalCpu+=$value }
                 $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$totalCpu;missing=$false}
             } else { $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$null;missing=$true} }
-            $nextCpu=$elapsed+$CpuInterval
+            $nextCpu+=($skipped.Count+1)*$CpuInterval
         }
         if ($elapsed -ge $nextResource -or $finishing) {
+            $skipped=@(Get-IdleSoakSkippedDeadlines $nextResource $elapsed $ResourceInterval)
+            foreach ($deadline in $skipped) { $resourceSamples+=[pscustomobject]@{elapsed_seconds=$deadline;working_set_bytes=$null;private_bytes=$null;handle_count=$null;missing=$true} }
             if ($tree) {
                 $sample=Read-IdleSoakResourceSample $tree
                 $sample|Add-Member -NotePropertyName elapsed_seconds -NotePropertyValue $elapsed -Force
                 $resourceSamples+=$sample
             } else { $resourceSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;working_set_bytes=$null;private_bytes=$null;handle_count=$null;missing=$true} }
-            $nextResource=$elapsed+$ResourceInterval
+            $nextResource+=($skipped.Count+1)*$ResourceInterval
         }
         if ($finishing) { $endState='completed'; break }
         $nextWake=[math]::Min([math]::Min($nextCpu,$nextResource),$DurationSeconds)
@@ -162,8 +171,18 @@ function Get-IdleSoakLinearSlope($Points,[string]$Property) {
     }
     if ($denominator -eq 0) {0.0} else {$numerator/$denominator}
 }
+function Select-IdleSoakThroughEnd($Samples,[double]$WarmupSeconds,[double]$DurationSeconds) {
+    $selected=@(); $complete=$false
+    foreach ($sample in @($Samples)) {
+        if ($complete) { break }
+        if ([double]$sample.elapsed_seconds -lt $WarmupSeconds) { continue }
+        $selected+=$sample
+        if ([double]$sample.elapsed_seconds -ge $DurationSeconds) { $complete=$true }
+    }
+    $selected
+}
 function Measure-IdleSoakTrend($Samples,[string]$Property,[double]$SlopeLimit,[double]$FinalLimit,[double]$WarmupSeconds,[double]$DurationSeconds) {
-    $points=@($Samples|Where-Object {-not [bool]$_.missing -and [double]$_.elapsed_seconds -ge $WarmupSeconds -and [double]$_.elapsed_seconds -le $DurationSeconds})
+    $points=@(Select-IdleSoakThroughEnd $Samples $WarmupSeconds $DurationSeconds|Where-Object {-not [bool]$_.missing})
     if ($points.Count -lt 3) { return [pscustomobject]@{samples=$points.Count;slope_per_hour=$null;final_delta=$null;positive_step_fraction=$null;insufficient=$true;trend_detected=$false;final_growth_exceeded=$false} }
     $slope=Get-IdleSoakLinearSlope $points $Property
     $first=[double]$points[0].PSObject.Properties[$Property].Value; $last=[double]$points[-1].PSObject.Properties[$Property].Value
@@ -184,7 +203,7 @@ function Measure-IdleSoakSeries($CpuSamples,$ResourceSamples,[string]$EndState,[
     foreach ($entry in @(@('cpu',$cpuMissing),@('resource',$resourceMissing))) {
         if ($entry[1].percent -gt $script:IdleSoakThresholds.missing_sample_percent -or $entry[1].max_consecutive -gt $script:IdleSoakThresholds.consecutive_missing_samples) { $failures+="$($entry[0]) missing samples exceed the pass bar" }
     }
-    $cpuPoints=@($CpuSamples|Where-Object {-not [bool]$_.missing -and [double]$_.elapsed_seconds -ge $WarmupSeconds -and [double]$_.elapsed_seconds -le $DurationSeconds})
+    $cpuPoints=@(Select-IdleSoakThroughEnd $CpuSamples $WarmupSeconds $DurationSeconds|Where-Object {-not [bool]$_.missing})
     $averageCpu=$null
     if ($cpuPoints.Count -lt 2 -or [double]$cpuPoints[-1].elapsed_seconds -le [double]$cpuPoints[0].elapsed_seconds) { $failures+='post-warm-up cpu samples are insufficient' }
     else {

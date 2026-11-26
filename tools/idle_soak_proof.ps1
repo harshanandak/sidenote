@@ -62,6 +62,25 @@ Assert-CaseOutput (Invoke-ProofCase 'missing' $missingFixture) 1 'missing sample
 $trendFixture=Join-Path $fixtures 'trend.json'
 New-Fixture $trendFixture -MemoryGrowth (10MB) -HandleGrowth 10
 Assert-CaseOutput (Invoke-ProofCase 'trend' $trendFixture) 1 'upward trend'
+$finalFixture=Join-Path $fixtures 'final-hour-growth.json'
+New-Fixture $finalFixture
+$final=Get-Content -LiteralPath $finalFixture -Raw|ConvertFrom-Json
+$final.resource_samples[-1].working_set_bytes+=100MB
+$final.resource_samples[-1].private_bytes+=100MB
+$final|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $finalFixture -Encoding UTF8
+Assert-CaseOutput (Invoke-ProofCase 'final-hour-growth' $finalFixture) 1 'final growth'
+$shortFixture=Join-Path $fixtures 'short-23h30m.json'
+New-Fixture $shortFixture
+$short=Get-Content -LiteralPath $shortFixture -Raw|ConvertFrom-Json
+$short.cpu_samples=@($short.cpu_samples|Where-Object {[double]$_.elapsed_seconds -lt 88200})
+$short.resource_samples=@($short.resource_samples|Where-Object {[double]$_.elapsed_seconds -lt 88200})
+$short|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $shortFixture -Encoding UTF8
+Assert-CaseOutput (Invoke-ProofCase 'short-23h30m' $shortFixture) 1 'do not cover'
+$deadlines=@(Get-IdleSoakSkippedDeadlines 1800 12601 3600)
+Assert-Proof (($deadlines -join ',') -eq '1800,5400,9000') 'three skipped hourly deadlines were not reconstructed'
+$gapFixture=Join-Path $fixtures 'deadline-gap.json'
+New-Fixture $gapFixture -MissingCpuHours @(0.5,1.5,2.5) -MissingResourceHours @(0.5,1.5,2.5)
+Assert-CaseOutput (Invoke-ProofCase 'deadline-gap' $gapFixture) 1 'missing samples'
 Assert-CaseOutput (Invoke-ProofCase 'nonempty-root' $passFixture -Prepopulate) 2 'nonempty'
 Assert-CaseOutput (Invoke-ProofCase 'unapproved-root' $passFixture -NoApprove) 2 'not approved'
 $hexRefused=$false
@@ -76,5 +95,5 @@ $installRefused=$false
 try { Get-IdleSoakCandidate $installed @($installRoot)|Out-Null } catch { $installRefused=$_.Exception.Message.Contains('real installation') }
 Assert-Proof $installRefused 'an installed candidate path was not refused'
 Write-Output 'CASE installed-candidate: refused before sampling'
-Write-Output 'PASS: passing fixture plus 8 negative cases (timeout, crash, missing samples, upward trend, nonempty root, unapproved root, live Hex, installed candidate) behaved as required.'
+Write-Output 'PASS: passing fixture plus 11 negative cases (timeout, crash, missing samples, upward trend, final-hour growth, short run, deadline gap, nonempty root, unapproved root, live Hex, installed candidate) behaved as required.'
 Write-Output "Evidence: $proofRoot"
