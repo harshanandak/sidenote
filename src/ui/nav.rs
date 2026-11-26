@@ -1105,10 +1105,8 @@ mod tests {
 
     fn open_new_menu(width: f32, preparing: bool) -> rune::Runtime<State> {
         let mut rt = new_meeting_runtime(width, preparing);
-        rt.update(|s, _| {
-            s.drawer_open.set(true);
-            s.nav.new_menu = true;
-        });
+        rt.state.drawer_open.set(true);
+        rt.state.nav.new_menu = true;
         rt.settle_all();
         rt.frame(0.0);
         assert!(rt.find("new-meeting-status").is_none());
@@ -1171,6 +1169,7 @@ mod tests {
         assert!(checking.path.starts_with(&button.path));
         assert!(button.rect[0] >= 0.0 && button.rect[0] + button.rect[2] <= 360.0);
         rt.update(|s, _| s.listener_probed(Some(Default::default()), None));
+        rt.settle_all();
         rt.frame(0.0);
         assert!(rt.elements().iter().any(|e| {
             e.text.as_deref() == Some("Recording is unavailable. Restart Sidenote to retry.")
