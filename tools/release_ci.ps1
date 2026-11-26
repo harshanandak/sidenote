@@ -104,6 +104,25 @@ function Get-ReleaseAssets {
     if ($references.Contains($delta)) { $files[$delta] }
 }
 
+function Write-ReleaseChecksums {
+    param([string]$OutputDirectory)
+
+    $files = @(Get-ChildItem -LiteralPath $OutputDirectory -Force | Where-Object {
+        $_ -is [IO.FileInfo] -and $_.Name -cne 'SHA256SUMS'
+    })
+    if ($files.Count -eq 0) { throw 'Cannot write SHA256SUMS without staged files.' }
+    $byName = [Collections.Generic.Dictionary[string, IO.FileInfo]]::new([StringComparer]::Ordinal)
+    foreach ($file in $files) { $byName.Add($file.Name, $file) }
+    $names = @($byName.Keys)
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    $lines = foreach ($name in $names) {
+        $hash = (Get-FileHash -LiteralPath $byName[$name].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$hash  $name"
+    }
+    $content = ($lines -join "`n") + "`n"
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'SHA256SUMS'), $content, [Text.UTF8Encoding]::new($false))
+}
+
 function Assert-Rejected {
     param([string]$Message, [scriptblock]$Attempt)
     try { & $Attempt | Out-Null } catch {
@@ -189,7 +208,39 @@ function Invoke-SelfTest {
     } finally {
         $temp.Delete($true)
     }
-    Write-Output 'Release identity and asset allow-list self-test passed.'
+
+    $checksumTemp = [IO.Directory]::CreateTempSubdirectory('sidenote-checksum-test-')
+    try {
+        foreach ($fixture in @(
+            @{ Name = 'z-last.txt'; Value = 'zeta' },
+            @{ Name = 'a-first.txt'; Value = 'alpha' },
+            @{ Name = 'm-middle.txt'; Value = 'middle' }
+        )) {
+            Set-Content -LiteralPath (Join-Path $checksumTemp.FullName $fixture.Name) -Value $fixture.Value -NoNewline
+        }
+        Write-ReleaseChecksums -OutputDirectory $checksumTemp.FullName
+        $sumPath = Join-Path $checksumTemp.FullName 'SHA256SUMS'
+        $expectedNames = @('a-first.txt', 'm-middle.txt', 'z-last.txt')
+        $expectedLines = foreach ($name in $expectedNames) {
+            $hash = (Get-FileHash -LiteralPath (Join-Path $checksumTemp.FullName $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+        }
+        $expected = ($expectedLines -join "`n") + "`n"
+        $actual = [IO.File]::ReadAllText($sumPath)
+        if ($actual -cne $expected) { throw 'SHA256SUMS content or file-name order does not match the fixture.' }
+        if ($actual.Contains("`r")) { throw 'SHA256SUMS must use LF line endings.' }
+
+        Set-Content -LiteralPath (Join-Path $checksumTemp.FullName 'a-first.txt') -Value 'altered' -NoNewline
+        $mismatches = foreach ($line in [IO.File]::ReadAllLines($sumPath)) {
+            $name = $line.Substring(66)
+            $hash = (Get-FileHash -LiteralPath (Join-Path $checksumTemp.FullName $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($line -cne "$hash  $name") { $name }
+        }
+        if (($mismatches -join ',') -cne 'a-first.txt') { throw 'A changed fixture file must no longer match SHA256SUMS.' }
+    } finally {
+        $checksumTemp.Delete($true)
+    }
+    Write-Output 'Release identity, asset allow-list and checksum self-test passed.'
 }
 
 if ($SelfTest) {
@@ -201,6 +252,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw
 $build = Resolve-ReleaseIdentity $manifest $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:RELEASE_TAG $env:RELEASE_CHANNEL
 Write-Output "Validated $($build.Tag) for the $($build.Channel) channel."
+if ($env:GITHUB_OUTPUT) {
+    "tag=$($build.Tag)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+}
 if ($ValidateOnly) { return }
 
 if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory) -or (Test-Path -LiteralPath $OutputDirectory)) {
@@ -218,9 +272,8 @@ try {
         Copy-Item -LiteralPath $asset.FullName -Destination (Join-Path $OutputDirectory $asset.Name)
         Write-Output "Staged $($asset.Name)"
     }
-    if ($env:GITHUB_OUTPUT) {
-        "tag=$($build.Tag)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    }
+    Write-ReleaseChecksums -OutputDirectory $OutputDirectory
+    Write-Output 'Staged SHA256SUMS'
 } finally {
     Pop-Location
     $feed.Delete($true)
