@@ -2650,18 +2650,19 @@ fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
                 let glyphs: Vec<_> = rt
                     .instances
                     .iter()
+                    // Glyphs that start in the title box; others on the same band are not the title's.
                     .filter(|i| {
                         i.params[1] == rune::render::KIND_GLYPH
                             && i.rect[1] < title[1] + title[3]
                             && i.rect[1] + i.rect[3] > title[1]
+                            && i.rect[0] >= title[0] - 0.5
+                            && i.rect[0] < title_right
                     })
+                    .map(|i| i.rect)
                     .collect();
                 assert!(
-                    !glyphs.is_empty()
-                        && glyphs
-                            .iter()
-                            .all(|i| i.rect[0] + i.rect[2] <= title_right + 0.5),
-                    "page {page}: title glyphs are missing or cross the title box"
+                    !glyphs.is_empty() && glyphs.iter().all(|r| r[0] + r[2] <= title_right + 0.5),
+                    "page {page}: title glyphs are missing or cross the title box {title:?}: {glyphs:?}"
                 );
                 let pane = rect_of(&rt, "meeting-pane");
                 for fact in [&facts, &people, &project_chip] {
