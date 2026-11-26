@@ -193,8 +193,10 @@ mod tests {
             s.filter = Filter::Peers;
             s.select(&id, tx);
         });
+        rt.settle_all();
         rt.frame(0.0);
         let (x, y) = rt.find("meeting-breadcrumb-parent").unwrap();
+        rt.pointer_move(x, y);
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.frame(0.2);
