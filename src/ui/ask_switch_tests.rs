@@ -1179,10 +1179,8 @@ fn ask_retry_submits_the_failed_question_once() {
         assert_eq!(failed.first(), recording.then_some(&original));
         let visible_draft = if recording { draft } else { STOP_QUESTION };
         assert_eq!(rt.state.question.text, visible_draft);
-        assert_eq!(
-            rt.state.ask_key(),
-            if all { core::ALL_KEY } else { MEETING }
-        );
+        let expected_scope = if all { core::ALL_KEY } else { MEETING };
+        assert_eq!(rt.state.ask_key(), expected_scope);
         assert_eq!(rt.find("ask-retry").is_some(), !all);
         if !draft.is_empty() {
             assert!(!element(&rt, "ask-retry").focusable);
@@ -1193,7 +1191,6 @@ fn ask_retry_submits_the_failed_question_once() {
                 s.question = TextEdit::default();
             }
         });
-        rt.frame(0.0);
         rt.settle_all();
         rt.frame(0.0);
         tap(&mut rt, "ask-retry");
@@ -1397,40 +1394,35 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     if in_parent("the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat") {
         return;
     }
-    let mut rt = page();
-    let executable = rt
-        .state
-        .store
-        .root
-        .join(if cfg!(windows) { "codex.exe" } else { "codex" });
-    std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
-    let mut runner = rt
-        .state
-        .runners
-        .iter()
-        .find(|runner| runner.name == "Codex")
-        .unwrap()
-        .clone();
-    runner.program = executable.to_string_lossy().into_owned();
-    std::fs::write(
-        rt.state.store.root.join("runners.json"),
-        serde_json::to_vec(&[runner]).unwrap(),
-    )
-    .unwrap();
-    rt.update(|s, _| s.reload_runners());
-    rt.frame(0.0);
-    assert!(rt.find("ask-options-menu").is_none());
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with(DEFAULT_SIZE, || {
+        let mut runner = core::list_runners()
+            .unwrap()
+            .into_iter()
+            .find(|runner| runner.name == "Codex")
+            .unwrap();
+        let executable = core::state_dir().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        runner.program = executable.to_str().unwrap().into();
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&[runner]).unwrap(),
+        )
+        .unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
     for context in ["meeting", "new chat", "live screen"] {
-        if context == "new chat" {
-            rt.update(|s, _| s.go_meetings());
-        } else if context == "live screen" {
-            rt.update(|s, _| {
+        rt.update(|s, _| {
+            if context == "new chat" {
+                s.go_meetings();
+            } else if context == "live screen" {
                 scene_live(s, "", &[], false);
                 s.reload_runners();
-            });
-        }
+            }
+        });
         rt.settle_all();
         rt.frame(0.0);
+        assert!(rt.find("ask-options-menu").is_none(), "{context}");
         tap(&mut rt, "ask-options");
         rt.settle_all();
         rt.frame(0.0);
@@ -1447,12 +1439,9 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             })
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
-        assert!(
-            rt.state.runner_open && rt.find("ask-options-menu").is_some(),
-            "{context}"
-        );
+        assert!(rt.state.runner_open, "{context}");
+        assert!(rt.find("ask-options-menu").is_some(), "{context}");
         rt.update(|s, _| s.runner_open = false);
-        rt.frame(0.0);
     }
 }
 

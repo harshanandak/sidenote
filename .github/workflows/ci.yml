@@ -13,6 +13,8 @@ concurrency:
 
 env:
   CARGO_PROFILE_DEV_DEBUG: '0'
+  # Bump when changing build settings outside the cache key's hashed files.
+  CARGO_CACHE_SCHEMA: v3
 
 jobs:
   changes:
@@ -57,16 +59,19 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
         env:
-          CACHE_PREFIX: ci-v2-ubuntu-24.04-${{ env.CARGO_BUILD_TARGET }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', '.github/workflows/ci.yml') }}
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-ubuntu-24.04-${{ env.CARGO_BUILD_TARGET }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-unknown-linux-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - name: Clippy on Stable and Dev ASR test targets
         run: |
           cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
@@ -100,12 +105,24 @@ jobs:
                 --skip=service::speech::proofs::locking::job_creation_keeps_intake_ownership_until_processing_is_locked
                 --skip=tests::server_role_exposes_only_scoped_host_probe)
           cargo test --locked --workspace --no-fail-fast --features asr-runtime -- "${skip[@]}"
-          cargo test --locked --workspace --no-fail-fast --features dev,asr-runtime -- "${skip[@]}"
+          cargo test --locked -p sidenote --no-fail-fast --features dev,asr-runtime -- "${skip[@]}"
           cargo test --locked -p sidenote --no-default-features --test channel_boundary
           cargo test --locked -p sidenote --no-default-features --features asr-runtime --test channel_boundary
           cargo test --locked -p sidenote --lib --bin sidenote -- \
             core::agent_tools:: core::ask_options:: core::meeting_watch:: \
             ui::ask_switch_tests::a_fallback_answer_through_the_real_ask_names_the_helper_that_answered_and_survives_reload
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-unknown-linux-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   relay:
     needs: changes
@@ -174,16 +191,19 @@ jobs:
       - name: Add GNU tools to PATH
         shell: pwsh
         run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
         env:
-          CACHE_PREFIX: ci-v2-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', '.github/workflows/ci.yml') }}
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
@@ -252,6 +272,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --lib -- \
             platform::windows::tests:: updates::implementation:: hex_install:: meeting_icon:: \
             platform::windows::close_tests:: core::annotations::notebook_tests:: \
+            core::annotations::tests::hexannotation_ \
             platform::windows::window_icon::tests:: \
             approval_seals_reviewed_bytes_and_send_pins_the_same_files core::config::tests:: \
             core::daily_check::background_tests:: core::meeting_evidence::speech_host_tests:: \
@@ -303,6 +324,7 @@ jobs:
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
+            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::meeting::reading::tests::opening_go_to_time_leaves_transcript_room_on_a_short_phone \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
             ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \
@@ -313,6 +335,18 @@ jobs:
           cargo test --locked -p sidenote --lib --bin sidenote -- \
             core::agent_tools:: core::ask_options:: listener::pipeline_tests:: \
             ui::ask_switch_tests::a_fallback_answer_through_the_real_ask_names_the_helper_that_answered_and_survives_reload
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   windows-checks:
     needs: changes
@@ -342,16 +376,19 @@ jobs:
       - name: Add GNU tools to PATH
         shell: pwsh
         run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
         env:
-          CACHE_PREFIX: ci-v2-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', '.github/workflows/ci.yml') }}
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - name: Compile Dev test targets without ASR
         run: cargo check --workspace --locked --tests --features dev
       - name: Clippy on Stable and Dev ASR targets
@@ -359,6 +396,18 @@ jobs:
         run: |
           cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
           cargo clippy --workspace --locked --all-targets --features dev,asr-runtime -- -D warnings
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   windows-integration:
     needs: changes
@@ -388,16 +437,19 @@ jobs:
       - name: Add GNU tools to PATH
         shell: pwsh
         run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
         env:
-          CACHE_PREFIX: ci-v2-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', '.github/workflows/ci.yml') }}
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ${{ env.CACHE_PREFIX }}
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
@@ -413,6 +465,18 @@ jobs:
           SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \
             cargo test --locked -p sidenote-sync --lib -- worker::tests::
           cargo test --locked --features dev,asr-runtime -p sidenote --test idle_cpu --test relay_preview --test meeting_delete_storage --test meeting_delete_visibility
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   docs:
     runs-on: ubuntu-24.04

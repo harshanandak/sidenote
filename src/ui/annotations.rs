@@ -259,12 +259,15 @@ impl State {
         let sender = self.events_tx.clone();
         let wake = self.waker.clone();
         std::thread::spawn(move || {
-            let scan = annotations::captures_dir()
-                .map(|p| annotations::scan(&p))
-                .unwrap_or_else(|| Scan {
+            let roots = annotations::annotation_roots();
+            let scan = if roots.is_empty() {
+                Scan {
                     captures: Vec::new(),
                     errors: vec!["Could not find the Hex captures folder.".into()],
-                });
+                }
+            } else {
+                annotations::scan_roots(&roots)
+            };
             let engine = HexEngine::new();
             let settings = engine.settings_list().unwrap_or_default();
             let (shortcut, disabled) = hex_hints(&settings);
