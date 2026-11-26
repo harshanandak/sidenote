@@ -65,54 +65,6 @@ function New-ProofFixture([string]$Root, [string]$Source) {
     }
 }
 
-function Write-PipelineInstallerDiagnostic($Fixture, [string]$Source, [string]$Version) {
-    $files = @{}; $hashes = @{}
-    $utf8 = [Text.UTF8Encoding]::new($false)
-    $updater = [IO.File]::ReadAllText((Join-Path $Source 'src/updates_windows.rs'))
-    foreach ($member in [regex]::Matches($updater, 'include_str!\("\.\./scripts/meeting-pipeline/([^"/]+)"\)')) {
-        $name = $member.Groups[1].Value
-        $path = Join-Path $Source "scripts/meeting-pipeline/$name"
-        $files[$name] = $utf8.GetString([IO.File]::ReadAllBytes($path))
-        $hashes[$name] = (Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant()
-    }
-    $entryPath = Join-Path $Source 'src/pipeline_entry.ps1'
-    $payload = @{version = $Version; files = $files; hashes = $hashes
-        entry = $utf8.GetString([IO.File]::ReadAllBytes($entryPath)); entry_hash = (Get-FileHash -LiteralPath $entryPath).Hash.ToLowerInvariant()}
-    $installer = [IO.File]::ReadAllText((Join-Path $Source 'src/pipeline_install.ps1'))
-    $catch = '} catch { if ($_.Exception.Message'
-    if (-not $installer.Contains($catch)) { throw 'Cannot locate the installer error handler.' }
-    $trace = '} catch { [Console]::Error.WriteLine(("Installer check at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.GetType().Name)); if ($_.Exception.Message'
-    $start = [Diagnostics.ProcessStartInfo]::new('powershell.exe')
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardInput = $true
-    $start.StandardInputEncoding = $utf8
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    foreach ($argument in @('-NoProfile', '-NonInteractive', '-Command', $installer.Replace($catch, $trace))) {
-        $start.ArgumentList.Add($argument)
-    }
-    foreach ($setting in $Fixture.Env.GetEnumerator()) { $start.Environment[$setting.Key] = $setting.Value }
-    $process = [Diagnostics.Process]::Start($start)
-    try {
-        $stdout = $process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
-        $stderr = $process.StandardError.ReadToEndAsync()
-        try {
-            $process.StandardInput.Write((ConvertTo-Json $payload -Depth 3 -Compress))
-            $process.StandardInput.Close()
-        } catch [IO.IOException] { Write-Host 'Installer diagnostic input pipe closed early.' }
-        if (-not $process.WaitForExit(30000)) { $process.Kill($true); throw 'Installer diagnostic timed out.' }
-        $stdout.GetAwaiter().GetResult()
-        $result = [regex]::Match($stderr.GetAwaiter().GetResult(), '(?m)^Installer check at line [0-9]+: [A-Za-z0-9]+\b')
-        if ($result.Success) { Write-Host $result.Value }
-        elseif ($process.ExitCode) {
-            $id = [regex]::Match($stderr.GetAwaiter().GetResult(), '(?m)^\s*\+ FullyQualifiedErrorId\s*:\s*[A-Za-z0-9]+\b')
-            Write-Host "Installer exited before its error handler. $($id.Value.Trim())"
-        }
-        Write-Host "Configured installer diagnostic exited with code $($process.ExitCode)."
-    } finally { $process.Dispose() }
-}
-
 function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture) {
     $start = [Diagnostics.ProcessStartInfo]::new($Exe)
     $start.UseShellExecute = $false
@@ -148,12 +100,15 @@ function Invoke-UpdateCommand($Fixture, [string]$Command) {
 }
 
 function Assert-Report($Fixture, $Report, [string]$Version) {
-    if ($Report.installed -ne $true -or $Report.current_version -cne $Version -or
-        $Report.update_dir -ine $Fixture.Updates -or $Report.data_dir -ine $Fixture.Env.SIDENOTE_DATA_DIR -or
-        $Report.peers_dir -ine $Fixture.Peers -or $Report.feed -ine $Fixture.Feed -or
-        $Report.listener_task -cne $Fixture.Task) {
-        throw "Expected an installed $Version report for the isolated paths and listener."
-    }
+    if ($Report.installed -ne $true) { throw 'Unexpected update report field: installed.' }
+    if ($Report.current_version -cne $Version) { throw 'Unexpected update report field: current_version.' }
+    # Rust preserves the slash in Sidenote/updates. Join-Path uses the native separator.
+    $updateDir = ([string]$Report.update_dir).Replace([IO.Path]::AltDirectorySeparatorChar, [IO.Path]::DirectorySeparatorChar)
+    if ($updateDir -ine $Fixture.Updates) { throw 'Unexpected update report field: update_dir.' }
+    if ($Report.data_dir -ine $Fixture.Env.SIDENOTE_DATA_DIR) { throw 'Unexpected update report field: data_dir.' }
+    if ($Report.peers_dir -ine $Fixture.Peers) { throw 'Unexpected update report field: peers_dir.' }
+    if ($Report.feed -ine $Fixture.Feed) { throw 'Unexpected update report field: feed.' }
+    if ($Report.listener_task -cne $Fixture.Task) { throw 'Unexpected update report field: listener_task.' }
 }
 
 function Assert-ChecksumRefusal([int]$ExitCode, $Status) {
@@ -207,6 +162,19 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         -not (Test-Path -LiteralPath (Join-Path $fixture.Scripts 'hex-meeting-watch.ps1') -PathType Leaf)) {
         throw 'Fixture setup must leave a clean install and seed isolated paths.'
     }
+    $report = @{
+        installed = $true; current_version = '0.1.0'; update_dir = [IO.Path]::Combine($fixture.Env.LOCALAPPDATA, 'Sidenote/updates')
+        data_dir = $fixture.Env.SIDENOTE_DATA_DIR; peers_dir = $fixture.Peers; feed = $fixture.Feed; listener_task = $fixture.Task
+    }
+    Assert-Report $fixture $report '0.1.0'
+    $report.update_dir = Join-Path $fixture.Env.LOCALAPPDATA 'Sidenote/wrong'
+    $rejected = $false
+    try { Assert-Report $fixture $report '0.1.0' }
+    catch {
+        if ($_.Exception.Message -cne 'Unexpected update report field: update_dir.') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'Report assertion accepted a different update directory.' }
     $manifest = @('[package]', 'name = "sidenote"', 'default-run = "sidenote"', 'version = "0.0.1"', '') -join [char]10
     $sidenoteEntry = @('[[package]]', 'name = "sidenote"', 'version = "0.0.1"', '') -join [Environment]::NewLine
     $otherEntry = @('[[package]]', 'name = "other"', 'version = "0.0.1"', '', '') -join [Environment]::NewLine
@@ -227,7 +195,7 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         }
         throw 'Refusal assertion accepted a success or an unrelated failure.'
     }
-    Write-Output 'Release update fixture and refusal self-test passed.'
+    Write-Output 'Release update fixture, report and refusal self-test passed.'
 }
 
 if (-not $SelfTest -and (-not $IsWindows -or $env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted')) {
@@ -249,11 +217,6 @@ try {
     & tar.exe -xf $archive -C $source
     if ($LASTEXITCODE) { throw 'Could not extract the source for the proof builds.' }
     $fixture = New-ProofFixture $root.FullName $source
-    # Reproduce installer checks against an untouched copy before the two package builds.
-    try {
-        $diagnostic = New-ProofFixture (Join-Path $root.FullName 'diagnostic') $source
-        Write-PipelineInstallerDiagnostic $diagnostic $source $n
-    } catch { Write-Host "Installer diagnostic failed ($($_.Exception.GetType().Name))." }
     $setup = Join-Path $root.FullName 'sidenote-stable-Setup.exe'
     $feedSetup = Join-Path $fixture.Feed 'sidenote-stable-Setup.exe'
     $env:GITHUB_ACTIONS = $null # Disable ANSI in the pinned vpk help captured by the packer.
