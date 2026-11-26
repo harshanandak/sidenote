@@ -701,6 +701,12 @@ lucide!(
     r#"<path d="M21 4h-7M10 4H3m18 8H10m-4 0H3m18 8h-3m-4 0H3M14 1v6M6 9v6m12 2v6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round"/>"#
 );
 
+pub static PLAY: Icon = Icon {
+    name: "sidenote-play",
+    view: 24.0,
+    body: r#"<path d="M8 4v16l12-8Z" fill="currentColor"/>"#,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

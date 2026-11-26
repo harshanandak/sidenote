@@ -669,6 +669,51 @@ fn no_id_stop(phase: &'static str) {
 }
 
 #[test]
+fn dock_pause_stops_hex_when_meeting_parts_cannot_be_saved() {
+    if isolated_api_test("dock_pause_stops_hex_when_meeting_parts_cannot_be_saved") {
+        return;
+    }
+    let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
+    let (api, mut state, _) = Fixture::start();
+    crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
+    crate::ui::scene_agents(&mut state, &["codex"]);
+
+    let id = recording_id(&state).unwrap();
+    let folder = sidenote::core::meetings_dir().join(&id);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("manifest.json"), r#"{"status":"recording"}"#).unwrap();
+    let local = sidenote::core::state_dir().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::write(local.join("meeting-parts"), []).unwrap();
+    state.parts_sync();
+    assert!(state.live.as_ref().unwrap().session.is_none());
+    assert_eq!(
+        state.hex.error,
+        Some("Could not save meeting parts. Pause is unavailable.")
+    );
+
+    state.open_live();
+    let mut ui = rune::Runtime::with_text(
+        state,
+        crate::ui::view,
+        (1100.0, 800.0),
+        rune::Env::default(),
+        rune::text::TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter")),
+    );
+    ui.frame(0.0);
+    let (x, y) = ui.find("meeting-pause").expect("dock Pause");
+    ui.pointer_move(x, y);
+    ui.pointer_down(x, y);
+    ui.pointer_up(x, y);
+    ui.frame(0.2);
+    ui.update(|state, _| Fixture::finish(state));
+
+    let data = api.data.lock().unwrap();
+    assert_eq!(data.stops, 1, "dock Pause must stop Hex recording {id}");
+    assert!(data.id.is_none(), "Hex recording {id} is still active");
+}
+
+#[test]
 fn no_id_hex_stops_after_confirming_recording_through_ui_and_engine() {
     if isolated_api_test("no_id_hex_stops_after_confirming_recording_through_ui_and_engine") {
         return;

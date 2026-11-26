@@ -306,7 +306,8 @@ jobs:
             ui::window::close_tests:: \
             ui::nav::tests::blocked_new_meeting_keeps_status_below_native_titlebar \
             ui::nav::tests::narrow_new_meeting_ \
-            ui::recording_state_tests::recording_pill_is_only_needed_on_the_other_meeting \
+            ui::recording_state_tests::recording_clock_stays_visible_on_the_live_page \
+            ui::recording_state_tests::pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
             ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
             ui::live::recording_control::tests:: \

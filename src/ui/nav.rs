@@ -570,7 +570,8 @@ pub(super) fn actions(
         return (Some(recording_pill(s, p, narrow)), None, None);
     }
     let recording = s.hex_recording();
-    let pill = (recording && !meeting_shows_pause(s)).then(|| recording_pill(s, p, narrow));
+    let pill = (recording && (s.on_live() || !meeting_shows_pause(s)))
+        .then(|| recording_pill(s, p, narrow));
     if !recording || s.hex_status_unknown() {
         let (button, blocked) = new_meeting_button(s, p, narrow, layer);
         (pill, Some(button), blocked)
@@ -659,6 +660,10 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
     }
 }
 
+pub(super) fn live_recording_dot(size: f32, p: Palette) -> El {
+    dot(size, p.danger).looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0))
+}
+
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
     use super::live::RecordingStatus;
@@ -671,6 +676,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         .and_then(|state| state.recording.as_ref())
         .and_then(|r| r.title.as_deref());
     let display = match (status, title.filter(|t| !t.trim().is_empty())) {
+        (RecordingStatus::Recording, _) if s.on_live() => words.clone(),
         (RecordingStatus::Recording, Some(title)) if narrow => title.to_owned(),
         (RecordingStatus::Recording, Some(title)) => format!("{title} \u{b7} {words}"),
         (RecordingStatus::Unknown, _) if narrow => "Unknown".into(),
@@ -678,11 +684,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     };
     let dot = match status {
         RecordingStatus::Paused => None,
-        RecordingStatus::Recording => Some(
-            dot(8.0, p.danger)
-                .key("recording-live-dot")
-                .looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0)),
-        ),
+        RecordingStatus::Recording => Some(live_recording_dot(8.0, p).key("recording-live-dot")),
         RecordingStatus::Unknown => Some(dot(8.0, p.warn).key("recording-live-dot")),
     };
     let open = super::widgets::button("", "recording-open", super::widgets::ButtonRole::Ghost, p)

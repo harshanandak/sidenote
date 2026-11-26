@@ -8,7 +8,7 @@ use super::{
     list::text_title,
     roles,
     theme::Palette,
-    widgets::{dot, hairline, label, link, pressable, quiet_button, scroll},
+    widgets::{dot, hairline, label, link, quiet_button, scroll},
 };
 use chrono::{DateTime, Local, TimeZone};
 use rune::{El, ScrollSpec, TextEdit, col, el, row};
