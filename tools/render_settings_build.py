@@ -98,7 +98,7 @@ def render(job):
    strip,main,tasks=rects['meeting-grid-strip'],rects['meeting-main'],rects['meeting-tasks-column']
    numbers=dict(strip=strip[2],column=main[2],gap=tasks[0]-(main[0]+main[2]),tasks=tasks[2],header=rects['meeting-header'][2],ask=rects['ask-pill'][2],fade=rects['meeting-scroll-fade'][3]+rects['ask-overlay'][3])
    print(base.name,numbers,flush=True)
-   assert numbers==dict(strip=44,column=640,gap=40,tasks=300,header=640,ask=640,fade=150),(base.name,numbers)
+   assert numbers==dict(strip=44,column=620,gap=36,tasks=290,header=620,ask=620,fade=150),(base.name,numbers)
   else:
    # 1024 keeps the strip and the notes column; the tasks sit under the notes, not beside them.
    assert ('meeting-grid' in rects)==(width==1024) and 'meeting-tasks-column' not in rects,base.name
@@ -122,7 +122,7 @@ def render(job):
    main,strip=rects['meeting-main'],rects['meeting-grid-strip']
    numbers=dict(strip=strip[2],column=main[2],header=(rects['meeting-header'][0]-main[0],rects['meeting-header'][2]))
    print(base.name,numbers,flush=True)
-   assert numbers==dict(strip=44,column=640,header=(0,640)),(base.name,numbers)
+   assert numbers==dict(strip=44,column=620,header=(0,620)),(base.name,numbers)
    assert 'meeting-tasks-column' not in rects,base.name
  if scene.startswith('settings-engine'):
   keys={n.get('key') for n in tree['elements']}

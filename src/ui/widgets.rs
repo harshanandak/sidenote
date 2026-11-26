@@ -155,24 +155,12 @@ pub fn menu_row(
 
 #[derive(Clone, Copy)]
 pub enum HelpHint {
-    Questions,
-    Tasks,
     Model,
 }
 
 impl HelpHint {
     pub fn build(self, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         let (key, topic, explanation) = match self {
-            Self::Questions => (
-                "help-hint-questions",
-                "open questions",
-                "Questions still waiting for an answer.",
-            ),
-            Self::Tasks => (
-                "help-hint-tasks",
-                "tasks",
-                "Follow-up work from this meeting.",
-            ),
             Self::Model => (
                 "help-hint-model",
                 "the Ask model",

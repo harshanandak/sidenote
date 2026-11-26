@@ -644,7 +644,7 @@ fn tasks_page(size: (f32, f32), notes: bool) -> Runtime<State> {
             "todo": [
                 {"task": "Send the survey results to the team", "title": "Send the survey results",
                  "description": "Send the survey results to the team",
-                 "owner": "Maya", "due": "2026-11-27"},
+                 "owner": "Maya", "due": "2026-11-26"},
                 {"task": "Share the pricing page copy", "title": "Share the pricing page copy",
                  "owner": "Priya", "due": "2026-12-01", "due_default": true},
                 {"task": "Book five customer tests", "title": "Book five customer tests"},
@@ -699,19 +699,34 @@ fn rail_checkbox(rt: &Runtime<State>, index: usize) -> rune::ElementInfo {
 }
 
 #[test]
-fn meeting_tasks_column_is_plain_rows_that_keep_every_fact() {
-    if in_parent("meeting_tasks_column_is_plain_rows_that_keep_every_fact") {
+fn meeting_tasks_cards_keep_every_fact() {
+    if in_parent("meeting_tasks_cards_keep_every_fact") {
         return;
     }
     let mut rt = page_with_tasks(DEFAULT_SIZE);
     rt.update(|s, _| s.tasks.today = chrono::NaiveDate::from_ymd_opt(2026, 11, 27).unwrap());
     rt.settle_all();
     rt.frame(0.0);
-    // No card: the lists have neither a rounded box nor a fill.
-    for key in ["meeting-tasks", "meeting-questions"] {
-        let list = element(&rt, key);
-        assert_eq!((list.radius, list.fill.a), (0.0, 0.0), "{key}");
+    // S4 card change: the lists were plain rows with no fill; they now sit in radius-12 soft cards.
+    let p = theme::palette(true);
+    for key in ["meeting-tasks-card", "meeting-questions-card"] {
+        let card = element(&rt, key);
+        assert_eq!((card.radius, card.fill), (12.0, p.card), "{key}");
     }
+    // Caption, then open questions, then tasks; the old help hints are gone.
+    let (caption, questions, tasks) = (
+        element(&rt, "meeting-rail-caption"),
+        element(&rt, "meeting-questions"),
+        element(&rt, "meeting-tasks"),
+    );
+    assert_eq!(caption.text.as_deref(), Some("Sorted by what needs you"));
+    assert!(caption.rect[1] < questions.rect[1] && questions.rect[1] < tasks.rect[1]);
+    for key in ["help-hint-tasks", "help-hint-questions"] {
+        assert!(rt.find(key).is_none(), "{key}");
+    }
+    let late = element(&rt, "meeting-late-count");
+    assert_eq!(late.text.as_deref(), Some("1 late"));
+    assert_eq!(late.text_color, Some(p.warn));
     // Each row: 8 all round, with a 24 px checkbox target around its 16 px mark.
     let row = |i: usize| element(&rt, &format!("meeting-task-{i}")).rect;
     for i in 0..3 {
@@ -730,23 +745,32 @@ fn meeting_tasks_column_is_plain_rows_that_keep_every_fact() {
             (34.0, 8.0),
             "title {i}"
         );
-        // The text column is 300 wide: the row is 316 with 8 of padding each side.
-        assert_eq!(row(i)[2], 316.0, "row width {i}");
+        // S4 geometry/card change: rows were 316 in a 300 rail with 8 overhang; now 282 inside a 290 card.
+        assert_eq!(row(i)[2], 282.0, "row width {i}");
     }
-    // 4 px from the label to the first row, 28 between the lists.
+    // Only the late task's due date uses warning colour.
+    let warn = p.warn.premul(1.0);
+    let has_warn = |i: usize| {
+        let r = row(i);
+        rt.instances.iter().any(|inst| {
+            let [x, y, _, _] = inst.rect;
+            x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3] && inst.fill == warn
+        })
+    };
+    assert!(has_warn(0), "late row has no warning text");
+    assert!(!has_warn(1), "on-time row uses warning text");
+    // 4 px from the label to the first row; question and task rows align inside their cards.
     let label = element(&rt, "meeting-task-count").rect;
     assert_eq!(label[3], 22.0);
     assert_eq!(row(0)[1] - (label[1] + label[3]), 4.0);
-    let questions = element(&rt, "meeting-questions").rect;
-    let tasks = element(&rt, "meeting-tasks").rect;
-    assert_eq!(questions[1] - 4.0 - 22.0 - (tasks[1] + tasks[3]), 28.0);
     assert_eq!(element(&rt, "meeting-question-0").rect[0], row(0)[0]);
     // The rail shows the title and plain metadata. The description lives in detail.
     let elements = rt.elements();
     let texts: Vec<_> = elements.iter().filter_map(|e| e.text.as_deref()).collect();
     for want in [
         "Send the survey results",
-        "Maya \u{b7} Today",
+        // S4 late-count fixture: was due 27 Nov ("Today"), now 26 Nov ("1 day late").
+        "Maya \u{b7} 1 day late",
         "Share the pricing page copy",
         "Priya \u{b7} 1 Dec \u{b7} guessed",
         "Book five customer tests",
@@ -759,6 +783,13 @@ fn meeting_tasks_column_is_plain_rows_that_keep_every_fact() {
     }
     assert!(!texts.contains(&"Send the survey results to the team"));
     assert!(!texts.iter().any(|text| text.contains("No date")));
+    // Due today is not late: the row says Today and the late count is gone.
+    rt.update(|s, _| s.tasks.today = chrono::NaiveDate::from_ymd_opt(2026, 11, 26).unwrap());
+    rt.settle_all();
+    rt.frame(0.0);
+    let today = Some("Maya \u{b7} Today");
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == today));
+    assert!(rt.find("meeting-late-count").is_none());
 }
 
 #[test]
@@ -769,8 +800,9 @@ fn meeting_tasks_column_fits_a_narrow_window() {
     let rt = page_with_tasks((390.0, 900.0));
     for i in 0..3 {
         let row = element(&rt, &format!("meeting-task-{i}")).rect;
+        // S4 card change: rows were flush with the 16/17 px gutter; card padding adds 4 px.
         assert!(
-            (16.0..=17.0).contains(&row[0]) && (373.0..=374.0).contains(&(row[0] + row[2])),
+            (20.0..=21.0).contains(&row[0]) && (370.0..=371.0).contains(&(row[0] + row[2])),
             "row {i}: {row:?}"
         );
         let tick = rail_checkbox(&rt, i).rect;
@@ -2159,8 +2191,8 @@ fn the_ask_bar_is_centered_at_the_default_width() {
 }
 
 #[test]
-fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
-    if in_parent("meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks") {
+fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
+    if in_parent("meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks") {
         return;
     }
     let mut rt = page_with_tasks((1334.0, 390.0));
@@ -2175,22 +2207,25 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
         rect(&rt, "meeting-tasks-column"),
     );
     assert_eq!(strip[2], 44.0, "strip");
-    assert_eq!(main[2], 640.0, "notes column");
-    assert_eq!(tasks[2], 300.0, "tasks column");
+    // S4 geometry change: notes/tasks were 640/300, now 620/290.
+    assert_eq!(main[2], 620.0, "notes column");
+    assert_eq!(tasks[2], 290.0, "tasks column");
     assert_eq!(
         strip[0] + strip[2],
         main[0],
         "the strip sits left of the notes"
     );
-    assert_eq!(tasks[0] - (main[0] + main[2]), 40.0, "gap");
+    // S4 geometry change: the rail gap was 40, now 36.
+    assert_eq!(tasks[0] - (main[0] + main[2]), 36.0, "gap");
     // Centred with 16 kept at the right, and nothing past the window.
     let left = grid[0] - nav::width(&rt.state);
     let right = 1334.0 - (grid[0] + grid[2]);
-    assert_eq!((grid[2], right - left), (1024.0, 16.0), "grid {grid:?}");
+    // S4 geometry change: the grid was 1024, now 990.
+    assert_eq!((grid[2], right - left), (990.0, 16.0), "grid {grid:?}");
     // The header's title and controls are in the notes column.
     let head = rect(&rt, "meeting-header");
-    assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
-    assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
+    assert_eq!((head[0], head[2]), (main[0], 620.0), "header");
+    assert_eq!(rect(&rt, "ask-pill")[2], 620.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
     rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
     rt.frame(0.0);
@@ -2202,7 +2237,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     rt.frame(0.2);
     rt.settle_all();
     let sheet = rect(&rt, "meeting-transcript-surface");
-    assert_eq!((sheet[0], sheet[2]), (main[0], 640.0), "transcript sheet");
+    assert_eq!((sheet[0], sheet[2]), (main[0], 620.0), "transcript sheet");
 }
 
 /// Long notes: the last row ends below where the old 150 fade began, and is still clear of it.
@@ -2538,7 +2573,7 @@ fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
         return;
     }
     // 800 wide with no sidebar, and 1000 wide with it (a page of 751): both are `narrow` and both
-    // have room for the strip and the 640 column, so the bar sits on the column's edge.
+    // have room for the strip and the 620 column, so the bar sits on the column's edge.
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
@@ -2741,8 +2776,8 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
     if in_parent("meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacked") {
         return;
     }
-    // 1024 wide leaves 775 beside the sidebar: less than the 1024 grid plus its 16, but room for
-    // the 44 strip and the 640 column with 24 either side (732).
+    // 1024 wide leaves 775 beside the sidebar: less than the 990 grid plus its 16, but room for
+    // the 44 strip and the 620 column with 24 either side (712).
     let mut rt = tasks_page((1024.0, 800.0), true);
     let r = |rt: &Runtime<State>, key: &str| rect_of(rt, key);
     let (grid, strip, main) = (
@@ -2750,7 +2785,8 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         r(&rt, "meeting-grid-strip"),
         r(&rt, "meeting-main"),
     );
-    assert_eq!((grid[2], strip[2], main[2]), (684.0, 44.0, 640.0));
+    // S4 geometry change: the strip grid was 684 with 640 notes, now 664 with 620 notes.
+    assert_eq!((grid[2], strip[2], main[2]), (664.0, 44.0, 620.0));
     assert_eq!(
         strip[0] + strip[2],
         main[0],
@@ -2765,7 +2801,7 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
     // The header, the notes and the tasks all start on the notes edge, and the menu ends on the
     // notes' right edge, not past it.
     let header = r(&rt, "meeting-header");
-    assert_eq!((header[0], header[2]), (main[0], 640.0), "header");
+    assert_eq!((header[0], header[2]), (main[0], 620.0), "header");
     let menu = r(&rt, &format!("more-meeting-{MEETING}-button"));
     assert_eq!(
         menu[0] + menu[2],
@@ -2780,11 +2816,11 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         28.0,
         "tasks below the notes"
     );
-    // The stacked rows hang 8 either side of the column, inside the scroll area.
+    // S4 card change: rows were 656 and hung 8 outside the column; now they sit 4 inside its card.
     let task = r(&rt, "meeting-task-0");
     assert_eq!(
         (task[0], task[2]),
-        (main[0] - 8.0, 656.0),
+        (main[0] + 4.0, 612.0),
         "task row {task:?}"
     );
     // The Ask bar and the transcript sheet start on the notes edge too.
@@ -2793,7 +2829,7 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
     rt.frame(0.2);
     rt.settle_all();
     let sheet = r(&rt, "meeting-transcript-surface");
-    assert_eq!((sheet[0], sheet[2]), (main[0], 640.0), "transcript sheet");
+    assert_eq!((sheet[0], sheet[2]), (main[0], 620.0), "transcript sheet");
     assert_inside(&rt, 1024.0);
 }
 
@@ -2802,7 +2838,7 @@ fn meeting_page_below_the_strip_width_fills_the_page_and_never_overflows() {
     if in_parent("meeting_page_below_the_strip_width_fills_the_page_and_never_overflows") {
         return;
     }
-    // 900 wide leaves 651 beside the sidebar: under the 732 the strip and column need.
+    // 900 wide leaves 651 beside the sidebar: under the 712 the strip and column need.
     let mut rt = tasks_page((900.0, 800.0), true);
     assert!(rt.find("meeting-grid").is_none());
     let notes = rect_of(&rt, "sec-context")[0];
