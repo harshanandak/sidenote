@@ -401,6 +401,34 @@ fn oversized_row_continues_on_utf8_boundaries_with_the_same_timestamp() {
 }
 
 #[test]
+fn timestamp_only_continuations_preserve_spoken_delimiters() {
+    const STAMP: &str = "[00:05:04.000] ";
+    let input = format!("{STAMP}Discuss f(x): {}\n", "a".repeat(40_000));
+    let mut end = 0;
+    for window in long_meetings::windows(&input) {
+        assert_eq!(window.primary.start, end);
+        let mut lines = window.text.lines();
+        if !window.overlap.is_empty() {
+            let overlap = lines.next().unwrap().strip_prefix(STAMP).unwrap();
+            assert_eq!(overlap, &input[window.overlap]);
+        }
+        let mut cursor = window.primary.start;
+        for line in lines {
+            let payload = if cursor == 0 {
+                line
+            } else {
+                line.strip_prefix(STAMP).unwrap()
+            };
+            assert_eq!(payload, &input[cursor..cursor + payload.len()]);
+            cursor += payload.len();
+        }
+        end = window.primary.end;
+        assert_eq!(cursor, end.min(input.len() - 1));
+    }
+    assert_eq!(end, input.len());
+}
+
+#[test]
 fn unread_input_malformed_output_and_context_refusal_never_complete() {
     for hours in [1, 2, 3] {
         for density in [Density::Sparse, Density::Conversation, Density::Dense] {

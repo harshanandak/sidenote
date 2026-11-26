@@ -1,4 +1,5 @@
-use std::{io::Read, ops::Range};
+use regex::Regex;
+use std::{io::Read, ops::Range, sync::LazyLock};
 
 use crate::core::meetings::milliseconds;
 
@@ -32,14 +33,16 @@ impl Span<'_> {
 }
 
 fn continuation_head(line: &str) -> &str {
+    static LABEL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^ \S+ \([^()\r\n]+\): ").unwrap());
     let head = &line[..line.floor_char_boundary(SPAN_BYTES / 2)];
     if let Some((stamp, rest)) = head.strip_prefix('[').and_then(|s| s.split_once(']'))
         && milliseconds(stamp).is_some()
     {
         let stamp_end = stamp.len() + 2;
-        return rest.find("): ").map_or_else(
+        return LABEL.find(rest).map_or_else(
             || &head[..stamp_end + usize::from(rest.starts_with(' '))],
-            |label_end| &head[..stamp_end + label_end + 3],
+            |label| &head[..stamp_end + label.end()],
         );
     }
     ""
