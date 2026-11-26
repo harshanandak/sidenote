@@ -325,7 +325,7 @@ jobs:
             ui::ask_switch_tests::meeting_ticks_keep_the_all_meetings_chat \
             ui::list::tests::home_last_row_scrolls_clear_of_ask \
             ui::recording_state_tests::pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard \
-            ui::ask_switch_tests::meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks \
+            ui::ask_switch_tests::meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks \
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \

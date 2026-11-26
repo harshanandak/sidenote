@@ -783,6 +783,13 @@ fn meeting_tasks_cards_keep_every_fact() {
     }
     assert!(!texts.contains(&"Send the survey results to the team"));
     assert!(!texts.iter().any(|text| text.contains("No date")));
+    // Due today is not late: the row says Today and the late count is gone.
+    rt.update(|s, _| s.tasks.today = chrono::NaiveDate::from_ymd_opt(2026, 11, 26).unwrap());
+    rt.settle_all();
+    rt.frame(0.0);
+    let today = Some("Maya \u{b7} Today");
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == today));
+    assert!(rt.find("meeting-late-count").is_none());
 }
 
 #[test]
