@@ -2370,6 +2370,9 @@ fn titlebar(
     } else {
         insets.leading.max(insets.trailing)
     };
+    // The sidebar's own top row holds its collapse and search buttons while it is open;
+    // the title bar keeps the search button only while the sidebar is closed (and on the
+    // Hex page). The title-bar toggle stays as the window-chrome affordance.
     let left = row()
         .pl(insets.leading)
         .pr((gutter - insets.leading).max(0.0))
@@ -2377,7 +2380,7 @@ fn titlebar(
         .items_center()
         .children(s.on_hex().then(nav::logo))
         .children((!s.on_hex()).then(|| nav::toggle(s, p)))
-        .child(nav::search(p));
+        .children((s.on_hex() || !s.sidebar_is_open()).then(|| nav::search(p)));
     let (pill, action, blocked) = if s.on_hex() {
         (None, None, None)
     } else {
