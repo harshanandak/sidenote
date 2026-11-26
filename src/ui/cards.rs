@@ -108,11 +108,14 @@ mod soft_card_tests {
     use rune::{Cx, text::TextSystem};
 
     fn text_system() -> TextSystem {
-        TextSystem::new(super::theme::fonts(), (super::theme::SANS, "Inter"))
+        TextSystem::new(
+            super::super::theme::fonts(),
+            (super::super::theme::SANS, "Inter"),
+        )
     }
 
     fn fixture(_: &Palette, _: &mut Cx<Palette>) -> El {
-        let p = super::theme::palette(false);
+        let p = super::super::theme::palette(false);
         col().w_full().child(
             panel(p)
                 .key("soft-card")
@@ -137,7 +140,7 @@ mod soft_card_tests {
 
     #[test]
     fn soft_card_is_radius_12_with_tile_free_rows() {
-        let p = super::theme::palette(false);
+        let p = super::super::theme::palette(false);
         let mut rt = rune::Runtime::with_text(
             p,
             fixture,
