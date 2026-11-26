@@ -5,7 +5,7 @@ pub fn scene(s: &mut State) {
     if !super::isolated() || rune::tooling::headless_run().is_none() {
         return;
     }
-    s.go_home();
+    s.go_meetings();
     s.meetings = (0..2000)
         .map(|index| {
             let title = format!("Synthetic meeting {index}");

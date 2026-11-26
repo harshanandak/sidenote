@@ -301,7 +301,7 @@ fn recording_clock_stays_visible_on_the_live_page() {
         "the live page shows a second recording action"
     );
     rt.update(|s, _| {
-        s.go_home();
+        s.go_meetings(); // Startup moved from Meetings to Home; the deleted-meetings control is on Meetings.
         s.set_sidebar(false);
         s.config.features.people = true;
         s.config.features.memory = true;

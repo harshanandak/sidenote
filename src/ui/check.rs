@@ -489,7 +489,10 @@ impl State {
     pub fn on_check(&self) -> bool {
         self.check_open
             && !self.memory_open
-            && self.view == super::tasks::View::Meetings
+            && matches!(
+                self.view,
+                super::tasks::View::Home | super::tasks::View::Meetings
+            )
             && self.selected.is_none()
     }
 

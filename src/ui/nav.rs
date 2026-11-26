@@ -22,6 +22,7 @@ pub const COLLAPSE_AT: f32 = 820.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
+    Home,
     Companies,
     Meetings,
     Annotations,
@@ -76,6 +77,8 @@ impl State {
             Page::Check
         } else if self.on_hex() {
             Page::Hex
+        } else if self.view == View::Home && self.selected.is_none() && !self.on_live() {
+            Page::Home
         } else {
             Page::Meetings
         }
@@ -140,7 +143,7 @@ impl State {
         {
             return;
         }
-        self.go_home();
+        self.reset_navigation();
         if matches!(filter, Filter::Area(_)) {
             self.areas.show_all = false;
         }
@@ -325,14 +328,26 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
     let proposals = s.memory.proposals.len();
     let high = s.check.latest.high;
     let mut places = vec![Place {
+        key: "nav-home",
+        name: "Home",
+        help: "Home".into(),
+        active: page == Page::Home,
+        icon: icons::HOME,
+        flag: None,
+        press: |s| {
+            s.go_home();
+            s.nav_done();
+        },
+    }];
+    places.push(Place {
         key: "nav-meetings",
         name: "Meetings",
         help: "Meetings".into(),
         active: page == Page::Meetings && s.filter == Filter::All,
         icon: &icons::MEETINGS,
         flag: None,
-        press: |s| s.go_meetings(),
-    }];
+        press: State::go_meetings,
+    });
     if features.tasks {
         places.push(Place {
             key: "view-tasks",

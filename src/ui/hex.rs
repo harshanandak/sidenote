@@ -407,7 +407,12 @@ fn elapsed(r: &Recording) -> Option<u64> {
 
 impl State {
     pub fn on_hex(&self) -> bool {
-        self.hex_open && self.view == super::tasks::View::Meetings && self.selected.is_none()
+        self.hex_open
+            && matches!(
+                self.view,
+                super::tasks::View::Home | super::tasks::View::Meetings
+            )
+            && self.selected.is_none()
     }
 
     pub fn open_hex(&mut self) {

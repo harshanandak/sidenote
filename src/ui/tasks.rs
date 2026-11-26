@@ -31,6 +31,7 @@ pub type BoardKey = (u64, u64, core::TaskFilter, Option<String>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
+    Home,
     Meetings,
     Tasks,
     People,
@@ -688,7 +689,7 @@ impl State {
             self.rebuild_tasks();
         } else {
             self.close_panel();
-            self.go_home();
+            self.go_meetings();
         }
     }
 
