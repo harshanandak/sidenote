@@ -496,7 +496,7 @@ pub fn form(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
 
 /// The same synthetic home row before and after the real Create / Dismiss actions.
 pub fn scene(s: &mut State, action: &str) {
-    s.go_home();
+    s.go_meetings();
     let Some(m) = s.meetings.iter_mut().find(|m| !m.summary.todo.is_empty()) else {
         return;
     };

@@ -318,7 +318,7 @@ fn recording_clock_stays_visible_on_the_live_page() {
         "the live page shows a second recording action"
     );
     rt.update(|s, _| {
-        s.go_home();
+        s.go_meetings(); // Startup moved from Meetings to Home; the deleted-meetings control is on Meetings.
         s.set_sidebar(false);
         s.config.features.people = true;
         s.config.features.memory = true;
@@ -335,7 +335,7 @@ fn recording_clock_stays_visible_on_the_live_page() {
     assert_eq!(toggles, 1);
     assert_eq!(element(&rt, "nav-search").fill, rune::Color::TRANSPARENT);
     #[cfg(windows)]
-    assert!(element(&rt, "open-deleted-meetings").rect[1] >= 48.0);
+    assert!(element(&rt, "meetings-title-more").rect[1] >= 48.0);
     tap(&mut rt, "sidebar-toggle");
     rt.update(|s, _| s.hex.status = Some(Err(sidenote::hex_engine::HexError::Timeout)));
     rt.frame(0.2);

@@ -10,7 +10,6 @@ use std::{cmp::Reverse, io, path::Path, time::Duration};
 const RETENTION: TimeDelta = TimeDelta::days(30);
 const UNDO_FOR: Duration = Duration::from_secs(8);
 const RECYCLE_DIR: &str = "local/deleted-meetings";
-const OPEN_DELETED: &str = "open-deleted-meetings";
 const RESTORING: &str = "Restoring\u{2026}";
 const RESTORE_UNFINISHED: &str = "This restore will finish when you reopen Sidenote.";
 const RESTORE_REFUSED: &str = "Could not restore this meeting. It may have expired or be in use.";
@@ -148,6 +147,12 @@ impl State {
             return true;
         }
         self.config.features.enabled(core::Feature::Delete)
+    }
+
+    /// Lets tests outside this module see the gated Deleted meetings entry.
+    #[cfg(test)]
+    pub(super) fn enable_delete_for_tests(&mut self) {
+        self.delete_ui.enabled_in_fixture = true;
     }
 
     fn close_delete_dialog(&mut self) {
@@ -339,7 +344,7 @@ impl State {
         self.tasks.items_changed();
         if self.selected.is_some() && self.current().is_none() {
             if current {
-                self.go_home();
+                self.reset_navigation();
             } else {
                 self.selected = None;
                 self.saved = Default::default();
@@ -359,7 +364,7 @@ impl State {
         self.request_refresh();
     }
 
-    fn open_deleted(&mut self) {
+    pub(super) fn open_deleted(&mut self) {
         if self.delete_ui.pending.is_some() {
             return;
         }
@@ -429,11 +434,6 @@ pub(super) fn menu_row(m: &Meeting, trigger: &str, p: Palette) -> El {
         .on_press(move |s: &mut State| s.ask_to_delete(&id, &trigger))
 }
 
-pub(super) fn list_button(p: Palette) -> El {
-    widgets::quiet_button("Deleted meetings", OPEN_DELETED, p)
-        .on_press(|s: &mut State| s.open_deleted())
-}
-
 pub(super) fn undo_button(s: &State, id: &str, p: Palette) -> El {
     let id = id.to_owned();
     let pending = s.delete_ui.pending.as_ref().map(|p| p.label);
@@ -473,7 +473,9 @@ pub(super) fn overlay(s: &State, p: Palette, layer: &mut Vec<El>) {
         ),
         Dialog::Deleted { rows, incomplete } => (
             "Deleted meetings",
-            OPEN_DELETED,
+            // The title More button outlives the menu, so focus returns there on close
+            // (old: the removed quiet button's key).
+            "meetings-title-more",
             content
                 .child(row().gap(8.0).items_center()
                     .child(roles::SECTION.wrap("Deleted meetings", p.ink).grow(1.0))
@@ -605,7 +607,7 @@ mod tests {
     }
 
     fn runtime(mut state: State) -> Runtime<State> {
-        state.go_home();
+        state.go_meetings();
         state.delete_ui.enabled_in_fixture = true;
         wait_tasks(&mut state);
         let mut rt = Runtime::with_text(
@@ -675,6 +677,13 @@ mod tests {
         rt.pointer_up(x, y);
         rt.settle_all();
         rt.frame(0.0);
+    }
+
+    /// Opens the deleted list through the title More menu (old: the removed quiet
+    /// Deleted meetings button). The fixture enables deletion, so the gated row shows.
+    fn open_deleted_from_title(rt: &mut Runtime<State>) {
+        tap(rt, "meetings-title-more");
+        tap(rt, "meetings-open-deleted");
     }
 
     fn confirm_from(rt: &mut Runtime<State>, id: &str, scope: &str) {
@@ -762,7 +771,7 @@ mod tests {
         tap(&mut rt, "delete-cancel");
         assert_eq!(rt.state.current().unwrap().id, id);
         rt.update(|s, _| {
-            s.go_home();
+            s.go_meetings();
             s.search = rune::TextEdit::new(TITLE);
             s.refresh_list();
         });
@@ -820,7 +829,7 @@ mod tests {
 
         let mut rt = runtime(State::new());
         assert!(rt.state.meetings.is_empty());
-        tap(&mut rt, OPEN_DELETED);
+        open_deleted_from_title(&mut rt);
         assert!(
             rt.elements()
                 .iter()
@@ -1096,9 +1105,9 @@ mod tests {
         );
         tap(&mut rt, "meeting-breadcrumb-parent");
         assert!(rt.state.selected.is_none());
-        tap(&mut rt, OPEN_DELETED);
+        open_deleted_from_title(&mut rt);
         let Some(Dialog::Deleted { rows, .. }) = &rt.state.delete_ui.dialog else {
-            panic!("the Deleted meetings button must open the list");
+            panic!("the title menu must open the deleted list");
         };
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, first_transaction);
@@ -1235,7 +1244,7 @@ mod tests {
         let bad = seed_deleted(&store, &third, "Third workshop");
         fs::write(root.join(RECYCLE_DIR).join(&bad).join("receipt.json"), "{").unwrap();
 
-        tap(&mut rt, OPEN_DELETED);
+        open_deleted_from_title(&mut rt);
         assert!(has_text(&rt, INCOMPLETE_LIST));
         assert!(rt.find(&format!("restore-{first}")).is_some());
         assert!(rt.find(&format!("restore-{second}")).is_some());
@@ -1253,7 +1262,7 @@ mod tests {
         let root = rt.state.store.root.clone();
         let store = storage(&root).unwrap();
         let transaction = seed_deleted(&store, &id, TITLE);
-        tap(&mut rt, OPEN_DELETED);
+        open_deleted_from_title(&mut rt);
         let restore = format!("restore-{transaction}");
         for (phase, message, interruption) in [
             (Phase::Deleted, RESTORE_REFUSED, None),

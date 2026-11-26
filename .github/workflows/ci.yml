@@ -314,8 +314,10 @@ jobs:
             ui::recording_state_tests::pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
             ui::meeting::reading::tests:: ui::meeting::tests:: ui::citation_tests:: \
-            ui::live::recording_control::tests:: \
+            ui::live::recording_control::tests:: ui::home::tests:: \
             ui::list::tests::meeting_row_uses_the_singular_for_one_task \
+            ui::list::tests::title_ \
+            ui::list::tests::rows_keep_their_more_menu_and_lose_the_project_chip \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
             ui::tasks::tests::empty_tasks_page_offers_to_add_a_task \
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \

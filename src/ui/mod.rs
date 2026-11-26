@@ -20,6 +20,7 @@ mod diary;
 mod edit_worker;
 mod finder;
 mod hex;
+mod home;
 mod icons;
 #[cfg(any(test, all(windows, feature = "idle-cpu-proof")))]
 mod idle_cpu;
@@ -303,9 +304,8 @@ pub struct State {
     pub finder_query: TextEdit,
     pub highlight: Option<usize>,
     pub back: Option<String>,
-    /// Set when the open meeting came from a citation in the home thread: the answer to go
-    /// back to. "Back" then returns home instead of scrolling this meeting.
-    pub cite_back: Option<String>,
+    /// The citation's answer key and whether its Ask pane was on Home.
+    pub cite_back: Option<(String, bool)>,
     pub question: TextEdit,
     pub runners: Vec<Runner>,
     pub runner: Option<String>,
@@ -594,7 +594,7 @@ impl State {
             project_form: None,
             project_input: TextEdit::new(""),
             project_merge: project_merge::MergeUi::default(),
-            view: tasks::View::Meetings,
+            view: tasks::View::Home,
             check_open: false,
             check_back: false,
             check: check::CheckState::default(),
@@ -775,7 +775,7 @@ impl State {
 
     pub fn focus_search(&mut self) {
         if self.annotations.open {
-            self.go_home();
+            self.reset_navigation();
         }
         // In the Tasks view the search box is the task search.
         if self.view == tasks::View::Tasks {
@@ -797,18 +797,19 @@ impl State {
             self.hex.filter.focused = true;
             return;
         }
-        if self.check_open {
-            self.go_home();
-        }
-        // Searching is done on the home list.
-        if self.selected.is_some() || self.on_live() {
-            self.go_home();
+        let reading = self.selected.is_some() || self.on_live();
+        if self.check_open || self.view == tasks::View::Home || reading {
+            self.reset_navigation();
         }
         self.search.focused = true;
     }
 
-    /// Back to the home list.
     pub fn go_home(&mut self) {
+        self.reset_navigation();
+        self.view = tasks::View::Home;
+    }
+
+    fn reset_navigation(&mut self) {
         self.leave_delete_view();
         self.notice = None;
         response_time::superseded(std::mem::take(&mut self.annotations.response_time));
@@ -1033,12 +1034,13 @@ impl State {
         if !self.meetings.iter().any(|m| m.id == id) {
             return;
         }
+        let from_home = self.page() == nav::Page::Home;
         self.select(id, tx);
         if let Some(stamp) = stamp {
             self.jump(stamp, origin.clone(), tx);
         }
         self.back = Some(origin.clone());
-        self.cite_back = Some(origin);
+        self.cite_back = Some((origin, from_home));
     }
 
     pub fn go_back(&mut self, tx: &mut Tx) {
@@ -1068,8 +1070,11 @@ impl State {
             });
             return;
         }
-        if let Some(key) = self.cite_back.take() {
-            self.go_home();
+        if let Some((key, from_home)) = self.cite_back.take() {
+            self.reset_navigation();
+            if from_home {
+                self.view = tasks::View::Home;
+            }
             self.thread_hidden = false;
             self.pending_thread = Some(PendingScroll {
                 key,
@@ -2277,6 +2282,9 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
     if tasks_view {
         return tasks::on_key(s, e, tx);
     }
+    if s.page() == nav::Page::Home {
+        return false;
+    }
     let home = s.selected.is_none();
     let searching = !s.search.text.trim().is_empty();
     match e.key {
@@ -2320,7 +2328,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         }
         // Escape steps back from a meeting to the home list.
         Key::Escape if !home => {
-            s.go_home();
+            s.reset_navigation();
             true
         }
         _ => false,
@@ -2330,13 +2338,12 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
 fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
     let mut left = row().gap(4.0).items_center().min_w(0.0);
     let mut show = false;
-    if s.view == tasks::View::Meetings && s.selected.is_some() {
+    if s.page() == nav::Page::Meetings && s.selected.is_some() {
         show = true;
         let title = s.current().map(|m| m.title.as_str()).unwrap_or_default();
-        left = left.child(
-            widgets::breadcrumb("Meetings", title, "meeting-breadcrumb", p, |s| s.go_home())
-                .grow(1.0),
-        );
+        let back = State::reset_navigation;
+        let crumb = widgets::breadcrumb("Meetings", title, "meeting-breadcrumb", p, back);
+        left = left.child(crumb.grow(1.0));
     }
     if s.on_memory() && s.memory.browse {
         show = true;
@@ -2462,6 +2469,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let on_memory = s.on_memory();
     let on_hex = s.on_hex();
     let on_live = s.on_live();
+    let on_home = s.page() == nav::Page::Home;
     let home = !tasks_view && s.selected.is_none();
     if response_time::enabled() {
         let bit = |action: TimedAction| 1usize << action as usize;
@@ -2478,7 +2486,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             mask |= bit(TimedAction::Annotations);
         } else if on_hex {
             mask |= bit(TimedAction::Settings);
-        } else if !people_view && !on_live && !on_check && !on_memory && !s.companies.open {
+        } else if !(on_home || people_view || on_live || on_check || on_memory || s.companies.open)
+        {
             if home {
                 mask |= bit(TimedAction::Search);
             } else {
@@ -2512,6 +2521,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         hex::pane(s, &k, p, narrow, &mut layer)
     } else if on_live {
         live::pane(s, &k, p, narrow, &mut layer)
+    } else if on_home {
+        home::pane(s, &k, p, narrow, &mut layer)
     } else if home
         && s.config.features.projects
         && matches!(s.filter, nav::Filter::Area(_) | nav::Filter::Areas)
@@ -3033,6 +3044,7 @@ fn scene_screens(s: &mut State) {
 
 /// Home for the screens fixture, with agents ready.
 fn scene_screens_home(s: &mut State) {
+    s.go_meetings();
     hex::scene(s, false);
     scene_agents(s, ALL_AGENTS);
 }
@@ -3567,13 +3579,13 @@ pub fn spec() -> AppSpec<State> {
             }),
             ("settings-sidebar-open", |s| {
                 hex::scene(s, false);
-                s.go_home();
+                s.go_meetings();
                 s.sidebar_open.set(true);
                 s.drawer_open.set(true);
             }),
             ("settings-sidebar-folded", |s| {
                 hex::scene(s, true);
-                s.go_home();
+                s.go_meetings();
                 s.sidebar_open.set(false);
                 s.drawer_open.set(false);
             }),
@@ -3783,8 +3795,9 @@ pub fn spec() -> AppSpec<State> {
             ("audio-project-new", |s| project::scene(s, "suggest")),
             ("audio-project-created", |s| project::scene(s, "create")),
             ("audio-project-dismissed", |s| project::scene(s, "dismiss")),
-            ("list", |_| {}),
+            ("list", State::go_meetings),
             ("search", |s| {
+                s.go_meetings();
                 s.search = TextEdit::new("landing");
                 s.on_search_changed();
             }),
@@ -4149,14 +4162,20 @@ pub fn spec() -> AppSpec<State> {
                 s.open_hex();
                 hex::scene(s, false);
             }),
-            ("hex-list", |s| hex::scene(s, false)),
-            ("hex-list-recording", |s| hex::scene(s, true)),
+            ("hex-list", |s| {
+                s.go_meetings();
+                hex::scene(s, false)
+            }),
+            ("hex-list-recording", |s| {
+                s.go_meetings();
+                hex::scene(s, true)
+            }),
             ("sidebar-status-unknown", |s| {
                 let features = s.config.features.clone();
                 let notes = s.ai_notes.settings.clone();
                 hex::settings::scene(s, "settings-hex-stale");
                 (s.config.features, s.ai_notes.settings) = (features, notes);
-                s.go_home();
+                s.go_meetings();
                 hex::scene(s, true);
                 scene_filters(s);
             }),
@@ -4324,7 +4343,7 @@ pub fn spec() -> AppSpec<State> {
             }),
             // The sidebar beside each page it serves, with an update waiting, with a project
             // chosen, with every project shown, and folded to its rail.
-            ("sidebar-meetings", |s| scene_side(s, |_| {})),
+            ("sidebar-meetings", |s| scene_side(s, State::go_meetings)),
             ("sidebar-experiments-off", |s| {
                 hex::scene(s, false);
                 scene_sidebar(s, true);
@@ -4354,6 +4373,7 @@ pub fn spec() -> AppSpec<State> {
             }),
             // The end of the list, to see the last meetings clear the Ask bar.
             ("home-end", |s| {
+                s.go_meetings();
                 let last = s
                     .row_count()
                     .checked_sub(1)

@@ -72,7 +72,7 @@ impl State {
         self.tasks.rename = None;
         self.clear_project_merge();
         self.project_merge.from = Some(from.into());
-        self.go_home();
+        self.go_meetings();
         self.filter = Filter::Project(from.into());
         self.refresh_list();
     }
@@ -430,7 +430,7 @@ pub fn panel(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> Option<El> 
 }
 
 pub fn scene(s: &mut State, action: &str) {
-    s.go_home();
+    s.go_meetings();
     let from = "Northwind Field Guide";
     let into = "Northwind Atlas";
     s.tasks.projects = s.tasks.store.add_project(from).unwrap();
