@@ -6,7 +6,7 @@ use super::{
 use chrono::{Local, NaiveDate, Timelike};
 use rune::{El, col, row};
 use rune_kit::Kit;
-use sidenote::core::{Meeting, TaskItem, TaskStatus, Teams, people};
+use sidenote::core::{Meeting, TaskItem, TaskStatus, Teams, is_cleared, people};
 use std::collections::HashSet;
 
 fn greeting(hour: u32, owner: &str) -> String {
@@ -44,15 +44,10 @@ fn your_name(s: &State) -> &str {
 }
 
 fn task_counts(s: &State, today: NaiveDate) -> (usize, usize) {
-    let teams = &s.tasks.teams;
-    let owner = people::key(&teams.owner_name(your_name(s)));
-    s.tasks
-        .all
-        .iter()
-        .filter(|task| needs_you(task, &owner, teams))
-        .fold((0, 0), |(open, late), task| {
-            (open + 1, late + usize::from(task.is_overdue(today)))
-        })
+    let t = &s.tasks;
+    let (needs, _) = task_sections(&t.all, your_name(s), &t.teams, t.cutoff, today);
+    let late = needs.iter().filter(|task| task.is_overdue(today)).count();
+    (needs.len(), late)
 }
 
 fn meetings_label(n: usize) -> String {
@@ -120,12 +115,17 @@ fn task_sections<'a>(
     tasks: &'a [TaskItem],
     owner: &str,
     teams: &Teams,
+    cutoff: Option<NaiveDate>,
     today: NaiveDate,
 ) -> (Vec<&'a TaskItem>, Vec<&'a TaskItem>) {
     let owner = people::key(&teams.owner_name(owner));
     let mut needs = Vec::new();
     let mut waiting = Vec::new();
-    for task in tasks.iter().filter(|task| !task.done) {
+    // Tasks the user cleared on the Tasks page stay cleared here.
+    for task in tasks
+        .iter()
+        .filter(|task| !task.done && !is_cleared(task, cutoff))
+    {
         let mine = needs_you(task, &owner, teams);
         // Status, not waiting_on: a finished blocker turns the task back to Todo but keeps the link.
         if task.status == TaskStatus::Waiting || (!mine && task.owner.is_some()) {
@@ -200,7 +200,8 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
             .pred_opt()
             .and_then(|day| s.check.day_summaries.get(&day))
     });
-    let (needs, waiting) = task_sections(&s.tasks.all, owner, &s.tasks.teams, today);
+    let t = &s.tasks;
+    let (needs, waiting) = task_sections(&t.all, owner, &t.teams, t.cutoff, today);
     let tiles = if narrow { col() } else { row() };
     let hello = list::text_title(&greeting(hour, owner), PAGE_TITLE, p).key("home-greeting");
     let date = roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft);
@@ -298,6 +299,9 @@ mod tests {
         s.tasks.all = tasks;
         assert!(s.tasks.items.is_empty());
         assert_eq!(task_counts(&s, TODAY), (3, 1));
+        // Clearing tasks from before tomorrow on the Tasks page clears them here too.
+        s.tasks.cutoff = TODAY.succ_opt();
+        assert_eq!(task_counts(&s, TODAY), (0, 0));
     }
 
     #[test]
