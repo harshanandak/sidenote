@@ -149,7 +149,7 @@ fn solar_variants(name: &str) -> Option<&'static [Icon; 3]> {
         "lucide-folder" => &solar::FOLDER,
         name if name == HOME.name => &solar::HOME,
         "lucide-notepad-text" => &solar::MEETINGS,
-        "lucide-list-checks" => &solar::TASKS,
+        "lucide-list-checks" | "solar-check-circle" => &solar::TASKS,
         "lucide-users-round" => &solar::PEOPLE,
         "lucide-book-open" => &solar::MEMORY,
         "lucide-calendar" => &solar::DIARY,
