@@ -876,8 +876,10 @@ pub fn overlay_with(
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
-    let gutter = if s.companies.open || (s.selected.is_some() && !s.meeting_ui.tabs) {
+    let gutter = if s.companies.open {
         0.0
+    } else if s.selected.is_some() && !s.meeting_ui.tabs {
+        super::meeting::gutter(s)
     } else if s.on_live() {
         super::live::gutter(s)
     } else {

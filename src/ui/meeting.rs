@@ -773,12 +773,18 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
         format!("{shown} of {total} lines match")
     };
     let id = m.id.clone();
+    let footer_padding = if !s.meeting_ui.tabs && phone(s) && s.meeting_ui.time_open && m.timed() {
+        let extra = (reading::transcript_height(s) - reading::TIME_CONTROLS_MIN_HEIGHT) / 2.0;
+        (2.0 + extra).min(8.0)
+    } else {
+        8.0
+    };
     let foot = row()
         .w_full()
         .items_center()
         .gap(8.0)
         .px(10.0)
-        .py(8.0)
+        .py(footer_padding)
         .child(
             quiet_button("Copy transcript", "transcript-copy", p)
                 .on_press_tx(move |s: &mut State, tx| s.copy_transcript(&id, tx)),
