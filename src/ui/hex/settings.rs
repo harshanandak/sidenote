@@ -161,34 +161,22 @@ impl Page {
     }
     fn icon(self) -> &'static rune::Icon {
         match self {
-            Self::General => &icons::USER,
+            Self::General => icons::GENERAL,
             Self::Meetings => &icons::MEETINGS,
             Self::Prompts => &icons::PROMPTS,
             Self::Experimental => &icons::FLASK,
             Self::People => &icons::PEOPLE,
             Self::Hex => &icons::MIC,
-            Self::Helpers => &icons::BRAIN,
-            Self::ConnectedApps => &icons::CONNECTED,
-            Self::Appearance => &APPEARANCE_ICON,
+            Self::Helpers => icons::AGENTS,
+            Self::ConnectedApps => icons::CONNECTED_APPS,
+            Self::Appearance => icons::APPEARANCE,
             Self::Sync => &icons::DEVICE,
-            Self::Privacy => &icons::SHIELD_CHECK,
-            Self::Updates => &icons::UPDATES,
-            Self::Diagnostics => &icons::SLIDERS,
+            Self::Privacy => icons::PRIVACY,
+            Self::Updates => icons::SETTINGS_UPDATES,
+            Self::Diagnostics => icons::DIAGNOSTICS,
         }
     }
 }
-
-static APPEARANCE_ICON: std::sync::LazyLock<rune::Icon> = std::sync::LazyLock::new(|| {
-    static BODY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        r#"<g fill="none" stroke="currentColor" stroke-width="WIDTH" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2m8 8h2m-3-7-1.256 1.256"/><path d="M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715M16 12a4 4 0 0 0-4-4"/></g>"#
-            .replace("WIDTH", &icons::STROKE_WIDTH.to_string())
-    });
-    rune::Icon {
-        name: "lucide-sun-moon",
-        view: 24.0,
-        body: BODY.as_str(),
-    }
-});
 
 fn current(section: Section) -> (Page, usize) {
     match section {
@@ -3859,6 +3847,30 @@ mod tests {
     }
 
     #[test]
+    fn settings_navigation_resolves_to_solar_at_every_weight() {
+        let expected = [
+            "solar-user",
+            "solar-document",
+            "solar-notebook-minimalistic",
+            "solar-flask",
+            "solar-microphone-3",
+            "solar-four-point-star",
+            "solar-link",
+            "solar-sun",
+            "solar-monitor-smartphone",
+            "solar-lock-keyhole-minimalistic",
+            "solar-download-minimalistic",
+            "solar-pulse",
+        ];
+        for (page, glyph) in Page::ALL.into_iter().zip(expected) {
+            icons::assert_solar_weights(page.icon(), glyph);
+        }
+        icons::assert_solar_weights(Page::People.icon(), "solar-users-group-rounded");
+        let mic = row_icon("meetings.record_my_microphone");
+        icons::assert_solar_weights(mic, "solar-microphone-3");
+    }
+
+    #[test]
     fn ask_rows_have_distinct_requested_lucide_icons_at_the_shared_stroke() {
         let rows = [
             ("ask-agent-row", "lucide-bot"),
@@ -3991,7 +4003,7 @@ mod tests {
         }
     }
     #[test]
-    fn recording_rows_have_distinct_lucide_icons() {
+    fn recording_rows_have_distinct_icons() {
         let keys = [
             "meetings.auto_start",
             "meetings.record_my_microphone",

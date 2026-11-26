@@ -7,6 +7,8 @@ pub(super) mod helper;
 pub mod idle_fixture;
 mod joined;
 mod language;
+#[cfg(test)]
+mod long_meetings;
 mod prompt;
 pub mod queue;
 mod schema;
@@ -311,6 +313,8 @@ pub fn test_helper(h: Helper, model: &str) -> Result<Duration, String> {
     Ok(start.elapsed())
 }
 
+#[cfg(test)]
+mod long_meetings_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 

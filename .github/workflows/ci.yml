@@ -162,6 +162,8 @@ jobs:
           -k test_fixed_patterns -k test_timeout_and_missing
       - shell: pwsh
         run: ./tools/dependency_notices_proof.ps1
+      - shell: pwsh
+        run: ./tools/idle_soak_proof.ps1
 
   windows:
     needs: changes
@@ -288,6 +290,7 @@ jobs:
             core::meeting_router::revision::receipts:: provisioning_review_load_uses_the_resolved_path \
             automatic_runtime_comes_from_the_package_and_explicit_path_wins \
             dev40_setup_required_keeps_the_capture_and_shows_the_count \
+            core::notes::long_meetings_tests:: \
             core::notes::tests::corruption:: core::notes::tests::review:: core::notes::tests::routing:: \
             core::notes::tests::translation::busy:: core::notes::tests::translation::failed:: \
             core::notes::tests::translation::producer:: core::relay_preview:: core::speech_host:: \

@@ -200,23 +200,6 @@ pub fn width(s: &State) -> f32 {
     }
 }
 
-// ---- icons ------------------------------------------------------------------------------------
-
-fn icon_meetings(c: Color) -> El {
-    icons::draw(&icons::MEETINGS, icons::ROW, c)
-}
-fn icon_tasks(c: Color) -> El {
-    icons::draw(&icons::TASKS, icons::ROW, c)
-}
-fn icon_memory(c: Color) -> El {
-    icons::draw(&icons::MEMORY, icons::ROW, c)
-}
-fn icon_check(c: Color, _: Color) -> El {
-    icons::draw(&icons::DIARY, icons::ROW, c)
-}
-fn icon_device(c: Color) -> El {
-    icons::draw(&icons::DEVICE, icons::ROW, c)
-}
 // ---- the sidebar ------------------------------------------------------------------------------
 
 const MAIN_H: f32 = 34.0;
@@ -322,14 +305,15 @@ struct Place {
     name: &'static str,
     help: String,
     active: bool,
-    icon: fn(Color, Color) -> El,
+    icon: &'static rune::Icon,
     flag: Option<Color>,
     press: fn(&mut State),
 }
 
 impl Place {
     fn icon(&self, p: Palette) -> El {
-        (self.icon)(if self.active { p.ink } else { p.soft }, p.side)
+        let ink = if self.active { p.ink } else { p.soft };
+        icons::draw(self.icon, icons::ROW, ink)
     }
 }
 
@@ -345,7 +329,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "Meetings",
         help: "Meetings".into(),
         active: page == Page::Meetings && s.filter == Filter::All,
-        icon: |c, _| icon_meetings(c),
+        icon: &icons::MEETINGS,
         flag: None,
         press: |s| s.go_meetings(),
     }];
@@ -358,7 +342,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 s.tasks.counts.mine_open
             ),
             active: page == Page::Tasks,
-            icon: |c, _| icon_tasks(c),
+            icon: &icons::TASKS,
             flag: None,
             press: |s| {
                 s.set_view(View::Tasks);
@@ -371,7 +355,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "People",
         help: "People".into(),
         active: page == Page::People,
-        icon: |c, _| icons::draw(&icons::PEOPLE, icons::ROW, c),
+        icon: &icons::PEOPLE,
         flag: None,
         press: State::open_people,
     }));
@@ -385,7 +369,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 "Memory".into()
             },
             active: page == Page::Memory,
-            icon: |c, _| icon_memory(c),
+            icon: &icons::MEMORY,
             flag: (proposals > 0).then_some(p.warn),
             press: |s| {
                 s.open_memory();
@@ -404,7 +388,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 "Diary".into()
             },
             active: page == Page::Check,
-            icon: icon_check,
+            icon: &icons::DIARY,
             flag: (high > 0).then_some(p.warn),
             press: |s| {
                 s.open_check();
@@ -417,7 +401,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "Annotations",
         help: "Annotations".into(),
         active: page == Page::Annotations,
-        icon: |c, _| icons::draw(&icons::ANNOTATIONS, icons::ROW, c),
+        icon: &icons::ANNOTATIONS,
         flag: None,
         press: |s| s.open_annotations(),
     });
@@ -432,7 +416,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
             s.nav.peers
         ),
         active: page == Page::Meetings && s.filter == Filter::Peers,
-        icon: |c, _| icon_device(c),
+        icon: &icons::DEVICE,
         flag: None,
         press: |s| s.set_filter(Filter::Peers),
     });
@@ -453,7 +437,7 @@ pub(super) fn search(p: Palette) -> El {
 }
 
 /// The sidebar. `wide` is the open sidebar; otherwise the rail of icons.
-pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
+pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     if !wide && !s.hex_recording() {
         return el().w(0.0).h_full();
     }
@@ -483,7 +467,10 @@ pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
             .child(row().h(28.0).px(PAD).items_center().child(heading))
             .child(main_row(place, icon, p))
     });
-    let mut footer = col().w_full().pb(8.0).child(profile(s, p, wide, layer));
+    let mut footer = col()
+        .w_full()
+        .pb(8.0)
+        .child(profile(s, p, page, wide, layer));
     if !wide && s.hex_recording() {
         footer = footer.items_center().child(
             pressable(col().size(RAIL_ITEM_W, MAIN_H).center().child(icons::draw(
@@ -824,7 +811,7 @@ fn profile_avatar(name: &str, p: Palette, size: f32) -> El {
         .child(roles::NAME.line(initial, p.ink))
 }
 
-fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
+fn profile(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     let name = s
         .ai_notes
         .settings
@@ -853,7 +840,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
             status.as_str(),
             "Ready" | "Recording" | "Checking" | "Dictating"
         ) && !s.hex_recording();
-    let avatar = |size, dot_size| {
+    let avatar = |p: Palette, size, dot_size| {
         let mut avatar = profile_avatar(name, p, size);
         if attention {
             avatar = avatar.child(dot(dot_size, p.warn).absolute(size - dot_size, 0.0));
@@ -866,7 +853,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
         .px(PAD)
         .gap(10.0)
         .items_center()
-        .child(avatar(24.0, SIGNAL_D));
+        .child(avatar(p, 24.0, SIGNAL_D));
     if wide {
         trigger = trigger
             .child(roles::NAV.line(name, p.ink).grow(1.0))
@@ -896,6 +883,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     });
     let device = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "This PC".into());
     if s.nav.profile_menu {
+        let p = page;
         let device_line = format!(
             "This PC: {device}{}",
             sync.as_ref()
@@ -909,7 +897,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
                     .px(8.0)
                     .gap(10.0)
                     .items_center()
-                    .child(avatar(24.0, SIGNAL_D))
+                    .child(avatar(p, 24.0, SIGNAL_D))
                     .child(
                         col()
                             .grow(1.0)
@@ -1146,7 +1134,9 @@ mod tests {
         crate::test_paths::isolate();
         let view = |s: &State, _: &mut rune::Cx<State>| {
             let mut layer = Vec::new();
-            let trigger = profile(s, super::super::theme::palette(true), true, &mut layer);
+            let page = super::super::theme::palette(true);
+            let sidebar = super::super::theme::sidebar_palette(true, page);
+            let trigger = profile(s, sidebar, page, true, &mut layer);
             col().child(trigger).children(layer)
         };
         let mut rt = Runtime::new(State::new(), view, (400.0, 600.0), Env::new(true, 1.0));
@@ -1175,13 +1165,28 @@ mod tests {
         s.config.features.memory = true;
         s.config.features.daily_check = true;
 
-        let (places, _) = places(&s, super::super::theme::palette(true));
+        s.config.features.other_devices = true;
+        s.nav.peers = 1;
+        let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
         let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
             (34.0, 230.0, expected)
         );
+
+        let glyphs = [
+            "solar-document",
+            "solar-check-circle",
+            "solar-users-group-rounded",
+            "solar-pin",
+            "solar-pen",
+            "solar-calendar-minimalistic",
+        ];
+        for (place, glyph) in places.iter().zip(glyphs) {
+            icons::assert_solar_weights(place.icon, glyph);
+        }
+        icons::assert_solar_weights(peers.unwrap().icon, "solar-monitor-smartphone");
     }
 
     #[test]

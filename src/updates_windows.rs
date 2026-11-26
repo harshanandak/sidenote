@@ -1066,6 +1066,14 @@ fn finish_window_start(
     resume()
 }
 const PIPELINE_INSTALL_ERROR: &str = "The update could not install the meeting scripts. Check private pipeline settings, close processing jobs and reopen Sidenote to retry; the previous generation and original script backups are retained.";
+const PIPELINE_NOT_CONFIGURED_CODE: i32 = 3;
+
+fn pipeline_script_result(code: Option<i32>) -> Result<(), String> {
+    match code {
+        Some(PIPELINE_NOT_CONFIGURED_CODE) => Ok(()),
+        _ => Err(PIPELINE_INSTALL_ERROR.into()),
+    }
+}
 
 fn complete_pipeline_install() -> Result<(), String> {
     install_pending_pipeline(
@@ -1205,7 +1213,7 @@ fn install_pipeline_scripts() -> Result<(), String> {
     let status = child.wait().map_err(|_| error)?;
     written?;
     if !status.success() {
-        return Err(error.into());
+        return pipeline_script_result(status.code());
     }
     Ok(())
 }
@@ -1663,6 +1671,51 @@ mod tests {
             assert!(reconcile_install(root.path(), pipeline, || Ok(())).unwrap());
             assert!(!root.path().join("pipeline-install.pending").exists());
         }
+    }
+
+    #[test]
+    fn unconfigured_pipeline_install_retires_marker_without_error() {
+        assert!(pipeline_script_result(Some(PIPELINE_NOT_CONFIGURED_CODE)).is_ok());
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("pipeline-install.pending");
+        fs::write(&marker, VERSION).unwrap();
+        assert!(
+            install_pending_pipeline(
+                &marker,
+                || pipeline_script_result(Some(PIPELINE_NOT_CONFIGURED_CODE)),
+                || Ok(()),
+            )
+            .unwrap()
+        );
+        assert!(!marker.exists());
+        assert!(read_status(root.path()).error.is_none());
+    }
+
+    #[test]
+    fn other_pipeline_exit_keeps_marker_retryable() {
+        assert_eq!(
+            pipeline_script_result(Some(1)).unwrap_err(),
+            PIPELINE_INSTALL_ERROR
+        );
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("pipeline-install.pending");
+        fs::write(&marker, VERSION).unwrap();
+        assert_eq!(
+            install_pending_pipeline(
+                &marker,
+                || pipeline_script_result(Some(1)),
+                || panic!("failed install cleared status"),
+            )
+            .unwrap_err(),
+            PIPELINE_INSTALL_ERROR
+        );
+        assert!(marker.exists());
+        assert_eq!(
+            read_status(root.path()).error.as_deref(),
+            Some(PIPELINE_INSTALL_ERROR)
+        );
+        assert!(install_pending_pipeline(&marker, || Ok(()), || Ok(())).unwrap());
+        assert!(!marker.exists());
     }
 
     #[test]
