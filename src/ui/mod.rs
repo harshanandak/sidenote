@@ -1227,6 +1227,10 @@ impl State {
     }
 
     pub fn send(&mut self, text: &str) {
+        self.send_question(text, None);
+    }
+
+    fn send_question(&mut self, text: &str, retained_id: Option<&str>) {
         let submitted = Instant::now();
         let text = text.trim();
         let id = self.ask_key();
@@ -1256,17 +1260,24 @@ impl State {
         );
         let Some(runner) = self.ask_runner_name().map(str::to_owned) else {
             self.ask_errors
-                .insert(id, "Choose a runner before asking.".into());
+                .insert(id, "Choose a model before asking.".into());
             return;
         };
-        let (saved, submitted_message_id) = match self.store.append_message_identified(
-            &id,
-            Message {
-                role: "user".into(),
-                text: text.to_string(),
-                ..Default::default()
-            },
-        ) {
+        let saved_question = match retained_id {
+            Some(message_id) => self
+                .store
+                .load(&id)
+                .map(|saved| (saved, message_id.to_owned())),
+            None => self.store.append_message_identified(
+                &id,
+                Message {
+                    role: "user".into(),
+                    text: text.to_string(),
+                    ..Default::default()
+                },
+            ),
+        };
+        let (saved, submitted_message_id) = match saved_question {
             Ok(saved) => saved,
             Err(_) => {
                 self.notice = Some(
@@ -1351,6 +1362,7 @@ impl State {
         self.saved = saved.clone();
         self.question = TextEdit::new("");
         self.ask_errors.remove(&id);
+        self.ask_settings.retry_questions.remove(&id);
         self.generation += 1;
         let generation = self.generation;
         let events = self.events_tx.clone();
@@ -1458,6 +1470,7 @@ impl State {
             response_time::superseded(run.response_time);
         }
         self.ask_errors.remove(&id);
+        self.ask_settings.retry_questions.remove(&id);
         self.ask_settings.overrides.retain(|(key, _), _| key != &id);
         match self.store.clear_history(&id) {
             Ok(saved) => self.saved = saved,
@@ -1507,27 +1520,30 @@ impl State {
                 },
             ),
             Err(message) => {
-                // Take the unanswered question back out so a retry does not repeat it.
-                let mut taken = None;
+                let mut failed = None;
                 let can_restore = self.ask_key() == id && self.question.text.is_empty();
+                let retain = run.meeting_request && !can_restore;
                 let result = self.store.update(id, |s| {
-                    if run.meeting_request && !can_restore {
-                        return;
-                    }
                     if let Some(at) = s.messages.iter().position(|m| {
                         m.role == "user" && m.id.is_some() && m.id == run.submitted_message_id
                     }) {
-                        taken = Some(s.messages.remove(at));
+                        failed = Some(if retain {
+                            s.messages[at].clone()
+                        } else {
+                            s.messages.remove(at)
+                        });
                     }
                 });
                 // A stop the owner asked for is not a failure: only the question comes back.
                 if message != core::ask::STOPPED {
                     self.ask_errors.insert(id.to_string(), message);
+                    if let Some(question) = failed.as_ref().filter(|_| result.is_ok()) {
+                        let mut retry = question.clone();
+                        retry.id = retry.id.filter(|_| retain);
+                        self.ask_settings.retry_questions.insert(id.into(), retry);
+                    }
                 }
-                if self.ask_key() == id
-                    && self.question.text.is_empty()
-                    && let Some(m) = taken
-                {
+                if can_restore && let Some(m) = failed {
                     self.question = TextEdit::new(&m.text);
                 }
                 result
@@ -1951,7 +1967,25 @@ fn setup(s: &mut State, waker: Waker) {
     s.scan_tx = Some(refresh::start(waker, s.refresh_options()));
 }
 
-fn apply_pending(s: &mut State, headless: bool) -> (bool, usize) {
+fn apply_pending(s: &mut State, headless: bool, tx: &mut Tx) -> (bool, usize) {
+    let apply = |s: &mut State, event, tx: &mut Tx| {
+        if let Event::Progress {
+            id,
+            generation,
+            event,
+        } = &event
+            && !s.thread_hidden
+            && id == &s.ask_key()
+            && s.asks
+                .get(id)
+                .is_some_and(|run| run.generation == *generation && run.text.is_empty())
+            && (matches!(event, AskProgress::Text { text } if !text.is_empty())
+                || matches!(event, AskProgress::Finished))
+        {
+            tx.animated();
+        }
+        s.apply_event(event);
+    };
     let mut changed =
         !s.asks.is_empty() && s.cancel_stale_asks(*core::meeting_delete::read_visibility());
     let deadline = Instant::now() + Duration::from_millis(4);
@@ -1971,7 +2005,7 @@ fn apply_pending(s: &mut State, headless: bool) -> (bool, usize) {
                 changed |= match event {
                     Event::Hex(hex::Msg::ObservedStatus(sample)) => s.hex_observed_event(sample),
                     event => {
-                        s.apply_event(event);
+                        apply(s, event, tx);
                         true
                     }
                 };
@@ -1988,7 +2022,7 @@ fn apply_pending(s: &mut State, headless: bool) -> (bool, usize) {
                         || s.areas.pending.is_some()) =>
             {
                 if let Ok(event) = s.events_rx.recv_timeout(Duration::from_secs(600)) {
-                    s.apply_event(event);
+                    apply(s, event, tx);
                     changed = true;
                 } else {
                     break;
@@ -2014,7 +2048,7 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
             .get_or_insert_with(|| (Instant::now(), 0.0));
         *now = clock;
     }
-    let (mut changed, _) = apply_pending(s, headless);
+    let (mut changed, _) = apply_pending(s, headless, tx);
     if !headless && s.ask_key() != s.ask_settings.loaded_scope {
         s.load_saved();
         changed = true;

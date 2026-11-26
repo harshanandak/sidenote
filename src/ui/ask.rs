@@ -6,7 +6,7 @@ use super::{
     meeting::COLUMN,
     roles,
     theme::Palette,
-    widgets::{ButtonDisabled, hairline, pressable, quiet_button, spaced_caps},
+    widgets::{ButtonDisabled, ButtonRole, button, hairline, pressable, quiet_button},
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
@@ -142,9 +142,7 @@ fn message(s: &State, k: &Kit, i: usize, m: &Message, p: Palette) -> El {
         }))
 }
 
-/// "Codex \u{b7} GPT-6.1-Sol" under an answer: the helper and the model it reported. A helper
-/// that reported none reads "Codex (model not reported)", never the model that was asked for.
-/// Messages saved before this was recorded have no runner and show nothing.
+/// Show the provider and the reported model when available. Older messages can lack both.
 pub(super) fn answer_label(s: &State, m: &Message) -> Option<String> {
     let name = m.runner.as_deref()?;
     let runner = s.runners.iter().find(|r| r.name == name);
@@ -156,7 +154,7 @@ pub(super) fn answer_label(s: &State, m: &Message) -> Option<String> {
     Some(match (&m.model, runner) {
         (Some(id), Some(r)) => format!("{agent} \u{b7} {}{fallback}", model_label(r, Some(id))),
         (Some(id), None) => format!("{agent} \u{b7} {id}{fallback}"),
-        (None, _) => format!("{agent} (model not reported){fallback}"),
+        (None, _) => format!("{agent}{fallback}"),
     })
 }
 
@@ -308,14 +306,12 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         .gap(8.0)
         // The caption takes what the actions leave and wraps; Hide and Clear keep their own room.
         .child(
-            if s.ask_current_live() {
-                roles::META.medium().wrap(&title, p.soft)
-            } else {
-                spaced_caps(&title, p)
-            }
-            .key("ask-caption")
-            .grow(1.0)
-            .min_w(0.0),
+            roles::META
+                .medium()
+                .wrap(&title, p.soft)
+                .key("ask-caption")
+                .grow(1.0)
+                .min_w(0.0),
         )
         .child(actions);
     let panel = raised(
@@ -369,7 +365,6 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
                     },
                     p,
                 )
-                .key("ask-streaming-answer")
                 .role("status"),
             );
         }
@@ -389,13 +384,18 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
         );
     }
     if let Some(e) = error {
+        messages = messages.child(error_controls(s, id, e, p));
+    }
+    messages = messages.children(endpoint_details(s, id, p));
+    if s.saved.messages.iter().any(|m| m.role == "assistant")
+        || run.is_some_and(|r| !r.text.is_empty())
+    {
         messages = messages.child(
             roles::META
-                .medium()
-                .wrap(format!("Could not answer. {e}"), p.warn)
-                .role("alert")
+                .wrap("Answers come from your meetings and can be wrong.", p.faint)
+                .key("ask-note")
                 .px(8.0)
-                .pb(14.0),
+                .py(6.0),
         );
     }
     // The thread floats over the meeting, so it takes at most about half the pane.
@@ -415,8 +415,107 @@ fn thread(s: &State, k: &Kit, id: &str, p: Palette) -> Option<El> {
             stick_bottom: false,
         })
         .child(messages);
-    let panel = panel.max_w(COLUMN).self_center();
-    Some(with_note(panel.child(hairline(p)).child(list), p))
+    Some(
+        panel
+            .max_w(COLUMN)
+            .self_center()
+            .child(hairline(p))
+            .child(list),
+    )
+}
+
+fn error_controls(s: &State, id: &str, error: &str, p: Palette) -> El {
+    let mut row = row().w_full().flex_wrap().gaps(8.0, 6.0);
+    let connection = &s.ask_settings.connection;
+    if !connection.labels.contains_key(id) {
+        if let Some(question) = s.ask_settings.retry_questions.get(id) {
+            let question = question.clone();
+            row = row.child(
+                button("Try again", "ask-retry", ButtonRole::Secondary, p)
+                    .button_disabled(
+                        !s.question.text.is_empty() && s.question.text != question.text,
+                    )
+                    .on_press_tx(move |s: &mut State, tx| {
+                        s.send_question(&question.text, question.id.as_deref());
+                        keep_question_focus(s, tx);
+                    }),
+            );
+        }
+        if s.has_agent() {
+            row = row.child(
+                button(
+                    "Choose a model",
+                    "ask-error-model",
+                    ButtonRole::Secondary,
+                    p,
+                )
+                .on_press(|s: &mut State| {
+                    if s.ask_settings.connection.settings.enabled {
+                        s.open_connection_settings();
+                    } else {
+                        s.runner_open = true;
+                        s.ask_settings.scope_open = false;
+                        s.reload_runners();
+                    }
+                }),
+            );
+        }
+    }
+    col()
+        .w_full()
+        .px(8.0)
+        .pb(8.0)
+        .gap(6.0)
+        .child(
+            roles::META
+                .medium()
+                .wrap(format!("Could not answer. {error}"), p.warn)
+                .role("alert"),
+        )
+        .child(row)
+}
+
+fn endpoint_details(s: &State, id: &str, p: Palette) -> Option<El> {
+    let connection = &s.ask_settings.connection;
+    let label = connection.labels.get(id)?;
+    let recovery = super::cloud_ask::recovery(s, p);
+    let recovering = recovery.is_some();
+    let open = s.ask_settings.details_open.as_deref() == Some(id);
+    let scope = id.to_string();
+    let mut details = col().w_full().px(8.0).pb(8.0).children(recovery).child(
+        button("Details", "ask-endpoint-details", ButtonRole::Secondary, p)
+            .self_start()
+            .expanded(open)
+            .on_press(move |s: &mut State| {
+                s.ask_settings.details_open = (!open).then(|| scope.clone())
+            }),
+    );
+    if open {
+        let selected = connection.settings.label();
+        let previous =
+            !s.asks.contains_key(id) && (!connection.settings.enabled || label != &selected);
+        let label = if previous {
+            format!("Last attempt: {label}")
+        } else {
+            label.clone()
+        };
+        details = details
+            .child(roles::META.wrap(label, p.soft).key("ask-endpoint-label"))
+            .children((previous && connection.settings.enabled).then(|| {
+                roles::META
+                    .wrap(format!("Next Ask: {selected}"), p.soft)
+                    .key("ask-next-endpoint-label")
+            }))
+            .children(connection.metrics.get(id).map(|metrics| {
+                let label = if recovering {
+                    super::cloud_ask::known_metrics_label(metrics)
+                } else {
+                    metrics.label()
+                };
+                roles::META.wrap(label, p.faint).key("ask-endpoint-timing")
+            }));
+    }
+    Some(details)
 }
 
 fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
@@ -682,7 +781,7 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
                 &super::icons::STOP,
                 "Stop",
                 "ask-stop",
-                super::widgets::ButtonRole::Primary,
+                super::widgets::ButtonRole::Secondary,
                 p,
             )
             .help(format!("Stop {who}"))
@@ -828,64 +927,6 @@ pub fn overlay_with(
                 .border(1.0, p.line),
         );
     }
-    if s.ask_settings.connection.settings.enabled
-        || s.ask_settings.connection.labels.contains_key(&id)
-    {
-        let label = s
-            .ask_settings
-            .connection
-            .labels
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| s.ask_settings.connection.settings.label());
-        let selected = s.ask_settings.connection.settings.label();
-        let mut disclosure = col().w_full().padding(8.0).radius(12.0).fill(p.card);
-        let label =
-            if !pending && (!s.ask_settings.connection.settings.enabled || label != selected) {
-                format!("Last attempt: {label}")
-            } else {
-                label
-            };
-        disclosure = disclosure.child(
-            roles::META
-                .wrap(label, p.soft)
-                .key("ask-endpoint-label")
-                .role("status")
-                .w_full(),
-        );
-        if !pending
-            && s.ask_settings.connection.settings.enabled
-            && s.ask_settings
-                .connection
-                .labels
-                .get(&id)
-                .is_some_and(|label| label != &selected)
-        {
-            disclosure = disclosure.child(
-                roles::META
-                    .wrap(format!("Next Ask: {selected}"), p.soft)
-                    .key("ask-next-endpoint-label")
-                    .w_full(),
-            );
-        }
-        let recovery = super::cloud_ask::recovery(s, p);
-        let recovering = recovery.is_some();
-        disclosure = disclosure.children(recovery);
-        if let Some(metrics) = s.ask_settings.connection.metrics.get(&id) {
-            let label = if recovering {
-                super::cloud_ask::known_metrics_label(metrics)
-            } else {
-                metrics.label()
-            };
-            disclosure = disclosure.child(
-                roles::META
-                    .wrap(label, p.faint)
-                    .key("ask-endpoint-timing")
-                    .w_full(),
-            );
-        }
-        stack = stack.child(disclosure.max_w(COLUMN).self_center());
-    }
     if !s.has_agent() && !pending && s.runner_error.is_none() {
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
             raised(
@@ -1010,16 +1051,6 @@ pub fn overlay_with(
     place(s, stack.child(dock.child(pill)))
 }
 
-fn with_note(stack: El, p: Palette) -> El {
-    stack.child(
-        roles::META
-            .wrap("Answers come from your meetings and can be wrong.", p.faint)
-            .key("ask-note")
-            .self_center()
-            .align(rune::Align::Center),
-    )
-}
-
 fn place(s: &State, stack: El) -> El {
     if s.on_live() {
         let space = super::live::limits(s).space;
@@ -1041,7 +1072,7 @@ fn place(s: &State, stack: El) -> El {
                         stick_bottom: false,
                     }),
             )
-    } else if s.selected.is_some() && !s.meeting_ui.tabs && !s.companies.open {
+    } else if !s.companies.open && (s.selected.is_none() || !s.meeting_ui.tabs) {
         col()
             .key("ask-overlay")
             .w_full()
@@ -1106,7 +1137,17 @@ mod meeting_agent_tests {
         assert_eq!(retry.label.as_deref(), Some("Try again with Local"));
         assert!(by_key("ask-connection-recovery-1").is_none());
         let settings = by_key("ask-connection-recovery-2").unwrap();
-        let metrics = by_key("ask-endpoint-timing").unwrap();
+        let details = by_key("ask-endpoint-details").unwrap();
+        assert!(by_key("ask-endpoint-timing").is_none());
+        let [x, y, w, h] = details.rect;
+        runtime.pointer_down(x + w / 2.0, y + h / 2.0);
+        runtime.pointer_up(x + w / 2.0, y + h / 2.0);
+        runtime.frame(0.0);
+        let opened = runtime.elements();
+        let metrics = opened
+            .iter()
+            .find(|e| e.key.as_deref() == Some("ask-endpoint-timing"))
+            .unwrap();
         assert!(retry.rect[1] + retry.rect[3] <= metrics.rect[1]);
         assert!(settings.rect[1] + settings.rect[3] <= metrics.rect[1]);
         assert_eq!(
