@@ -523,7 +523,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             ),
             (
                 folder.join("english-summary.json"),
-                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Ravi"]}),
+                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Sam"," ","Ravi"," Ravi "]}),
             ),
             (
                 folder.join("tasks.json"),
@@ -563,27 +563,16 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
         tx.focus(more.as_str(), true);
     });
     rt.frame(0.0);
-    let press = |rt: &mut Runtime<State>, key| {
+    let press = |rt: &mut Runtime<State>, key, shift| {
         rt.key(KeyEvent {
             key,
-            mods: rune::Mods::default(),
+            mods: rune::Mods {
+                shift,
+                ..Default::default()
+            },
         });
         rt.frame(0.2);
     };
-    let (title, facts_row, view, menu_rect) = (
-        rect_of(&rt, "meeting-title"),
-        rect_of(&rt, "meeting-facts-row"),
-        rect_of(&rt, "meeting-view"),
-        rect_of(&rt, &more),
-    );
-    assert_eq!(menu_rect[1], title[1], "More stays on the title row");
-    assert_eq!(menu_rect[0] + menu_rect[2], 390.0 - 16.0, "More at row end");
-    assert_eq!(facts_row[1], title[1] + title[3] + 6.0, "facts below title");
-    assert_eq!(
-        view[1],
-        facts_row[1] + facts_row[3] + 16.0,
-        "view switch below facts"
-    );
     let row_path = element(&rt, "meeting-facts-row").path;
     assert!(
         rt.elements()
@@ -592,61 +581,52 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             .all(|e| !e.key.as_deref().unwrap_or("").starts_with("help-hint")),
         "the facts row has no help hints"
     );
-    assert!(
-        !element(&rt, "meeting-status")
-            .path
-            .starts_with(&format!("{row_path}/")),
-        "the status button is not a fact"
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.text.as_deref() == Some("Sam, Ravi"))
+            .count(),
+        1
     );
-    let people_path = element(&rt, "meeting-people").path;
-    let names: Vec<_> = rt
-        .elements()
-        .into_iter()
-        .filter(|e| e.path.starts_with(&format!("{people_path}/")))
-        .filter_map(|e| e.text)
-        .collect();
-    assert_eq!(names, vec!["Sam, Ravi".to_string()]);
-    // Tab leaves the title-row More button into the facts, then reaches the view switch and status.
-    for (key, name) in [
-        ("meeting-facts", facts.as_str()),
-        ("meeting-people", "People: Sam, Ravi"),
-        (&project, "Suggested project: Atlas 2. Change it"),
-    ] {
-        press(&mut rt, Key::Tab);
-        let item = element(&rt, key);
+    assert!(rt.find("meeting-english-only").is_some());
+    // Tab reaches the facts from More; Shift+Tab comes back, then the forward order is exact.
+    press(&mut rt, Key::Tab, false);
+    assert!(element(&rt, "meeting-facts").focused);
+    press(&mut rt, Key::Tab, true);
+    for (index, (key, name, height)) in [
+        (more.as_str(), "More actions", 28.0),
+        ("meeting-facts", facts.as_str(), 28.0),
+        ("meeting-people", "People: Sam, Ravi", 28.0),
+        (&project, "Suggested project: Atlas 2. Change it", 28.0),
+        ("segment0", "Summary", 24.0),
+        ("meeting-status", "Transcript status: English only", 0.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            press(&mut rt, Key::Tab, false);
+        }
+        let item = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}"));
         assert!(item.focusable && item.focused, "{key}");
         assert!(item.focus_visible, "{key}");
         assert_eq!(item.label.as_deref(), Some(name), "{key}");
-        assert_eq!(item.rect[3], 28.0, "{key}");
+        if height > 0.0 {
+            assert_eq!(item.rect[3], height, "{key}");
+        }
         assert!(
             item.rect[0] >= 0.0 && item.rect[0] + item.rect[2] <= 390.0,
             "{key}"
         );
     }
-    press(&mut rt, Key::Tab);
-    let segment = element(&rt, "segment0");
-    assert!(segment.focused && segment.focus_visible, "view switch");
-    assert_eq!(segment.rect[3], 24.0, "view switch");
-    press(&mut rt, Key::Tab);
-    let status = element(&rt, "meeting-status");
-    assert!(status.focusable && status.focused, "meeting-status");
-    assert!(status.focus_visible, "meeting-status");
-    assert_eq!(
-        status.label.as_deref(),
-        Some("Transcript status: English only")
-    );
-    assert_eq!(status.rect[3], 28.0, "meeting-status");
-    let focused = |rt: &Runtime<State>, key| {
-        rt.elements()
-            .iter()
-            .any(|e| e.focused && e.key.as_deref() == Some(key))
-    };
-    press(&mut rt, Key::Text(" ".into()));
-    assert!(rt.find("meeting-english-only").is_some());
-    assert!(focused(&rt, "meeting-status-settings"));
-    press(&mut rt, Key::Escape);
-    assert!(rt.find("meeting-english-only").is_none());
-    assert!(focused(&rt, "meeting-status"));
+    press(&mut rt, Key::Text(" ".into()), false);
+    assert!(element(&rt, "meeting-status-settings").focused);
+    press(&mut rt, Key::Escape, false);
+    assert!(element(&rt, "meeting-status").focused);
 }
 
 /// Three tasks and two open questions: one task with a detail, one with a guessed date and one
@@ -2426,6 +2406,13 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
             .collect();
         assert_eq!(shown, want, "{label}");
     }
+    let rt = page_with(DEFAULT_SIZE, || {
+        let path = core::meetings_dir()
+            .join(MEETING)
+            .join("english-summary.json");
+        std::fs::write(path, serde_json::json!({"people":[" "]}).to_string()).unwrap();
+    });
+    assert!(rt.find("meeting-people").is_none());
 }
 
 #[test]
@@ -2472,7 +2459,7 @@ fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
         (view[0], view[1]),
         (left, facts_row[1] + facts_row[3] + 16.0)
     );
-    // The facts wrap in reading order; the status stays with the view row rather than becoming a fact.
+    // The facts wrap in reading order; the visible status text stays below the view switch.
     let (people, chip, status) = (r("meeting-people"), r(&project), r("meeting-status"));
     for (before, after) in [(facts, people), (people, chip)] {
         assert!(
@@ -2481,9 +2468,10 @@ fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
             "{after:?} follows {before:?}"
         );
     }
+    // S4 status change: was an icon beside the view switch; now the visible text is below it.
     assert!(
-        status[1] >= view[1] && (status[1] >= view[1] + view[3] || status[0] >= view[0] + view[2]),
-        "status {status:?} follows the switch {view:?}"
+        status[1] >= view[1] + view[3],
+        "status {status:?} is below the switch {view:?}"
     );
     assert_eq!(r("sec-context")[0], left, "notes gutter");
     assert_inside(&rt, 390.0);
@@ -2622,6 +2610,13 @@ fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
                 rt.frame(0.2);
                 rt.settle_all();
             }
+            if long {
+                rt.update(|s, _| {
+                    let meeting = s.meetings.iter_mut().find(|m| m.id == MEETING).unwrap();
+                    meeting.title = format!("{}\nSync", "W".repeat(32));
+                });
+                rt.frame(0.0);
+            }
             let page = window - if rail { 57.0 } else { 0.0 };
             let (title, facts_row, view, menu) = (
                 rect_of(&rt, "meeting-title"),
@@ -2639,7 +2634,6 @@ fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
             );
             if long {
                 let facts = element(&rt, "meeting-facts");
-                let people_el = element(&rt, "meeting-people");
                 let project_chip = element(&rt, &project_key);
                 let date = chrono::DateTime::from_timestamp_millis(start)
                     .unwrap()
@@ -2649,10 +2643,28 @@ fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
                 assert_eq!(facts.label.as_deref(), Some(facts_label.as_str()));
                 // S4 people presentation change: was a count ("12 people"), now the joined names.
                 let people_label = format!("People: {}", people.join(", "));
-                assert_eq!(people_el.label.as_deref(), Some(people_label.as_str()));
+                let people = element(&rt, "meeting-people");
+                assert_eq!(people.label.as_deref(), Some(people_label.as_str()));
                 assert!(project_chip.label.as_deref().unwrap().contains(project));
+                let title_right = title[0] + title[2];
+                let glyphs: Vec<_> = rt
+                    .instances
+                    .iter()
+                    .filter(|i| {
+                        i.params[1] == rune::render::KIND_GLYPH
+                            && i.rect[1] < title[1] + title[3]
+                            && i.rect[1] + i.rect[3] > title[1]
+                    })
+                    .collect();
+                assert!(
+                    !glyphs.is_empty()
+                        && glyphs
+                            .iter()
+                            .all(|i| i.rect[0] + i.rect[2] <= title_right + 0.5),
+                    "page {page}: title glyphs are missing or cross the title box"
+                );
                 let pane = rect_of(&rt, "meeting-pane");
-                for fact in [&facts, &people_el, &project_chip] {
+                for fact in [&facts, &people, &project_chip] {
                     let [x, y, w, h] = fact.rect;
                     assert!(y + h <= view[1], "page {page}: {:?}", fact.label);
                     assert!(
@@ -2821,13 +2833,10 @@ fn stamped_summary(folder: &std::path::Path, made_by: Option<serde_json::Value>)
 
 /// Whether the saved meeting's Notes view says the transcript was English-only.
 fn shows_english_only_note(made_by: Option<serde_json::Value>, stored: impl FnOnce()) -> bool {
-    let mut rt = page_with(DEFAULT_SIZE, || {
+    let rt = page_with(DEFAULT_SIZE, || {
         stamped_summary(&core::meetings_dir().join(MEETING), made_by);
         stored();
     });
-    if rt.find("meeting-status").is_some() {
-        tap(&mut rt, "meeting-status");
-    }
     rt.find("meeting-english-only").is_some()
 }
 
@@ -2853,23 +2862,17 @@ fn page_with_language_fallback() -> Runtime<State> {
 }
 
 #[test]
-fn meeting_status_keeps_language_facts_and_the_settings_link_inside_the_popover() {
-    if in_parent("meeting_status_keeps_language_facts_and_the_settings_link_inside_the_popover") {
+fn meeting_status_shows_language_facts_and_the_settings_link() {
+    if in_parent("meeting_status_shows_language_facts_and_the_settings_link") {
         return;
     }
     let mut rt = page_with_language_fallback();
-    let check = |rt: &Runtime<State>, open| {
-        let elements = rt.elements();
-        let texts: Vec<_> = elements.iter().filter_map(|e| e.text.as_deref()).collect();
-        assert_eq!(
-            texts.contains(&"English-only transcript. Hindi or Telugu parts may be missing."),
-            open
-        );
-        assert_eq!(texts.contains(&"Hindi and Telugu models are not installed yet; download them once in Settings, Models (about 567 MB). 2 of 4 ready. Notes use the captured Hex transcript."), open);
-    };
-    check(&rt, false);
+    let elements = rt.elements();
+    let texts: Vec<_> = elements.iter().filter_map(|e| e.text.as_deref()).collect();
+    // S4 status change: these facts were only inside the popover; now they are visible in the status control.
+    assert!(texts.contains(&"English-only transcript. Hindi or Telugu parts may be missing."));
+    assert!(texts.contains(&"Hindi and Telugu models are not installed yet; download them once in Settings, Models (about 567 MB). 2 of 4 ready. Notes use the captured Hex transcript."));
     tap(&mut rt, "meeting-status");
-    check(&rt, true);
     tap(&mut rt, "meeting-status-settings");
     assert!(rt.state.hex_open);
     assert!(matches!(rt.state.hex.section, hex::Section::MeetingModels));

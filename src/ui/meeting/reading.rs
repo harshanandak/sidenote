@@ -363,13 +363,27 @@ pub(super) fn status_chip(
         "Transcript status"
     };
     let toggle = pressable(
-        fact(&icons::INFO, p)
+        col()
+            .w_full()
             .px(8.0)
+            .py(4.0)
+            .radius(8.0)
+            .gap(2.0)
             .fill(if s.meeting_ui.status_open {
                 p.chip
             } else {
                 Color::TRANSPARENT
-            }),
+            })
+            .children(english.then(|| {
+                roles::SMALL
+                    .wrap(ENGLISH_ONLY, p.ink)
+                    .key("meeting-english-only")
+            }))
+            .children(
+                engine
+                    .clone()
+                    .map(|copy| roles::SMALL.wrap(copy, p.ink).key("meeting-engine-status")),
+            ),
     )
     .key("meeting-status")
     .label(name)
@@ -388,12 +402,8 @@ pub(super) fn status_chip(
         .px(2.0)
         .gap(8.0)
         .on_key(close_on_escape)
-        .children(english.then(|| {
-            roles::SMALL
-                .wrap(ENGLISH_ONLY, p.ink)
-                .key("meeting-english-only")
-        }))
-        .children(engine.map(|copy| roles::SMALL.wrap(copy, p.ink).key("meeting-engine-status")))
+        .children(english.then(|| roles::SMALL.wrap(ENGLISH_ONLY, p.ink)))
+        .children(engine.map(|copy| roles::SMALL.wrap(copy, p.ink)))
         .child(
             quiet_button("Open language settings", "meeting-status-settings", p)
                 .self_start()
@@ -455,17 +465,26 @@ fn header(
         .child(
             // 26 on a page, 24 on a phone; the line is a quarter taller than the size.
             text_title(&m.title, if phone { 24.0 } else { 26.0 }, p)
+                .wrap_anywhere()
                 .max_lines(2)
                 .key("meeting-title")
                 .help(&m.title)
                 .grow(1.0)
+                .shrink()
                 .min_w(0.0),
         )
         .child(menu);
     let mut facts_items = Vec::new();
     facts_items.extend(meeting_facts(m, p));
-    if !m.summary.people.is_empty() {
-        facts_items.push(people_fact(m.summary.people.join(", "), p));
+    let mut people = Vec::new();
+    for name in &m.summary.people {
+        let name = name.trim();
+        if !name.is_empty() && !people.contains(&name) {
+            people.push(name);
+        }
+    }
+    if !people.is_empty() {
+        facts_items.push(people_fact(people.join(", "), p));
     }
     facts_items.extend(project::reading_chip(s, k, &m.id, p, layer));
     let facts = (!facts_items.is_empty()).then(|| {

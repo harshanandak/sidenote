@@ -113,8 +113,8 @@ def render(job):
   assert any(key.startswith('more-meeting-') and key.endswith('-button') for key in rects),base.name
   numbers=dict(title=rects['meeting-title'][:4],header=rects['meeting-header'][:4],view=rects['meeting-view'][:4])
   if width==390:
-   # Phone: two meta lines, the second under the first, and the Sections slot after the project.
-   assert rects['meeting-people'][1]>rects['meeting-view'][1]+rects['meeting-view'][3]-1,(base.name,numbers)
+   # Phone: People is in the facts row above the view switch (was below it before S4).
+   assert rects['meeting-people'][1]<rects['meeting-view'][1],(base.name,numbers)
    assert 'meeting-sections-slot' in rects,base.name
    print(base.name,numbers,flush=True)
   if width==1024:
