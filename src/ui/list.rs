@@ -644,7 +644,7 @@ mod tests {
     fn title_menu_opens_the_deleted_list() {
         let mut state = home_state(solo_meeting());
         // The row keeps the capability gate (old: at the button).
-        super::super::meeting_delete::enable_delete_for_tests(&mut state);
+        state.enable_delete_for_tests();
         let mut rt = render_home(state, 1334.0);
         tap(&mut rt, "meetings-title-more");
         assert!(
