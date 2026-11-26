@@ -5,6 +5,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender},
     },
     thread::JoinHandle,
 };
@@ -15,10 +16,13 @@ pub(super) struct Data {
     pub meeting_state: Option<&'static str>,
     pub status_timeout: bool,
     pub stop_changed: bool,
+    pub stop_busy: bool,
     pub stop_state: Option<&'static str>,
     pub commands: Vec<String>,
     pub delay: Duration,
     pub stops: usize,
+    stop_in_flight: bool,
+    stop_gate: Option<(Sender<()>, Receiver<()>)>,
     pub starts: usize,
     pub start_failure: bool,
     pub start_records: bool,
@@ -33,7 +37,6 @@ impl Fixture {
     pub fn start() -> (Self, State, Instant) {
         Self::with_recording(Some("100-1"))
     }
-    #[cfg(windows)]
     pub fn start_idle() -> (Self, State, Instant) {
         Self::with_recording(None)
     }
@@ -57,10 +60,13 @@ impl Fixture {
             meeting_state: None,
             status_timeout: false,
             stop_changed: true,
+            stop_busy: false,
             stop_state: None,
             commands: Vec::new(),
             delay: Duration::ZERO,
             stops: 0,
+            stop_in_flight: false,
+            stop_gate: None,
             starts: 0,
             start_failure: false,
             start_records: true,
@@ -141,11 +147,26 @@ impl Fixture {
                         }
                     }
                     "meeting-stop" => {
-                        let mut data = shared.lock().unwrap();
-                        data.stops += 1;
-                        data.id = None;
-                        data.meeting_state = data.stop_state;
-                        serde_json::json!({"version":4,"status":"done","changed":data.stop_changed})
+                        let (gate, reply) = {
+                            let mut data = shared.lock().unwrap();
+                            data.stops += 1;
+                            assert!(!data.stop_in_flight, "overlapping Hex Stop commands");
+                            data.stop_in_flight = true;
+                            let reply = if data.stop_busy {
+                                serde_json::json!({"version":4,"status":"error","code":"busy"})
+                            } else {
+                                data.id = None;
+                                data.meeting_state = data.stop_state;
+                                serde_json::json!({"version":4,"status":"done","changed":data.stop_changed})
+                            };
+                            (data.stop_gate.take(), reply)
+                        };
+                        if let Some((received, release)) = gate {
+                            let _ = received.send(());
+                            let _ = release.recv_timeout(Duration::from_secs(5));
+                        }
+                        shared.lock().unwrap().stop_in_flight = false;
+                        reply
                     }
                     other => panic!("unexpected fake API command: {other}"),
                 }.to_string();
@@ -194,6 +215,24 @@ impl Fixture {
             now,
         )
     }
+    pub fn hold_stop(&self) -> (Receiver<()>, Sender<()>) {
+        let (received, arrived) = mpsc::channel();
+        let (resume, release) = mpsc::channel();
+        self.data.lock().unwrap().stop_gate = Some((received, release));
+        (arrived, resume)
+    }
+
+    pub fn assert_stops(&self, expected: usize) {
+        let data = self.data.lock().unwrap();
+        let commands = data
+            .commands
+            .iter()
+            .filter(|command| command.as_str() == "meeting-stop")
+            .count();
+        assert_eq!(commands, expected, "Hex commands: {:?}", data.commands);
+        assert_eq!(data.stops, expected);
+    }
+
     pub fn stop(state: &mut State) {
         state.hex_record_stop(recording_id(state));
         Self::finish(state);

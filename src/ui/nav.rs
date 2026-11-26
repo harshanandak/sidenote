@@ -200,23 +200,6 @@ pub fn width(s: &State) -> f32 {
     }
 }
 
-// ---- icons ------------------------------------------------------------------------------------
-
-fn icon_meetings(c: Color) -> El {
-    icons::draw(&icons::MEETINGS, icons::ROW, c)
-}
-fn icon_tasks(c: Color) -> El {
-    icons::draw(&icons::TASKS, icons::ROW, c)
-}
-fn icon_memory(c: Color) -> El {
-    icons::draw(&icons::MEMORY, icons::ROW, c)
-}
-fn icon_check(c: Color, _: Color) -> El {
-    icons::draw(&icons::DIARY, icons::ROW, c)
-}
-fn icon_device(c: Color) -> El {
-    icons::draw(&icons::DEVICE, icons::ROW, c)
-}
 // ---- the sidebar ------------------------------------------------------------------------------
 
 const MAIN_H: f32 = 34.0;
@@ -322,14 +305,15 @@ struct Place {
     name: &'static str,
     help: String,
     active: bool,
-    icon: fn(Color, Color) -> El,
+    icon: &'static rune::Icon,
     flag: Option<Color>,
     press: fn(&mut State),
 }
 
 impl Place {
     fn icon(&self, p: Palette) -> El {
-        (self.icon)(if self.active { p.ink } else { p.soft }, p.side)
+        let ink = if self.active { p.ink } else { p.soft };
+        icons::draw(self.icon, icons::ROW, ink)
     }
 }
 
@@ -345,7 +329,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "Meetings",
         help: "Meetings".into(),
         active: page == Page::Meetings && s.filter == Filter::All,
-        icon: |c, _| icon_meetings(c),
+        icon: &icons::MEETINGS,
         flag: None,
         press: |s| s.go_meetings(),
     }];
@@ -358,7 +342,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 s.tasks.counts.mine_open
             ),
             active: page == Page::Tasks,
-            icon: |c, _| icon_tasks(c),
+            icon: &icons::TASKS,
             flag: None,
             press: |s| {
                 s.set_view(View::Tasks);
@@ -371,7 +355,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "People",
         help: "People".into(),
         active: page == Page::People,
-        icon: |c, _| icons::draw(&icons::PEOPLE, icons::ROW, c),
+        icon: &icons::PEOPLE,
         flag: None,
         press: State::open_people,
     }));
@@ -385,7 +369,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 "Memory".into()
             },
             active: page == Page::Memory,
-            icon: |c, _| icon_memory(c),
+            icon: &icons::MEMORY,
             flag: (proposals > 0).then_some(p.warn),
             press: |s| {
                 s.open_memory();
@@ -404,7 +388,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
                 "Diary".into()
             },
             active: page == Page::Check,
-            icon: icon_check,
+            icon: &icons::DIARY,
             flag: (high > 0).then_some(p.warn),
             press: |s| {
                 s.open_check();
@@ -417,7 +401,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
         name: "Annotations",
         help: "Annotations".into(),
         active: page == Page::Annotations,
-        icon: |c, _| icons::draw(&icons::ANNOTATIONS, icons::ROW, c),
+        icon: &icons::ANNOTATIONS,
         flag: None,
         press: |s| s.open_annotations(),
     });
@@ -432,7 +416,7 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
             s.nav.peers
         ),
         active: page == Page::Meetings && s.filter == Filter::Peers,
-        icon: |c, _| icon_device(c),
+        icon: &icons::DEVICE,
         flag: None,
         press: |s| s.set_filter(Filter::Peers),
     });
@@ -1175,13 +1159,28 @@ mod tests {
         s.config.features.memory = true;
         s.config.features.daily_check = true;
 
-        let (places, _) = places(&s, super::super::theme::palette(true));
+        s.config.features.other_devices = true;
+        s.nav.peers = 1;
+        let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
         let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
             (34.0, 230.0, expected)
         );
+
+        let glyphs = [
+            "solar-document",
+            "solar-check-circle",
+            "solar-users-group-rounded",
+            "solar-pin",
+            "solar-pen",
+            "solar-calendar-minimalistic",
+        ];
+        for (place, glyph) in places.iter().zip(glyphs) {
+            icons::assert_solar_weights(place.icon, glyph);
+        }
+        icons::assert_solar_weights(peers.unwrap().icon, "solar-monitor-smartphone");
     }
 
     #[test]

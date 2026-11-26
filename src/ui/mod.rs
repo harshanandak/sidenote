@@ -1122,10 +1122,14 @@ impl State {
     }
 
     fn cancel_stale_asks(&mut self, visibility: u64) -> bool {
+        self.discard_asks(|_, run| run.visibility != visibility)
+    }
+
+    fn discard_asks(&mut self, discard: impl Fn(&str, &AskRun) -> bool) -> bool {
         let stale: Vec<_> = self
             .asks
             .iter()
-            .filter(|(_, run)| run.live && run.visibility != visibility)
+            .filter(|(id, run)| run.live && discard(id, run))
             .map(|(id, _)| id.clone())
             .collect();
         for id in &stale {
@@ -1699,13 +1703,20 @@ impl State {
                     }
                 }
                 let mut content_changed = !same_catalog(&self.meetings, &meetings);
-                if !same_catalog(&self.meetings, &meetings) {
-                    self.meetings = meetings;
+                if content_changed {
+                    let previous = std::mem::replace(&mut self.meetings, meetings);
                     self.rebuild_nav();
                     // An open meeting that has gone away returns to the home list.
                     if self.selected.is_some() && self.current().is_none() {
                         self.selected = None;
                         self.saved = Saved::default();
+                    }
+                    if !self.asks.is_empty() {
+                        let visible: HashSet<_> =
+                            self.meetings.iter().map(|m| m.id.clone()).collect();
+                        self.discard_asks(|id, _| {
+                            !visible.contains(id) && previous.iter().any(|m| m.id == id)
+                        });
                     }
                     self.refresh_list();
                 }
@@ -1831,6 +1842,12 @@ impl State {
                     return;
                 }
                 match event {
+                    AskProgress::Finished | AskProgress::Failed { .. } if run.cancel.stopped() => {
+                        if let Some(run) = self.asks.remove(&id) {
+                            self.finish_ask_run(&id, run, Some(core::ask::STOPPED.into()), true);
+                        }
+                    }
+                    _ if run.cancel.stopped() => {}
                     AskProgress::Metrics(mut metrics) => {
                         metrics.total_ms = run.started.elapsed().as_millis() as u64;
                         if let Some(first) = self
@@ -1914,9 +1931,7 @@ impl State {
                     }
                     AskProgress::Failed { message } => {
                         if let Some(run) = self.asks.remove(&id) {
-                            // Internal cancellations take the run out before stopping it.
-                            let stopped_by_user = run.cancel.stopped();
-                            self.finish_ask_run(&id, run, Some(message), stopped_by_user);
+                            self.finish_ask(&id, run, Some(message));
                         }
                     }
                 }
