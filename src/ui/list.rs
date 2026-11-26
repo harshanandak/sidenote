@@ -565,6 +565,7 @@ mod tests {
         let mut state = State::new();
         // Without Hex (as on Windows CI) startup opens Hex setup over the list.
         state.hex_open = false;
+        state.go_meetings(); // Startup moved from Meetings to Home; exercise the Meetings list here.
         state.meetings = meetings;
         state.refresh_list();
         state
