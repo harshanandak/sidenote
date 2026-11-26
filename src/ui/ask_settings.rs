@@ -1,6 +1,5 @@
 use super::{
     State,
-    cards::settings_divider,
     hex::settings::{card, row_field_kit, setting_row, short_select_width},
     roles,
     theme::Palette,
@@ -746,7 +745,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             true,
             p,
         ))
-        .child(settings_divider(p))
         .child(setting_row(
             s,
             "ask-model-row",
@@ -756,7 +754,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             true,
             p,
         ))
-        .child(settings_divider(p))
         .child(setting_row(
             s,
             "ask-meeting-agent-row",
@@ -766,7 +763,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             true,
             p,
         ))
-        .child(settings_divider(p))
         .child(setting_row(
             s,
             "ask-meeting-thinking-row",
@@ -776,7 +772,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             true,
             p,
         ))
-        .child(settings_divider(p))
         .child(setting_row(
             s,
             "ask-chat-thinking-row",
