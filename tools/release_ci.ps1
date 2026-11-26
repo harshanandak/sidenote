@@ -54,7 +54,7 @@ function Get-ReleaseAssets {
     $index = "releases.$Channel.json"
     $full = "sidenote-$Version-$Channel-full.nupkg"
     $delta = "sidenote-$Version-$Channel-delta.nupkg"
-    $sidecars = @("RELEASES-$Channel", "sidenote-$Channel-Portable.zip")
+    $sidecars = @("RELEASES-$Channel", "assets.$Channel.json", "sidenote-$Channel-Portable.zip")
     $files = [Collections.Generic.Dictionary[string, IO.FileInfo]]::new([StringComparer]::Ordinal)
     foreach ($item in Get-ChildItem -LiteralPath $Feed -Force) {
         if ($item -isnot [IO.FileInfo] -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -151,7 +151,7 @@ function Invoke-SelfTest {
             @{ PackageId = 'sidenote'; Version = '0.1.1-dev.2'; Type = 'Full'; FileName = $full }
             @{ PackageId = 'sidenote'; Version = '0.1.1-dev.2'; Type = 'Delta'; FileName = $delta }
         )
-        foreach ($name in @($setup, $full, $delta, 'RELEASES-dev', 'sidenote-dev-Portable.zip')) {
+        foreach ($name in @($setup, $full, $delta, 'RELEASES-dev', 'assets.dev.json', 'sidenote-dev-Portable.zip')) {
             Set-Content -LiteralPath (Join-Path $temp.FullName $name) -Value 'fixture' -NoNewline
         }
         foreach ($asset in $assets) {
