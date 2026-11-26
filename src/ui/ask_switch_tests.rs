@@ -1513,7 +1513,8 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask: List my tasks");
+        // Home prompt changed from "Ask: List my tasks" to "Ask: What's on my plate this week?".
+        assert_eq!(chip(&rt), "Ask: What's on my plate this week?");
         rt.update(|s, _| s.question = TextEdit::new("A draft"));
         rt.frame(0.0);
         assert!(rt.find("ask-prompt").is_none());
@@ -1547,6 +1548,10 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+        // Home prompt changed from "Ask: List my tasks" to "Ask: What's on my plate this week?".
+        assert_eq!(chip(&rt), "Ask: What's on my plate this week?");
+        rt.update(|s, _| s.go_meetings());
+        rt.frame(0.0);
         assert_eq!(chip(&rt), "Ask: List my tasks");
         rt.update(|s, _| super::live::parts_scene(s, "paused"));
         rt.frame(0.0);
