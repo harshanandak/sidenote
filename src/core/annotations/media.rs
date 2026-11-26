@@ -176,8 +176,7 @@ pub fn note_folder(root: &Path, c: &Capture) -> PathBuf {
     root.join("annotations").join(capture_key(c))
 }
 pub fn source_fingerprint(c: &Capture) -> io::Result<String> {
-    let bytes = file_reads::read(&c.folder.join("scrawl.json"), 16 * 1024 * 1024)?;
-    let current: super::Scrawl = serde_json::from_slice(&bytes)?;
+    let (bytes, current) = super::read_manifest(&c.folder)?;
     let mut current = current;
     current
         .keyframes
