@@ -30,7 +30,9 @@ fn recent_meetings(meetings: &[Meeting], today: NaiveDate) -> impl Iterator<Item
 
 fn needs_you(task: &TaskItem, owner: &str, teams: &Teams) -> bool {
     let owned = |name| !owner.is_empty() && people::key(&teams.owner_name(name)) == owner;
-    !task.done && (task.mine == Some(true) || task.owner.as_deref().is_some_and(owned))
+    !task.done
+        && task.status != TaskStatus::Waiting
+        && (task.mine == Some(true) || task.owner.as_deref().is_some_and(owned))
 }
 
 // The profile name the sidebar shows; engine_settings.owner_name is only a legacy import snapshot.
@@ -322,7 +324,7 @@ mod tests {
                 r#"{"title":"Workshop","topics":[{"points":[
                 {"type":"decided","text":"Ship the sample."},
                 {"type":"open","text":"Who reviews the sample?"}
-            ]}],"to_settle":[{"question":"Who reviews  the sample?"}]}"#,
+            ]}],"to_settle":[{"question":"Who reviews  the sample?"},{"question":"Which room hosts it?"}]}"#,
             ),
             meeting(
                 root.path(),
@@ -374,7 +376,9 @@ mod tests {
             .filter_map(|el| el.text.as_deref())
             .collect();
         for row in [
-            "5 tasks need you",
+            "4 tasks need you",
+            "1 late",
+            "Which room hosts it?",
             "Decided",
             "Ship the sample.",
             "Still open",
