@@ -934,7 +934,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                 true,
                 p,
             ))
-            .child(cards::settings_divider(p))
             .child(super::hex::settings::setting_row(
                 s,
                 "summary-template",
@@ -980,12 +979,7 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                     }
                 })
             }));
-        c = c.child(
-            super::hex::settings::panel(p)
-                .child(summary)
-                .child(cards::settings_divider(p))
-                .child(actions),
-        );
+        c = c.child(super::hex::settings::panel(p).child(summary).child(actions));
     }
     if part == Part::Privacy {
         let sent = match (agent, scripts, automatic) {
@@ -1060,7 +1054,6 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
         }
 
         let mut helper_list = col().w_full();
-        let mut helper_list_empty = true;
         for (index, h) in HELPERS.iter().copied().enumerate() {
             let found = a.found.contains(&(h, true));
             let offered = h.offered();
@@ -1125,17 +1118,9 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
                 r = cards::settings_row(true)
                     .key(format!("notes-helper-{index}"))
                     .fill(p.card)
-                    .child(cards::settings_tile(
-                        super::hex::settings::row_icon(&format!("notes-helper-{index}")),
-                        p,
-                    ))
                     .child(info)
                     .child(action);
-                if !helper_list_empty {
-                    helper_list = helper_list.child(cards::settings_divider(p));
-                }
                 helper_list = helper_list.child(r);
-                helper_list_empty = false;
                 if a.switch_confirm == Some(h) {
                     c = c.child(
                         card(p)

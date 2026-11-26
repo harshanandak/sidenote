@@ -697,6 +697,24 @@ mod token_tests {
         assert_eq!(p.raised, hex("#fffdf8"));
         assert_eq!(p.ink, hex("#1f2118"));
     }
+
+    #[test]
+    fn olive_page_card_sidebar_and_accent_tokens_are_exact() {
+        for (dark, page, card, sidebar, accent) in [
+            (false, "#f5f0e6", "#fffdf8", "#2f3a28", "#55682a"),
+            (true, "#161a12", "#1e2319", "#11140d", "#a9c25a"),
+        ] {
+            let p = component_palette(&olive(dark));
+            assert_eq!(p.bg, hex(page), "page, dark={dark}");
+            assert_eq!(p.card, hex(card), "card, dark={dark}");
+            assert_eq!(
+                olive(dark).sidebar.fill,
+                hex(sidebar),
+                "sidebar, dark={dark}"
+            );
+            assert_eq!(p.accent, hex(accent), "accent, dark={dark}");
+        }
+    }
 }
 
 #[cfg(test)]
