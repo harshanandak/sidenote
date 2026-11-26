@@ -2200,7 +2200,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
             || s.transcript_jump.focused
             || s.project_input.focused
     } else {
-        tx.focused().is_some()
+        tx.focused().is_some_and(|key| !list::toolbar_button(key))
     };
     // Ctrl+K opens the palette from any page, and again closes it. While it is open it owns
     // Up, Down, Enter, Tab and Escape, even if a click took the focus from its box.
