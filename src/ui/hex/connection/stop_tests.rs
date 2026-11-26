@@ -797,16 +797,80 @@ fn stale_stop_refuses_replacement_recording_through_ui_and_engine() {
     assert!(message.contains("Stop it from Hex"));
 }
 
+fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
+    let mut layer = Vec::new();
+    let (pill, action, _) =
+        crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
+    rune_kit::root(rune::row().children(pill).children(action), layer)
+}
+
+#[test]
+fn owned_header_pause_dispatches_the_stop_for_the_active_part() {
+    use crate::ui::live::{Live, Phase};
+    use sidenote::core::meeting_parts::{Meeting, Part, Phase as SavedPhase};
+
+    if isolated_api_test("owned_header_pause_dispatches_the_stop_for_the_active_part") {
+        return;
+    }
+    let (api, mut state, _) = Fixture::start();
+    let mut live = Live::scene(Phase::Recording, None);
+    live.session = Some(Meeting {
+        id: "100-1".into(),
+        phase: SavedPhase::Recording,
+        parts: vec![Part {
+            id: "100-1".into(),
+            started_ms: 100,
+            duration_ms: 1000,
+        }],
+        ..Default::default()
+    });
+    state.live = Some(live);
+    state.live_open = false;
+    let mut ui = rune::Runtime::new(state, header, (600.0, 160.0), rune::Env::default());
+    let pause = |ui: &rune::Runtime<State>| {
+        ui.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("hex-pause"))
+            .expect("away-page Pause")
+    };
+    ui.update(|state, _| state.hex.record_busy = true);
+    ui.frame(0.0);
+    let disabled = pause(&ui);
+    let reason = "Stop is already in progress. Stop it from Hex if needed.";
+    assert_eq!(disabled.label, Some(format!("Pause ({reason})")));
+    assert_eq!(disabled.help.as_deref(), Some(reason));
+    assert!(!disabled.focusable);
+
+    let [x, y, width, height] = disabled.rect;
+    assert_eq!((width, height), (24.0, 24.0));
+    let (x, y) = (x + width / 2.0, y + height / 2.0);
+    ui.pointer_move(x, y);
+    ui.pointer_down(x, y);
+    ui.pointer_up(x, y);
+    ui.frame(0.0);
+    assert!(!ui.state.hex_stop_pending());
+    assert_eq!(api.data.lock().unwrap().stops, 0);
+
+    ui.update(|state, _| state.hex.record_busy = false);
+    ui.frame(0.0);
+    let enabled = pause(&ui);
+    assert_eq!(enabled.label.as_deref(), Some("Pause recording"));
+    assert_eq!(enabled.help.as_deref(), Some("Pause recording"));
+    assert!(enabled.focusable);
+    assert!(ui.find("hex-stop").is_none());
+    ui.pointer_down(x, y);
+    ui.pointer_up(x, y);
+    ui.frame(0.0);
+    assert!(ui.state.hex_stop_pending());
+    ui.update(|state, _| Fixture::finish(state));
+    assert_eq!(api.data.lock().unwrap().stops, 1);
+    assert_eq!(api.data.lock().unwrap().id, None);
+}
+
 #[test]
 fn expired_header_stop_reconciles_each_hex_outcome() {
     if isolated_api_test("expired_header_stop_reconciles_each_hex_outcome") {
         return;
-    }
-    fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
-        let mut layer = Vec::new();
-        let (pill, action, _) =
-            crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
-        rune_kit::root(rune::row().children(pill).children(action), layer)
     }
     for phase in ["idle", "transcribing", "recording", "timeout"] {
         let (api, mut state, now) = Fixture::start();
@@ -820,6 +884,7 @@ fn expired_header_stop_reconciles_each_hex_outcome() {
         }
         let mut ui = rune::Runtime::new(state, header, (600.0, 160.0), rune::Env::default());
         ui.frame(0.0);
+        assert!(ui.find("hex-pause").is_none(), "Hex-only recording");
         let stop = ui
             .elements()
             .into_iter()

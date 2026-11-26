@@ -664,6 +664,15 @@ pub(super) fn live_recording_dot(size: f32, p: Palette) -> El {
     dot(size, p.danger).looping(rune_motion::LoopSpec::opacity(1.8, 0.0, 0.55, 1.0))
 }
 
+fn owns_live_recording(s: &State, id: &str) -> bool {
+    s.live
+        .as_ref()
+        .and_then(|live| live.session.as_ref())
+        .filter(|session| session.phase == core::meeting_parts::Phase::Recording)
+        .and_then(|session| session.parts.last())
+        .is_some_and(|part| part.id == id)
+}
+
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
     use super::live::RecordingStatus;
@@ -711,23 +720,39 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         return open.fill(p.card).radius(13.0);
     }
     let expected_id = hex::recording_id(s);
-    let why = hex::stop_blocked(s);
-    let stop = super::widgets::icon_button(
-        &icons::STOP,
-        "Stop recording",
-        "hex-stop",
-        super::widgets::ButtonRole::Ghost,
-        p,
-    )
-    .size(24.0, 24.0)
-    .px(4.0);
-    let stop = match why {
-        None => stop.on_press(move |s: &mut State| s.hex_record_stop(expected_id.clone())),
-        Some(reason) => stop
-            .label(format!("Stop ({reason})"))
+    let pause = expected_id
+        .as_deref()
+        .is_some_and(|id| owns_live_recording(s, id));
+    let (glyph, name, key, label) = if pause {
+        (
+            &icons::CIRCLE_PAUSE,
+            "Pause",
+            "hex-pause",
+            "Pause recording",
+        )
+    } else {
+        (&icons::STOP, "Stop", "hex-stop", "Stop recording")
+    };
+    let action =
+        super::widgets::icon_button(glyph, label, key, super::widgets::ButtonRole::Ghost, p)
+            .size(24.0, 24.0)
+            .px(4.0);
+    let action = match hex::stop_blocked(s) {
+        Some(reason) => action
+            .label(format!("{name} ({reason})"))
             .help(reason)
             .disabled(true)
             .dim(0.5),
+        None if pause => action.on_press(move |s: &mut State| {
+            if expected_id
+                .as_deref()
+                .is_some_and(|id| owns_live_recording(s, id))
+                && hex::recording_id(s) == expected_id
+            {
+                s.meeting_pause();
+            }
+        }),
+        None => action.on_press(move |s: &mut State| s.hex_record_stop(expected_id.clone())),
     };
     row()
         .key("recording-pill")
@@ -736,7 +761,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         .border(1.0, p.line)
         .items_center()
         .child(open)
-        .child(stop)
+        .child(action)
 }
 
 pub(super) fn logo() -> El {

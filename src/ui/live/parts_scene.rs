@@ -70,6 +70,12 @@ pub(in crate::ui) fn scene(s: &mut State, state: &str) {
             text: "The volume is confirmed for Friday.".into(),
         });
     }
+    if recording
+        && let Some(Ok(status)) = &mut s.hex.status
+        && let Some(recording) = &mut status.recording
+    {
+        recording.id = m.parts.last().map(|part| part.id.clone());
+    }
     live.session = Some(m);
     s.live = Some(live);
     s.live_open = true;
