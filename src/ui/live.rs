@@ -278,14 +278,6 @@ pub enum Saving {
 
 static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Default)]
-enum SummarySource {
-    #[default]
-    Unresolved,
-    Candidate(PathBuf),
-    Ambiguous,
-}
-
 pub struct Live {
     pub(super) session: Option<sidenote::core::meeting_parts::Meeting>,
     // Set only by Hex's accepted Stop reply for this live session.
@@ -299,7 +291,7 @@ pub struct Live {
     pub phase: Phase,
     /// The meetings that existed when this one began, so the new one can be told apart.
     known: HashSet<String>,
-    summary_source: SummarySource,
+    source_lost: bool,
     began: Instant,
     stopped: Option<Instant>,
     /// When the meeting began, for the heading. `exact` is false until Hex gives the real start.
@@ -419,7 +411,7 @@ impl Live {
             notes_response_time: 0,
             phase,
             known,
-            summary_source: SummarySource::default(),
+            source_lost: false,
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
@@ -483,63 +475,7 @@ impl Live {
     }
 
     fn matches_meeting(&self, meeting: &sidenote::core::Meeting) -> bool {
-        if meeting.device.is_some() {
-            return false;
-        }
-        if let Some(id) = self.meeting_id() {
-            return meeting.id == id;
-        }
-        meeting
-            .started
-            .map(|t| t.timestamp_millis())
-            .or_else(|| folder_start(&meeting.id))
-            .is_some_and(|made| made >= self.wall_start.timestamp_millis().saturating_sub(120_000))
-    }
-
-    fn resolve_summary_folder(&mut self, meetings: &[sidenote::core::Meeting]) -> Option<PathBuf> {
-        if matches!(self.summary_source, SummarySource::Ambiguous) {
-            return None;
-        }
-        let feed_start = self.feed.lock().unwrap_or_else(|e| e.into_inner()).start_ms;
-        let start = self
-            .exact
-            .then(|| self.wall_start.timestamp_millis())
-            .or(feed_start)?;
-        let near_start = |made: i64| made.abs_diff(start) <= 120_000;
-        let root = sidenote::core::meetings_dir();
-        let catalog_candidates: HashSet<_> = meetings
-            .iter()
-            .filter(|m| {
-                m.device.is_none()
-                    && !self.known.contains(&m.id)
-                    && m.started.is_some_and(|t| near_start(t.timestamp_millis()))
-            })
-            .map(|m| m.folder.as_path())
-            .collect();
-        // An unfinished recording may have a folder before it appears in the catalog.
-        let mut candidates = sidenote::core::file_reads::entries(&root)
-            .ok()?
-            .into_iter()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                (catalog_candidates.contains(path.as_path())
-                    || path
-                        .file_name()
-                        .and_then(|id| id.to_str())
-                        .is_some_and(|id| {
-                            !self.known.contains(id) && folder_start(id).is_some_and(near_start)
-                        }))
-                    && sidenote::core::file_reads::directory(path)
-            });
-        let folder = candidates.next()?;
-        if candidates.next().is_some()
-            || matches!(&self.summary_source, SummarySource::Candidate(old) if old != &folder)
-        {
-            self.summary_source = SummarySource::Ambiguous;
-            return None;
-        }
-        self.summary_source = SummarySource::Candidate(folder.clone());
-        Some(folder)
+        meeting.device.is_none() && self.meeting_id().is_some_and(|id| meeting.id == id)
     }
 
     pub fn scene_pending(mut self, id: &str) -> Self {
@@ -878,6 +814,15 @@ impl State {
         }
     }
 
+    /// Ends a wait that has no source identity without claiming any meeting.
+    pub fn finish_no_id_wait(&mut self) {
+        if self.live_close() {
+            self.live = None;
+            self.live_open = false;
+            self.go_meetings();
+        }
+    }
+
     /// Called after each Hex sample and each scan: moves the page along its three phases.
     pub fn live_sync(&mut self) {
         if self.hex_stop_pending() {
@@ -985,56 +930,48 @@ impl State {
     }
 
     pub(super) fn cancel_missing_summary(&mut self, incoming: &[sidenote::core::Meeting]) {
-        let Some(live) = self
-            .live
-            .as_ref()
-            .filter(|live| live.phase == Phase::Making)
-        else {
-            return;
-        };
-        let id = live.meeting_id().or_else(|| match &live.summary_source {
-            SummarySource::Candidate(folder) => Some(folder.file_name()?.to_str()?.to_owned()),
-            _ => None,
+        let missing = self.live.as_ref().is_some_and(|live| {
+            live.phase == Phase::Making
+                && (live.source_lost || {
+                    let Some(id) = live.meeting_id() else {
+                        return false;
+                    };
+                    let in_catalog = |meeting: &sidenote::core::Meeting| {
+                        meeting.device.is_none() && meeting.id == id
+                    };
+                    let was_visible = self.meetings.iter().any(in_catalog)
+                        || sidenote::core::meeting_delete::suppressed_ids(&self.store.root)
+                            .is_ok_and(|ids| ids.contains(&id));
+                    !incoming.iter().any(in_catalog) && was_visible
+                })
         });
-        let Some(id) = id else { return };
-        let is_source =
-            |meeting: &sidenote::core::Meeting| meeting.device.is_none() && meeting.id == id;
-        if !incoming.iter().any(is_source)
-            && (self.meetings.iter().any(is_source)
-                || sidenote::core::meeting_delete::suppressed_ids(&self.store.root)
-                    .is_ok_and(|ids| ids.contains(&id)))
-            && self.live_close()
-        {
+        if !missing {
+            return;
+        }
+        self.live.as_mut().unwrap().source_lost = true;
+        if self.live_close() {
             self.live = None;
             self.live_open = false;
         }
     }
 
-    /// Resolve the source before checking whether its summary is ready.
+    /// Accept a result only when Hex supplied this recording's source identity.
     pub fn live_scanned(&mut self) {
         let Some(live) = self.live.as_mut() else {
             return;
         };
-        if live.phase != Phase::Making || live.close_failed {
+        if live.phase != Phase::Making || live.close_failed || live.source_lost {
             return;
         }
-        let id = live.meeting_id();
-        let folder = if id.is_none() {
-            let Some(folder) = live.resolve_summary_folder(&self.meetings) else {
-                return;
-            };
-            Some(folder)
-        } else {
-            None
+        let Some(id) = live.meeting_id() else {
+            return;
         };
         let found = self
             .meetings
             .iter()
             .find(|m| {
                 m.device.is_none()
-                    && id
-                        .as_ref()
-                        .map_or_else(|| folder.as_ref() == Some(&m.folder), |id| id == &m.id)
+                    && id == m.id
                     && m.has_summary()
                     && if let Some(session) = &live.session {
                         session
@@ -1082,10 +1019,6 @@ impl State {
             }
         }
     }
-}
-
-fn folder_start(id: &str) -> Option<i64> {
-    id.split_once('-')?.0.parse().ok()
 }
 
 // ---- the live transcript and the notes -------------------------------------------------------
@@ -1759,6 +1692,32 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
             .children((!s.live_notes.text.is_empty()).then(|| your_notes(&s.live_notes.text, p)));
     }
 
+    if s.live
+        .as_ref()
+        .is_some_and(|live| live.session.is_none() && live.meeting_id().is_none())
+    {
+        return col()
+            .key("live-no-id")
+            .w_full()
+            .items_start()
+            .gap(16.0)
+            .child(text_title(&heading(s), if narrow { 28.0 } else { 36.0 }, p))
+            .child(
+                roles::SECTION
+                    .wrap(
+                        "Recording saved. Its summary will appear in Meetings.",
+                        p.ink,
+                    )
+                    .role("status"),
+            )
+            .children((!s.live_notes.text.is_empty()).then(|| your_notes(&s.live_notes.text, p)))
+            .child(
+                link("Go to Meetings", p)
+                    .key("live-go-meetings")
+                    .on_press(|s: &mut State| s.finish_no_id_wait()),
+            );
+    }
+
     if let Some(skipped) = summary_skip(s) {
         return col()
             .key("live-summary-skipped")
@@ -1789,9 +1748,7 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|v| v.to_str());
-        let meeting = live
-            .meeting_id()
-            .and_then(|id| s.meetings.iter().find(|m| m.device.is_none() && m.id == id));
+        let meeting = s.meetings.iter().find(|m| live.matches_meeting(m));
         let job = id
             .and_then(|id| {
                 s.ai_notes

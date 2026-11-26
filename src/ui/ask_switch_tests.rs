@@ -3337,59 +3337,81 @@ fn pending_summary_page(status: &str) -> Runtime<State> {
     })
 }
 
-fn begin_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
+fn show_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
     rt.update(|s, _| {
         s.go_home();
         live::scene_wait_for_summary(s, id, MEETING_START);
     });
+    rt.frame(0.0);
     assert!(rt.state.on_live());
+}
+
+fn begin_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
+    show_summary_wait(rt, id);
     navigate(rt, "settings");
 }
 
 #[test]
-fn a_no_id_summary_ignores_a_later_meeting_and_finishes_for_its_source() {
-    if in_parent("a_no_id_summary_ignores_a_later_meeting_and_finishes_for_its_source") {
+fn a_no_id_summary_never_claims_a_meeting() {
+    if in_parent("a_no_id_summary_never_claims_a_meeting") {
         return;
     }
     let mut rt = pending_summary_page("complete");
     begin_summary_wait(&mut rt, None);
     let hex = core::meetings_dir();
-    let later = hex.join(format!("{}-3", MEETING_START + 49 * 60_000));
-    write_result(&later, "An unrelated meeting finished later.");
-    refresh_navigation(&mut rt);
-    assert!(rt.state.live.is_some());
+    let source = hex.join(MEETING);
+    let held = hex.with_file_name("held-no-id-source");
+    std::fs::rename(&source, &held).unwrap();
 
-    const RESULT: &str = "Completed summary from the no-ID recording.";
-    write_result(&hex.join(MEETING), RESULT);
+    write_result(
+        &hex.join("1800000060000-4"),
+        "A nearby meeting finished first.",
+    );
     refresh_navigation(&mut rt);
-    assert!(rt.state.live.is_none());
+    assert!(rt.state.live.is_some() && rt.state.live_ready.is_none());
+
+    const RESULT: &str = "The real folder finished.";
+    std::fs::rename(&held, &source).unwrap();
+    write_result(&source, RESULT);
+    refresh_navigation(&mut rt);
+    assert!(rt.state.live.is_some() && rt.state.live_ready.is_none());
     assert_destination(&rt, "settings");
     assert_rendered(&rt, RESULT, false);
-    return_to_source(&mut rt);
-    assert_rendered(&rt, RESULT, true);
 }
 
 #[test]
-fn a_no_id_summary_waits_when_two_recording_folders_match() {
-    if in_parent("a_no_id_summary_waits_when_two_recording_folders_match") {
+fn a_no_id_wait_has_a_bounded_end() {
+    if in_parent("a_no_id_wait_has_a_bounded_end") {
         return;
     }
-    let mut rt = pending_summary_page("recording");
-    begin_summary_wait(&mut rt, None);
-    let hex = core::meetings_dir();
-    let source = hex.join(MEETING);
-    let competing = hex.join(format!("{MEETING_START}-3"));
-    write_result(&competing, "Same-time recording finished first.");
-    refresh_navigation(&mut rt);
-    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
-    assert!(rt.state.live.is_some());
+    const NOTES: &str = "Synthetic personal notes before leaving.";
+    let mut rt = pending_summary_page("complete");
+    show_summary_wait(&mut rt, None);
+    let copy = "Recording saved. Its summary will appear in Meetings.";
+    assert_rendered(&rt, copy, true);
+    assert_rendered(&rt, "Writing the summary", false);
+    assert!(rt.find("live-go-meetings").is_some());
+    assert!(rt.find("live-back").is_none());
 
-    std::fs::remove_dir_all(competing).unwrap();
-    std::fs::write(source.join("manifest.json"), br#"{"status":"complete"}"#).unwrap();
-    write_result(&source, "The other recording finished.");
-    refresh_navigation(&mut rt);
-    assert!(rt.state.live.is_some());
-    assert_destination(&rt, "settings");
+    rt.update(|s, _| s.live_notes = TextEdit::new(NOTES));
+    let recovery = core::state_dir().join("unsaved-notes");
+    std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
+    tap(&mut rt, "live-go-meetings");
+    assert!(rt.state.on_live() && rt.state.live.as_ref().unwrap().close_failed);
+    assert_eq!(rt.state.live_notes.text, NOTES);
+    assert!(rt.find("live-save-warning").is_some());
+
+    std::fs::remove_file(&recovery).unwrap();
+    tap(&mut rt, "live-go-meetings");
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
+    assert_destination(&rt, "home");
+    let copy = std::fs::read_dir(&recovery)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(std::fs::read_to_string(copy).unwrap(), NOTES);
 }
 
 fn delete_navigation_source() {
@@ -3501,6 +3523,45 @@ fn generated_notes_drop_late_completion_after_source_loss() {
     let saved = core::meeting_parts::read(&root, MEETING).unwrap();
     let notes_parts = saved.map(|session| session.notes_parts);
     assert_eq!(notes_parts, (!deleted).then_some(0));
+}
+
+#[test]
+fn source_loss_retries_close_and_drops_late_generated_notes() {
+    if in_parent("source_loss_retries_close_and_drops_late_generated_notes") {
+        return;
+    }
+    const NOTES: &str = "Synthetic personal notes through source loss.";
+    let mut rt = generated_notes_page();
+    let (status, job) = start_generated_notes(&mut rt);
+    navigate(&mut rt, "meeting");
+    let root = core::state_dir();
+    let folder = core::meeting_parts::inputs(&root).join(MEETING);
+    let manifest = folder.join("manifest.json");
+    let manifest_bytes = std::fs::read(&manifest).unwrap();
+    let notes = folder.join("notes.md");
+    rt.update(|s, _| s.live_notes = TextEdit::new(NOTES));
+    std::fs::create_dir(&notes).unwrap();
+    let recovery = root.join("unsaved-notes");
+    std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
+    std::fs::remove_file(&manifest).unwrap();
+
+    refresh_navigation(&mut rt);
+    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
+    assert_eq!(rt.state.live_notes.text, NOTES);
+    assert!(rt.state.live.as_ref().unwrap().close_failed);
+
+    std::fs::remove_dir(&notes).unwrap();
+    std::fs::remove_file(&recovery).unwrap();
+
+    const RESULT: &str = "Late notes after a refused source-loss close.";
+    std::fs::write(&manifest, manifest_bytes).unwrap();
+    finish_generated_notes(&folder, &status, job, RESULT);
+    refresh_navigation(&mut rt);
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
+    assert_rendered(&rt, RESULT, false);
+    let saved = core::meeting_parts::read(&root, MEETING).unwrap().unwrap();
+    assert_eq!((saved.notes_parts, saved.requested_parts), (0, 1));
+    assert_eq!(std::fs::read_to_string(&notes).unwrap(), NOTES);
 }
 
 #[cfg(windows)]
