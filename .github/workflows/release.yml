@@ -1,0 +1,86 @@
+name: Windows release artifacts
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - tools/release_ci.ps1
+      - tools/pack_release.ps1
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Expected build tag (v followed by the Cargo package version)
+        type: string
+        required: true
+      channel:
+        description: Channel to build as an Actions artifact
+        type: choice
+        options: [stable, dev]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package Windows release artifacts
+    if: github.event_name != 'push' || !github.event.deleted
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test release contract and validate this build
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/release_ci.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw 'Release contract self-test failed.' }
+          ./tools/release_ci.ps1 -ValidateOnly
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0
+        id: msys2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-toolchain
+          path-type: inherit
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.427'
+      - name: Install pinned Velopack CLI
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $gnuBin = Join-Path $env:MSYS2_ROOT 'mingw64/bin'
+          $toolPath = Join-Path $env:RUNNER_TEMP 'velopack-tools'
+          dotnet tool install vpk --version 0.0.1298 --tool-path $toolPath
+          if ($LASTEXITCODE -ne 0) { throw 'Velopack CLI installation failed.' }
+          @($toolPath, $gnuBin) | Add-Content -LiteralPath $env:GITHUB_PATH -Encoding utf8
+          "RUST_GNU_BIN=$gnuBin" | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+      - name: Build and validate Windows packages
+        id: package
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
+          RELEASE_ASSETS: ${{ runner.temp }}/sidenote-release
+        run: ./tools/release_ci.ps1 -OutputDirectory $env:RELEASE_ASSETS
+      # Preparation builds distribute unsigned packages through Actions only.
+      - name: Upload validated packages
+        if: steps.package.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sidenote-windows-${{ github.event_name }}-${{ steps.package.outputs.tag }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sidenote-release
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
