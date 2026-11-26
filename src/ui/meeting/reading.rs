@@ -912,8 +912,19 @@ pub fn transcript_height(s: &State) -> f32 {
 }
 
 /// Saved-meeting dock control. The pause lane can fill `meeting-recording-slot`.
-pub(super) fn recording_control(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
-    crate::ui::live::parts_control(s, k, p, layer)
+pub(super) fn recording_control(s: &State, p: Palette) -> El {
+    row()
+        .items_center()
+        .children(crate::ui::live::parts_control(s, p))
+        .child(
+            quiet_button("Transcript", "meeting-transcript", p)
+                .label(if s.transcript_open {
+                    "Hide transcript"
+                } else {
+                    "Show transcript"
+                })
+                .on_press(|s: &mut State| s.toggle_transcript()),
+        )
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -1039,7 +1050,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                             .flex_wrap()
                             .gaps(4.0, 0.0)
                             .justify_between()
-                            .child(recording_control(s, k, p, layer))
+                            .child(recording_control(s, p))
                             .child(
                                 quiet_button("Hide transcript", "meeting-hide-transcript", p)
                                     .h(36.0)
@@ -1110,7 +1121,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     pane.child(head)
         .child(columns)
         .children((!s.transcript_open).then(|| {
-            let control = recording_control(s, k, p, layer);
+            let control = recording_control(s, p);
             ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
         }))
 }
@@ -1464,6 +1475,13 @@ mod tests {
                 hide_x >= x + w || hide_y >= y + h,
                 "Hide overlaps at {width}"
             );
+            rt.update(|s, _| {
+                let session = &mut s.live.as_mut().unwrap().session;
+                session.as_mut().unwrap().phase = meeting_parts::Phase::Ended;
+            });
+            rt.frame(0.0);
+            assert!(element(&rt, "meeting-resume").focusable);
+            section_absent(&rt, "meeting-generate");
         }
     }
 }

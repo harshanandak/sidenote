@@ -1420,7 +1420,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert!(rt.find("meeting-resume").is_some());
         assert!(rt.find("meeting-generate").is_some());
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
-        let chip = |rt: &Runtime<State>| element(rt, "ask-options").label.unwrap();
+        let chip = |rt: &Runtime<State>| element(rt, "ask-prompt").label.unwrap();
         assert_eq!(rt.state.ask_key(), MEETING);
         assert_eq!(chip(&rt), "Ask options, What did we decide?");
         rt.update(|s, _| s.set_ask_scope(true));
@@ -1431,7 +1431,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert_eq!(chip(&rt), "Ask options, List my tasks");
         rt.update(|s, _| s.question = TextEdit::new("A draft"));
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
+        assert!(rt.find("ask-prompt").is_none());
         rt.update(|s, _| {
             s.question = TextEdit::default();
             scene_live(s, "", &[], false);
@@ -1447,17 +1447,18 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
             element(&rt, "hex-stop").label.as_deref(),
             Some("Stop recording")
         );
-        let [x, y, w, h] = rect_of(&rt, "hex-stop");
-        let [left, top, ..] = rect_of(&rt, "ask-pill");
-        let phone = size.0 < 600.0;
-        assert!((phone && y + h <= top) || (!phone && x + w <= left));
-        assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
+        let [stop_x, stop_y, stop_w, stop_h] = rect_of(&rt, "hex-stop");
+        let [pill_x, pill_y, _, pill_h] = rect_of(&rt, "ask-pill");
+        let [input_x, _, input_w, _] = rect_of(&rt, "ask-input");
+        assert!(input_w >= 90.0, "{size:?}: Ask input is squeezed");
+        assert!(stop_x >= pill_x && stop_x + stop_w <= input_x);
+        assert!(stop_y >= pill_y && stop_y + stop_h <= pill_y + pill_h);
         rt.update(|s, _| {
             s.asks
                 .insert(s.ask_key(), AskRun::stand_in("Codex", &[], 0));
         });
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options");
+        assert!(rt.find("ask-prompt").is_none());
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
@@ -2001,12 +2002,13 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     let (pane, dock, chip, pill) = (
         rect("meeting-pane"),
         rect("meeting-bottom-bar"),
-        rect("ask-options"),
+        rect("ask-prompt"),
         rect("ask-pill"),
     );
     assert!((dock[0] + dock[2] / 2.0 - pane[0] - pane[2] / 2.0).abs() < 1.0);
     assert_eq!(pill[3], 70.0);
-    assert!(chip[0] > pill[0] && chip[0] + chip[2] < pill[0] + pill[2]);
+    assert_eq!(chip[0], pill[0]);
+    assert!(chip[1] + chip[3] <= pill[1]);
 }
 
 #[test]
@@ -2951,4 +2953,53 @@ fn suppression_failure_during_ui_apply_retries_unchanged_catalog() {
     assert!(before == refresh::metadata());
     state.apply_event(snapshot());
     assert_eq!(state.meetings[0].id, MEETING);
+}
+
+#[test]
+fn live_transcript_stays_above_the_dock_at_short_heights() {
+    if in_parent("live_transcript_stays_above_the_dock_at_short_heights") {
+        return;
+    }
+    for width in [1334.0, 390.0] {
+        for height in [600.0, 720.0, 900.0] {
+            let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+            let mut rt = page_at((width, height));
+            hex::SKIP_INSTALL_DETECT.set(detect);
+            for phase in ["transcript", "paused"] {
+                rt.update(|s, _| {
+                    s.selected = None;
+                    super::live::parts_scene(s, phase);
+                    scene_agents(s, &["codex"]);
+                    s.saved.messages.clear();
+                    s.live.as_mut().unwrap().panel_open = false;
+                });
+                rt.settle_all();
+                rt.frame(0.0);
+                let closed = rect_of(&rt, "ask-pill");
+                rt.update(|s, _| s.live.as_mut().unwrap().panel_open = true);
+                for answer in [false, true] {
+                    if answer {
+                        rt.update(|s, _| {
+                            s.saved.messages.push(Message {
+                                role: "assistant".into(),
+                                text: "An answer.\n\n".repeat(40),
+                                ..Default::default()
+                            })
+                        });
+                    }
+                    rt.settle_all();
+                    rt.frame(0.0);
+                    let panel = rect_of(&rt, "live-panel");
+                    let dock = rect_of(&rt, "ask-controls");
+                    let pill = rect_of(&rt, "ask-pill");
+                    assert!(
+                        panel[1] + panel[3] <= dock[1] + 0.5,
+                        "{width}×{height} {phase}, answer {answer}"
+                    );
+                    assert_eq!((panel[0], panel[2]), (pill[0], pill[2]));
+                    assert_eq!(closed, pill);
+                }
+            }
+        }
+    }
 }

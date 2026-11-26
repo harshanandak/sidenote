@@ -1268,10 +1268,19 @@ fn stamp(seconds: u64) -> String {
 /// they are back at the bottom.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PanelLimits {
-    pub space: f32,
+    #[cfg(test)]
+    space: f32,
     pub thread: f32,
     pub transcript: f32,
 }
+pub(super) fn gutter(s: &State) -> f32 {
+    if s.narrow.get() { 16.0 } else { 40.0 }
+}
+
+fn document_height(pane: f32, measured: f32) -> f32 {
+    measured.min(pane * 0.42)
+}
+
 fn panel_limits(
     pane: f32,
     document: f32,
@@ -1280,9 +1289,10 @@ fn panel_limits(
     has_transcript: bool,
     notice: bool,
 ) -> PanelLimits {
-    let space = (pane - document.min((pane - 108.0).max(0.0))).max(0.0);
-    let available = (space - 108.0 - if notice { 46.0 } else { 0.0 }).max(0.0);
-    let transcript_min = if has_transcript && available >= 140.0 {
+    let space = pane - document_height(pane, document);
+    // Pill, prompt row, gaps and bottom inset. Both panels spend only the space left over.
+    let available = (space - 140.0 - if notice { 64.0 } else { 0.0 }).max(0.0);
+    let transcript_min = if has_transcript && available >= 64.0 {
         64.0
     } else {
         0.0
@@ -1303,6 +1313,7 @@ fn panel_limits(
         0.0
     };
     PanelLimits {
+        #[cfg(test)]
         space,
         thread: thread_limit,
         transcript,
@@ -1450,12 +1461,7 @@ fn bar(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El 
         .as_ref()
         .filter(|l| l.panel_open && cap >= 44.0)
         .map(|_| transcript_panel(s, p, cap));
-    let control = parts_control(s, k, p, layer);
-    if let Some(panel) = panel {
-        col().w_full().px(16.0).pb(36.0).child(panel).child(control)
-    } else {
-        ask::overlay_with(s, k, p, narrow, layer, Some(control), None)
-    }
+    ask::overlay_with(s, k, p, narrow, layer, parts_control(s, p), panel)
 }
 
 /// The notes editor: plain text, several lines, under the "Meeting at HH:MM" heading.
@@ -1887,8 +1893,8 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut doc = col()
         .key("live")
         .w_full()
-        .max_w(720.0)
-        .px(if narrow { 20.0 } else { 40.0 })
+        .max_w(super::meeting::COLUMN + 2.0 * gutter(s))
+        .px(gutter(s))
         .pt(if narrow { 20.0 } else { 40.0 })
         .pb(if phase == Phase::Making { 56.0 } else { 12.0 })
         .items_start()
@@ -1923,9 +1929,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 if phase == Phase::Making || stopping {
                     0.0
                 } else {
-                    s.live_document_h
-                        .get()
-                        .min((s.pane_h.get() - 108.0).max(0.0))
+                    document_height(s.pane_h.get(), s.live_document_h.get())
                 },
             ),
         );
@@ -2011,7 +2015,7 @@ mod writer_tests {
             let answer = panel_limits(pane, document, 150.0, true, true, false);
             assert!(answer.transcript < idle.transcript);
             assert!(answer.transcript + answer.thread.min(150.0) + 128.0 <= answer.space + 0.1);
-            assert!(answer.space + document <= pane + 0.1);
+            assert!(answer.space + document_height(pane, document) <= pane + 0.1);
         }
     }
     #[test]
