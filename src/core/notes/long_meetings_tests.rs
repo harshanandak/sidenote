@@ -53,6 +53,22 @@ impl Fixture {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedRow {
+    start_ms: u64,
+    end_ms: u64,
+    source: String,
+    speaker: String,
+    text: String,
+}
+fn rows(ndjson: &str) -> Vec<GeneratedRow> {
+    ndjson
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
 fn stamp(ms: u64) -> String {
     format!(
         "{:02}:{:02}:{:02}.{:03}",
@@ -155,21 +171,6 @@ fn generate(hours: u8, density: Density) -> Fixture {
         facts,
     }
 }
-fn line_ms(line: &str) -> u64 {
-    let stamp = line
-        .strip_prefix('[')
-        .and_then(|line| line.split_once(']'))
-        .map(|(stamp, _)| stamp)
-        .unwrap();
-    let mut pieces = stamp
-        .split([':', '.'])
-        .map(|piece| piece.parse::<u64>().unwrap());
-    pieces.next().unwrap() * 3_600_000
-        + pieces.next().unwrap() * 60_000
-        + pieces.next().unwrap() * 1000
-        + pieces.next().unwrap()
-}
-
 #[test]
 fn generated_fixtures_preserve_facts_unicode_density_and_joined_part_shape() {
     for hours in [1, 2, 3] {
@@ -196,21 +197,49 @@ fn generated_fixtures_preserve_facts_unicode_density_and_joined_part_shape() {
                     .windows(2)
                     .all(|pair| pair[1].start == pair[0].end + pair[0].pause)
             );
+            let rows = rows(&fixture.ndjson);
+            let starts = fixture
+                .parts
+                .iter()
+                .flat_map(|part| {
+                    (part.start..part.end)
+                        .step_by(ROW_STEP_MS as usize)
+                        .take_while(move |start| *start + ROW_SPEECH_MS <= part.end)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), starts.len());
+            assert!(
+                rows.iter()
+                    .zip(&starts)
+                    .all(|(row, start)| row.start_ms == *start)
+            );
             let rendered = fixture.rendered();
-            let times = rendered.lines().map(line_ms).collect::<Vec<_>>();
-            assert!(!times.is_empty());
-            assert!(times.windows(2).all(|pair| pair[0] <= pair[1]));
-            assert!(times.iter().all(|at| *at < fixture.duration_ms));
-            for pair in fixture.parts.windows(2) {
+            let lines = rendered.lines().collect::<Vec<_>>();
+            assert_eq!(lines.len(), rows.len());
+            for (index, (row, line)) in rows.iter().zip(&lines).enumerate() {
+                assert!(row.start_ms < fixture.duration_ms);
+                assert_eq!(row.end_ms, row.start_ms + ROW_SPEECH_MS);
+                assert!(row.end_ms <= fixture.duration_ms);
                 assert!(
-                    times
+                    fixture
+                        .parts
                         .iter()
-                        .all(|at| *at < pair[0].end || *at >= pair[1].start),
-                    "a row landed in the pause after {}ms",
-                    pair[0].end
+                        .any(|part| { row.start_ms >= part.start && row.end_ms <= part.end })
+                );
+                let microphone = index % 2 == 0;
+                assert_eq!(row.source, if microphone { "microphone" } else { "system" });
+                assert_eq!(row.speaker, if microphone { "You" } else { "Them" });
+                assert_eq!(
+                    *line,
+                    format!(
+                        "[{}] {} (English): {}",
+                        stamp(row.start_ms),
+                        row.speaker,
+                        row.text
+                    )
                 );
             }
-            assert!(rendered.contains(UNICODE_PROBE));
+            assert!(rows.iter().any(|row| row.text.contains(UNICODE_PROBE)));
             for fact in fixture.facts.each() {
                 assert!(
                     fixture.parts.iter().any(|part| {
@@ -219,8 +248,13 @@ fn generated_fixtures_preserve_facts_unicode_density_and_joined_part_shape() {
                     "{}ms is not inside a recording part",
                     fact.at_ms
                 );
-                assert_eq!(rendered.matches(&fact.text).count(), 1);
-                assert!(rendered.contains(&format!("[{}]", stamp(fact.at_ms))));
+                let matching = rows
+                    .iter()
+                    .filter(|row| row.text == fact.text)
+                    .collect::<Vec<_>>();
+                assert_eq!(matching.len(), 1);
+                assert_eq!(matching[0].start_ms, fact.at_ms);
+                assert_eq!(matching[0].end_ms, fact.at_ms + ROW_SPEECH_MS);
             }
             assert!(fixture.facts.tail.at_ms >= fixture.duration_ms - 5 * MINUTE_MS);
             let chars = rendered.chars().count();
