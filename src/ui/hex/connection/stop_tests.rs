@@ -798,10 +798,8 @@ fn stale_stop_refuses_replacement_recording_through_ui_and_engine() {
 }
 
 fn header(state: &State, _: &mut rune::Cx<State>) -> rune::El {
-    let mut layer = Vec::new();
-    let (pill, action, _) =
-        crate::ui::nav::actions(state, crate::ui::theme::palette(false), false, &mut layer);
-    rune_kit::root(rune::row().children(pill).children(action), layer)
+    let (pill, action) = crate::ui::nav::actions(state, crate::ui::theme::palette(false), false);
+    rune_kit::root(rune::row().children(pill).children(action), Vec::new())
 }
 
 #[test]
@@ -1715,6 +1713,28 @@ fn meeting_pause_resume_uses_hex_commands_and_keeps_one_meeting() {
 }
 
 #[cfg(windows)]
+fn assert_blocked_record_row(runtime: &mut rune::Runtime<State>, reason: &str) {
+    runtime.update(|state, _| {
+        state.drawer_open.set(true);
+        state.nav.new_menu = true;
+    });
+    runtime.settle_all();
+    runtime.frame(0.0);
+    let elements = runtime.elements();
+    let row = elements
+        .iter()
+        .find(|e| e.key.as_deref() == Some("new-meeting"))
+        .unwrap();
+    assert!(!row.focusable);
+    assert_eq!(row.help.as_deref(), Some(reason));
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.path.starts_with(&row.path) && e.text.as_deref() == Some(reason))
+    );
+}
+
+#[cfg(windows)]
 #[test]
 fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
     if isolated_api_test("recorder_ready_new_meeting_logs_one_correlated_action_through_recheck") {
@@ -1728,10 +1748,7 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
     state.new_meeting();
     let mut runtime =
         rune::Runtime::new(state, crate::ui::view, (500.0, 160.0), rune::Env::default());
-    runtime.frame(0.0);
-    assert!(runtime.elements().iter().any(
-        |e| e.role == "status" && e.text.as_deref() == Some("Checking Hex before New meeting")
-    ));
+    assert_blocked_record_row(&mut runtime, "Checking Hex before New meeting");
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let event = runtime
@@ -1745,17 +1762,7 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
             break;
         }
     }
-    runtime.frame(0.0);
-    assert!(
-        runtime
-            .elements()
-            .iter()
-            .any(|e| e.role == "status" && e.text.as_deref() == Some("Working")),
-        "busy={} blocked={:?} error={:?}",
-        runtime.state.hex_record_busy(),
-        start_blocked(&runtime.state),
-        runtime.state.hex.error
-    );
+    assert_blocked_record_row(&mut runtime, "Working");
     release.send(()).unwrap();
     Fixture::finish(&mut runtime.state);
     assert_eq!(api.data.lock().unwrap().starts, 1);
@@ -1784,13 +1791,10 @@ fn recorder_ready_new_meeting_logs_one_correlated_action_through_recheck() {
 #[cfg(any(target_os = "linux", all(windows, feature = "recorder-ready-proof")))]
 fn meeting_control(state: &State, _: &mut rune::Cx<State>) -> rune::El {
     let mut layer = Vec::new();
-    let (button, _) = crate::ui::nav::new_meeting_button(
-        state,
-        crate::ui::theme::palette(false),
-        false,
-        &mut layer,
-    );
-    rune_kit::root(button, layer)
+    rune_kit::root(
+        crate::ui::nav::record_meeting_row(state, crate::ui::theme::palette(false), &mut layer),
+        layer,
+    )
 }
 
 #[cfg(all(windows, feature = "recorder-ready-proof"))]
@@ -1810,7 +1814,10 @@ fn paused_meeting_keeps_its_status_when_hex_expires() {
     if isolated_api_test("paused_meeting_keeps_its_status_when_hex_expires") {
         return;
     }
-    let (_api, mut state, _) = Fixture::start();
+    let (_api, mut state, now) = Fixture::start_idle();
+    let idle = state.hex.engine.status_for_command().unwrap();
+    state.hex_status_at(Ok(idle), now);
+    assert_eq!(start_blocked(&state), None);
     crate::ui::live::parts_scene(&mut state, "paused");
     state.live.as_mut().unwrap().panel_open = true;
     let mut ui = rune::Runtime::with_text(
@@ -1856,7 +1863,11 @@ fn paused_meeting_keeps_its_status_when_hex_expires() {
             Some("Transcript")
         );
         assert!(keyed("live-panel-hide").focusable);
-        assert!(ui.find("new-meeting").is_none());
+        assert_blocked_record_row(&mut ui, "Finish the paused meeting first");
+        ui.update(|s, _| {
+            s.nav.new_menu = false;
+            s.nav_done();
+        });
     }
 }
 

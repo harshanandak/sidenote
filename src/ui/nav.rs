@@ -58,6 +58,7 @@ pub struct NavCache {
     /// "Show all" under Projects. Kept across rebuilds for the session, never saved.
     pub show_all: bool,
     pub profile_menu: bool,
+    pub new_menu: bool,
 }
 
 impl State {
@@ -85,6 +86,7 @@ impl State {
         let mut cache = NavCache {
             show_all: self.nav.show_all,
             profile_menu: self.nav.profile_menu,
+            new_menu: self.nav.new_menu,
             ..NavCache::default()
         };
         for m in &self.meetings {
@@ -493,7 +495,9 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .fill(p.side)
         .px(PAD);
     if wide {
-        pane = pane.child(workspace_row(p));
+        pane = pane
+            .child(workspace_row(p))
+            .child(new_menu(s, p, page, layer));
     } else {
         pane = pane.pt(10.0);
     }
@@ -542,6 +546,43 @@ fn collapse(p: Palette) -> El {
     .on_press(|s: &mut State| s.toggle_sidebar())
 }
 
+fn new_menu(s: &State, p: Palette, page: Palette, layer: &mut Vec<El>) -> El {
+    let chip = row()
+        .w_full()
+        .h(32.0)
+        .px(10.0)
+        .gap(8.0)
+        .items_center()
+        .radius(9.0)
+        .fill(p.chip)
+        .child(icons::draw(&icons::PLUS, 16.0, p.ink))
+        .child(roles::NAV.bold().line("New", p.ink).grow(1.0))
+        .child(icons::draw(&icons::CHEVRON_DOWN, 13.0, p.soft).a11y_hidden());
+    let trigger = menu_trigger(
+        pressable(chip).key("nav-new-menu").label("New"),
+        s.nav.new_menu,
+        p,
+        |s| s.nav.new_menu = !s.nav.new_menu,
+    );
+    if s.nav.new_menu {
+        let mut recovery = Vec::new();
+        let menu = col().child(record_meeting_row(s, page, &mut recovery));
+        let anchor = (
+            "nav-new-menu",
+            "nav-new-menu",
+            rune::Side::Bottom,
+            rune::Align::Start,
+            220.0,
+        );
+        menu_surface(&super::theme::kit(&page), page, layer, menu, anchor, |s| {
+            s.nav.new_menu = false;
+            s.updates.listener_open = false;
+        });
+        layer.extend(recovery);
+    }
+    col().w_full().pt(2.0).pb(8.0).child(trigger)
+}
+
 /// The sidebar scene with every project shown.
 pub fn scene_all(s: &mut State) {
     s.nav.show_all = true;
@@ -583,77 +624,64 @@ fn recording_status(s: &State) -> super::live::RecordingStatus {
     super::live::RecordingStatus::for_phase(s, phase)
 }
 
-pub(super) fn actions(
-    s: &State,
-    p: Palette,
-    narrow: bool,
-    layer: &mut Vec<El>,
-) -> (Option<El>, Option<El>, Option<&'static str>) {
+pub(super) fn actions(s: &State, p: Palette, narrow: bool) -> (Option<El>, Option<El>) {
     if s.annotations.open {
-        return (None, Some(super::annotations::new_button(s, p)), None);
+        return (None, Some(super::annotations::new_button(s, p)));
     }
     if recording_status(s) == super::live::RecordingStatus::Paused {
-        return (Some(recording_pill(s, p, narrow)), None, None);
+        return (Some(recording_pill(s, p, narrow)), None);
     }
     let recording = s.hex_recording();
     let pill = (recording && (s.on_live() || !meeting_shows_pause(s)))
         .then(|| recording_pill(s, p, narrow));
-    if !recording || s.hex_status_unknown() {
-        let (button, blocked) = new_meeting_button(s, p, narrow, layer);
-        (pill, Some(button), blocked)
-    } else {
-        (pill, None, None)
-    }
+    (pill, None)
 }
 
-pub(super) fn new_meeting_button(
-    s: &State,
-    p: Palette,
-    narrow: bool,
-    layer: &mut Vec<El>,
-) -> (El, Option<&'static str>) {
-    let listener_problem = super::updates::listener_problem(s);
-    let blocked = match listener_problem {
-        Some(_) => None,
-        None => hex::start_blocked(s),
-    };
-    let progress = match blocked {
-        Some(hex::CHECKING) => Some(hex::CHECKING),
-        Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
-        _ => None,
-    };
-    let b = super::widgets::button(
-        progress.unwrap_or(if narrow { "+" } else { "+ New meeting" }),
-        "new-meeting",
-        super::widgets::ButtonRole::Secondary,
-        p,
-    )
-    .h(28.0)
-    .px(if narrow { 8.0 } else { 10.0 })
-    .radius(14.0);
-    if let Some(error) = listener_problem {
-        return (
-            super::updates::listener_popover(s, b, error, p, layer),
-            None,
-        );
-    }
-    let action = match blocked {
-        None => b
-            .label("New meeting")
-            .help("Start recording a meeting")
-            .on_press(|s: &mut State| s.new_meeting()),
-        Some(reason) => b
-            .label(format!("New meeting ({reason})"))
-            .help(reason)
-            .opacity(if progress.is_some() { 1.0 } else { 0.5 })
-            .disabled(true),
-    };
-    let notice = if cfg!(target_os = "linux") || progress.is_some() {
-        None
+pub(super) fn record_meeting_row(s: &State, p: Palette, layer: &mut Vec<El>) -> El {
+    use super::live::Phase;
+    const NAME: &str = "Record a meeting";
+    let phase = s
+        .live
+        .as_ref()
+        .filter(|live| {
+            live.session
+                .as_ref()
+                .is_none_or(|session| session.phase != core::meeting_parts::Phase::Ended)
+        })
+        .map(|live| live.phase);
+    let blocked = if cfg!(windows) && phase == Some(Phase::Paused) && !s.hex_stop_pending() {
+        Some("Finish the paused meeting first")
+    } else if let Some(error) = super::updates::listener_problem(s) {
+        let row = menu_row(NAME, p, None, Some(&icons::MIC), None).key("new-meeting");
+        return super::updates::listener_popover(s, row, error, p, layer);
     } else {
-        blocked
+        hex::start_blocked(s).or(match phase {
+            Some(Phase::Starting | Phase::Recording) => Some("Finish the current meeting first"),
+            _ => None,
+        })
     };
-    (action, notice)
+    let detail = match blocked {
+        Some(hex::WAIT_FOR_STOP) => Some("Finishing recording\u{2026}"),
+        _ => blocked.filter(|_| !cfg!(target_os = "linux")),
+    };
+    let row = menu_row(NAME, p, detail, Some(&icons::MIC), None).key("new-meeting");
+    match blocked {
+        None => row
+            .help("Start recording a meeting")
+            .on_press(|s: &mut State| {
+                s.nav.new_menu = false;
+                s.new_meeting()
+            }),
+        Some(reason) => row
+            .label(format!("Record a meeting ({reason})"))
+            .help(reason)
+            .opacity(if matches!(reason, hex::CHECKING | hex::WAIT_FOR_STOP) {
+                1.0
+            } else {
+                0.5
+            })
+            .disabled(true),
+    }
 }
 
 pub(super) fn recording_words(s: &State, narrow: bool) -> String {
@@ -1053,6 +1081,7 @@ mod tests {
         crate::test_paths::isolate();
         let mut state = State::new();
         state.go_home();
+        state.config.features.annotations = false;
         crate::ui::updates::settings_fixture(&mut state);
         state.listener_probed(
             Some(sidenote::updates::ListenerStatus {
@@ -1074,16 +1103,26 @@ mod tests {
         rt
     }
 
+    fn open_new_menu(width: f32, preparing: bool) -> rune::Runtime<State> {
+        let mut rt = new_meeting_runtime(width, preparing);
+        rt.state.drawer_open.set(true);
+        rt.state.nav.new_menu = true;
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.find("new-meeting-status").is_none());
+        rt
+    }
+
     #[test]
-    fn blocked_new_meeting_keeps_status_below_native_titlebar() {
+    fn blocked_record_meeting_row_shows_reason_in_sidebar_menu() {
         let reason = if cfg!(target_os = "linux") {
             "Recording is not available on Linux yet."
         } else {
             "Checking the meeting listener"
         };
-        let label = format!("New meeting ({reason})");
+        let label = format!("Record a meeting ({reason})");
         for width in [390.0, 1334.0] {
-            let elements = new_meeting_runtime(width, true).elements();
+            let elements = open_new_menu(width, true).elements();
             let find = |key| {
                 elements
                     .iter()
@@ -1093,8 +1132,8 @@ mod tests {
             let bar = find("top-bar");
             let button = find("new-meeting");
             assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
-            assert!(button.path.starts_with(&bar.path));
-            assert!(button.rect[1] + button.rect[3] <= bar.rect[1] + bar.rect[3]);
+            assert!(!button.path.starts_with(&bar.path));
+            assert!(button.rect[1] >= bar.rect[1] + bar.rect[3]);
             assert_eq!(button.label.as_deref(), Some(label.as_str()));
             assert!(!button.focusable);
             let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
@@ -1102,8 +1141,7 @@ mod tests {
                 assert!(status.is_none());
             } else {
                 let status = status.expect("visible start-blocked reason");
-                assert_eq!(status.role, "status");
-                assert!(!status.path.starts_with(&bar.path));
+                assert!(status.path.starts_with(&button.path));
                 assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
             }
         }
@@ -1111,8 +1149,9 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn narrow_new_meeting_gives_blocked_reason_its_own_line() {
-        let elements = new_meeting_runtime(360.0, true).elements();
+    fn blocked_record_meeting_row_shows_reason_in_sidebar_menu_narrow_listener() {
+        let mut rt = open_new_menu(360.0, true);
+        let elements = rt.elements();
         let button = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("new-meeting"))
@@ -1121,17 +1160,28 @@ mod tests {
             .iter()
             .find(|e| e.text.as_deref() == Some("Checking the meeting listener"))
             .expect("short checking message");
-        assert!(checking.rect[1] >= button.rect[1] + button.rect[3] + 5.0);
+        let label = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some("Record a meeting"))
+            .unwrap();
+        assert!(checking.rect[1] >= label.rect[1] + label.rect[3]);
         assert_eq!(checking.rect[3], roles::META.lh);
-        let button_right = button.rect[0] + button.rect[2];
-        let checking_right = checking.rect[0] + checking.rect[2];
-        assert!((button_right - checking_right).abs() < 0.5);
+        assert!(checking.path.starts_with(&button.path));
+        assert!(button.rect[0] >= 0.0 && button.rect[0] + button.rect[2] <= 360.0);
+        rt.update(|s, _| s.listener_probed(Some(Default::default()), None));
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.elements().iter().any(|e| {
+            e.text.as_deref() == Some("Recording is unavailable. Restart Sidenote to retry.")
+                && e.rect[3] > roles::META.lh
+        }));
     }
 
     #[cfg(windows)]
     #[test]
-    fn narrow_new_meeting_shows_hex_check_inside_the_button() {
-        let elements = new_meeting_runtime(360.0, false).elements();
+    fn blocked_record_meeting_row_shows_reason_in_sidebar_menu_narrow_hex() {
+        let mut rt = open_new_menu(360.0, false);
+        let elements = rt.elements();
         let button = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("new-meeting"))
@@ -1151,11 +1201,55 @@ mod tests {
         );
         assert_eq!(
             button.label.as_deref(),
-            Some("New meeting (Checking for Hex)")
+            Some("Record a meeting (Checking for Hex)")
         );
         assert_eq!(button.help.as_deref(), Some("Checking for Hex"));
         assert!(!button.focusable, "the button is disabled while checking");
-        assert!(button.rect[0] + button.rect[2] <= 360.0 + 0.5);
+        assert!(button.rect[0] >= 0.0 && button.rect[0] + button.rect[2] <= 360.0);
+        rt.update(|s, _| hex::stop::scene(s, false));
+        rt.frame(0.0);
+        assert!(rt.elements().iter().any(|e| {
+            e.text.as_deref() == Some("Finishing recording\u{2026}")
+                && e.path.starts_with(&button.path)
+        }));
+    }
+
+    #[test]
+    fn new_menu_trigger_opens_the_record_row() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| s.config.features.annotations = true);
+        tap(&mut rt, "nav-new-menu");
+        assert!(rt.find("new-meeting").is_some());
+        assert!(rt.find("nav-new-annotation").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn new_menu_listener_retry_receives_pointer_and_escape_dismisses_it() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| s.listener_finished(Err("Synthetic listener error".into())));
+        tap(&mut rt, "nav-new-menu");
+        tap(&mut rt, "new-meeting");
+        let (x, y) = rt.find("listener-retry").expect("Try again");
+        rt.pointer_move(x, y);
+        assert_eq!(rt.cursor(), rune::Cursor::Pointer);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Escape,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.2);
+        assert!(rt.find("new-meeting").is_none());
+        tap(&mut rt, "nav-new-menu");
+        assert!(rt.find("new-meeting").is_some());
+        assert!(rt.find("listener-error-popover-content").is_none());
+    }
+
+    fn tap(rt: &mut rune::Runtime<State>, key: &str) {
+        let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.settle_all();
+        rt.frame(0.0);
     }
 
     #[test]
@@ -1257,7 +1351,7 @@ mod tests {
         let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
         let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
-        // S1a sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
+        // S1 sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
             (30.0, 204.0, expected)
