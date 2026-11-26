@@ -10,6 +10,8 @@ on:
       - tools/release_publish.sh
       - tools/release_update_proof.ps1
       - tools/pack_release.ps1
+      - Cargo.toml
+      - docs/releases/**
   workflow_dispatch:
     inputs:
       tag:
@@ -149,6 +151,9 @@ jobs:
     name: Publish Windows release artifacts
     if: github.event_name == 'push'
     needs: package
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

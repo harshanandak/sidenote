@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ${DRY_RUN:-} != 0 && ${DRY_RUN:-} != 1 ]]; then
-    echo 'DRY_RUN must be exactly 0 or 1.' >&2
-    exit 1
-fi
-if [[ $DRY_RUN == 0 && ${GITHUB_EVENT_NAME:-} != push ]]; then
-    echo 'DRY_RUN=0 is allowed only for a tag push.' >&2
-    exit 1
-fi
+[[ ${DRY_RUN:-} == 0 || ${DRY_RUN:-} == 1 ]] || { echo 'DRY_RUN must be exactly 0 or 1.' >&2; exit 1; }
+[[ $DRY_RUN != 0 || ${GITHUB_EVENT_NAME:-} == push ]] || { echo 'DRY_RUN=0 is allowed only for a tag push.' >&2; exit 1; }
 
 tag=${RELEASE_TAG:?Set RELEASE_TAG}
 repo=${GITHUB_REPOSITORY:?Set GITHUB_REPOSITORY}
+sha=${GITHUB_SHA:?Set GITHUB_SHA}
 asset_dir=${ASSET_DIR:?Set ASSET_DIR}
+runner_temp=${RUNNER_TEMP:?Set RUNNER_TEMP}
 stable='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 dev='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.(0|[1-9][0-9]*)$'
 if [[ $tag =~ $stable ]]; then
@@ -25,22 +21,22 @@ else
 fi
 
 notes_source="docs/releases/$tag.md"
-notes_file="$RUNNER_TEMP/sidenote-$tag-notes.md"
+notes_file="$runner_temp/sidenote-$tag-notes.md"
 if [[ -f $notes_source ]]; then
     cat "$notes_source" > "$notes_file"
-elif [[ $GITHUB_EVENT_NAME == push ]]; then
+elif [[ ${GITHUB_EVENT_NAME:-} == push ]]; then
     echo "Missing required release notes: $notes_source" >&2
     exit 1
 else
     echo "$notes_source is missing; using placeholder notes for this dry run."
     printf 'Placeholder release notes for %s.\n' "$tag" > "$notes_file"
 fi
-cat >>"$notes_file" <<'EOF'
+cat >>"$notes_file" <<'NOTES'
 
 ## Verify your download
 
 Download `SHA256SUMS` from the same release, then run `Get-FileHash <file> -Algorithm SHA256` in PowerShell and compare the result with the matching line in `SHA256SUMS`.
-EOF
+NOTES
 echo "Built release notes for $tag at $notes_file"
 
 shopt -s nullglob
@@ -57,34 +53,104 @@ print_command() {
 }
 
 run_write() {
-    if [[ $DRY_RUN == 0 ]]; then
-        "$@"
-    else
-        print_command "$@"
-    fi
+    if [[ $DRY_RUN == 0 ]]; then "$@"; else print_command "$@"; fi
 }
+
+version_cmp() {
+    local left=$1 right=$2 count=$3 regex=$4 i
+    [[ $left =~ $regex ]] || return 1
+    local -a left_parts=("${BASH_REMATCH[@]:1:$count}")
+    [[ $right =~ $regex ]] || return 1
+    local -a right_parts=("${BASH_REMATCH[@]:1:$count}")
+    for ((i = 0; i < count; i++)); do
+        if (( left_parts[i] < right_parts[i] )); then printf '%s\n' -1; return 0; fi
+        if (( left_parts[i] > right_parts[i] )); then printf '%s\n' 1; return 0; fi
+    done
+    printf '%s\n' 0
+}
+
+read_err="$runner_temp/release-publish-read.$$.err"
+lookup_out="$runner_temp/release-publish-lookup.$$.out"
+
+read_or_fail() {
+    local message=$1
+    shift
+    if "$@" 2>"$read_err"; then return 0; fi
+    cat "$read_err" >&2
+    echo "$message" >&2
+    return 1
+}
+
+lookup_or_missing() {
+    local missing_re=$1 message=$2
+    shift 2
+    if "$@" >"$lookup_out" 2>"$read_err"; then
+        cat "$lookup_out"
+        return 0
+    fi
+    if grep -qiE "$missing_re" "$lookup_out" "$read_err"; then return 1; fi
+    cat "$lookup_out" "$read_err" >&2
+    echo "$message" >&2
+    return 2
+}
+
+remote_tag_sha() {
+    local object_info object_sha object_type
+    object_info=$(read_or_fail "Failed to resolve remote tag $tag." gh api "repos/$repo/git/refs/tags/$tag" --jq '.object.sha + " " + .object.type') || return 1
+    read -r object_sha object_type <<<"$object_info"
+    if [[ $object_type == tag ]]; then
+        object_sha=$(read_or_fail "Failed to dereference annotated tag $tag." gh api "repos/$repo/git/tags/$object_sha" --jq .object.sha) || return 1
+    fi
+    printf '%s\n' "$object_sha"
+}
+
+stable_latest=true
+if [[ $channel == stable ]]; then
+    stable_tags=$(read_or_fail 'Failed to list published stable releases.' gh api "repos/$repo/releases" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name') || exit 1
+    while IFS= read -r published_tag; do
+        [[ -n $published_tag ]] || continue
+        if cmp=$(version_cmp "$published_tag" "$tag" 3 "$stable") && [[ $cmp == 1 ]]; then
+            stable_latest=false
+            break
+        fi
+    done <<< "$stable_tags"
+    echo "Stable latest flag: $stable_latest"
+fi
 
 create=(gh release create "$tag" --repo "$repo" --verify-tag --title "$tag" --notes-file "$notes_file" --draft)
 upload=(gh release upload "$tag" "${assets[@]}" --repo "$repo")
 upload_clobber=(gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber)
-publish_release=(gh release edit "$tag" --repo "$repo" --draft=false)
+publish_release=(gh release edit "$tag" --repo "$repo" --draft=false --notes-file "$notes_file")
 if [[ $channel == stable ]]; then
-    create+=(--latest=true)
-    publish_release+=(--latest=true)
+    create+=("--latest=$stable_latest")
+    publish_release+=("--latest=$stable_latest")
 else
     create+=(--prerelease --latest=false)
     publish_release+=(--prerelease --latest=false)
 fi
 
-versioned_state=missing
-if is_draft=$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null); then
-    if [[ $is_draft == true ]]; then
-        versioned_state=draft
-    else
-        versioned_state=published
-    fi
-fi
+versioned_lookup_status=0
+versioned_is_draft=$(lookup_or_missing 'release not found' "Failed to look up release $tag." gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft) || versioned_lookup_status=$?
+case $versioned_lookup_status in
+    0)
+        if [[ $versioned_is_draft == true ]]; then versioned_state=draft; else versioned_state=published; fi
+        ;;
+    1) versioned_state=missing ;;
+    *) exit 1 ;;
+esac
 echo "Versioned release branch: $versioned_state"
+
+if [[ $DRY_RUN == 1 ]]; then
+    echo 'Dry run: skipping remote tag identity check.'
+else
+    resolved_tag_sha=$(remote_tag_sha) || exit 1
+    if [[ $resolved_tag_sha != "$sha" ]]; then
+        echo "Remote tag $tag points at $resolved_tag_sha, not $sha; refusing to publish." >&2
+        exit 1
+    fi
+    echo "Remote tag $tag points at $sha."
+fi
+
 case $versioned_state in
     missing)
         run_write "${create[@]}"
@@ -92,6 +158,14 @@ case $versioned_state in
         run_write "${publish_release[@]}"
         ;;
     draft)
+        existing_assets=$(read_or_fail "Failed to list assets on draft release $tag." gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name') || exit 1
+        declare -A wanted_asset_names=()
+        for asset in "${assets[@]}"; do wanted_asset_names[$(basename -- "$asset")]=1; done
+        while IFS= read -r existing_asset; do
+            if [[ -n $existing_asset && -z ${wanted_asset_names[$existing_asset]+x} ]]; then
+                run_write gh release delete-asset "$tag" "$existing_asset" --repo "$repo" --yes
+            fi
+        done <<< "$existing_assets"
         run_write "${upload_clobber[@]}"
         run_write "${publish_release[@]}"
         ;;
@@ -101,16 +175,46 @@ case $versioned_state in
 esac
 
 if [[ $channel == dev ]]; then
-    rolling_create=(gh release create dev "${assets[@]}" --repo "$repo" --target "$GITHUB_SHA" --title 'Sidenote dev' --notes-file "$notes_file" --prerelease --latest=false)
+    rolling_create=(gh release create dev "${assets[@]}" --repo "$repo" --target "$sha" --title "Sidenote dev $tag" --notes-file "$notes_file" --prerelease --latest=false)
     rolling_delete=(gh release delete dev --repo "$repo" --cleanup-tag --yes)
-    rolling_state=missing
-    if gh release view dev --repo "$repo" --json tagName >/dev/null 2>&1; then
-        rolling_state=exists
-    fi
+    rolling_lookup_status=0
+    rolling_name=$(lookup_or_missing 'release not found' 'Failed to look up release dev.' gh release view dev --repo "$repo" --json name --jq .name) || rolling_lookup_status=$?
+    case $rolling_lookup_status in
+        0) rolling_state=exists ;;
+        1) rolling_state=missing ;;
+        *) exit 1 ;;
+    esac
     echo "Rolling dev release branch: $rolling_state"
-    # The feed returns 404 between delete and create; the app treats that as a failed check, never a wrong package.
+    rolling_replace=1
     if [[ $rolling_state == exists ]]; then
-        run_write "${rolling_delete[@]}"
+        rolling_prefix='Sidenote dev '
+        rolling_version=
+        if [[ $rolling_name == "$rolling_prefix"* ]]; then rolling_version=${rolling_name#$rolling_prefix}; fi
+        if [[ -n $rolling_version ]] && cmp=$(version_cmp "$rolling_version" "$tag" 4 "$dev"); then
+            if [[ $cmp != -1 ]]; then
+                rolling_replace=0
+                echo "Rolling dev release is $rolling_version, the same as or newer than $tag; skipping rolling replacement."
+            fi
+        else
+            echo "Rolling dev release name '$rolling_name' has no readable dev version; treating it as older."
+        fi
     fi
-    run_write "${rolling_create[@]}"
+    if (( rolling_replace )); then
+        # The feed returns 404 between delete and create; the app treats that as a failed check, never a wrong package.
+        if [[ $rolling_state == exists ]]; then
+            run_write "${rolling_delete[@]}"
+        else
+            ref_lookup_status=0
+            ref_info=$(lookup_or_missing 'not found|404' 'Failed to look up git ref tags/dev.' gh api "repos/$repo/git/refs/tags/dev") || ref_lookup_status=$?
+            case $ref_lookup_status in
+                0)
+                    echo 'Rolling dev tag ref exists without a release; deleting it before create.'
+                    run_write gh api -X DELETE "repos/$repo/git/refs/tags/dev"
+                    ;;
+                1) ;;
+                *) exit 1 ;;
+            esac
+        fi
+        run_write "${rolling_create[@]}"
+    fi
 fi
