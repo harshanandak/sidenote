@@ -3523,7 +3523,8 @@ fn source_link(s: &State, t: &TaskItem, p: Palette) -> El {
         return roles::META.wrap("The meeting is no longer on this computer.", p.soft);
     };
     let id = m.id.clone();
-    cards::panel(p).child(
+    // The link sits on a card-coloured footer, so it keeps the outline the soft card drops.
+    cards::panel(p).border(1.0, p.line).child(
         pressable(
             cards::row_shell()
                 .padding(8.0)

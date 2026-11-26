@@ -51,7 +51,7 @@ pub fn settings_title(name: &str, p: Palette) -> El {
     rune::text(name)
         .font(roles::NAV.style().lh(19.0))
         .color(p.ink)
-        .truncate()
+        .wrap()
         .min_w(0.0)
 }
 
