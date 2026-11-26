@@ -65,8 +65,12 @@ Assert-CaseOutput (Invoke-ProofCase 'trend' $trendFixture) 1 'upward trend'
 $finalFixture=Join-Path $fixtures 'final-hour-growth.json'
 New-Fixture $finalFixture
 $final=Get-Content -LiteralPath $finalFixture -Raw|ConvertFrom-Json
-$final.resource_samples[-1].working_set_bytes+=100MB
-$final.resource_samples[-1].private_bytes+=100MB
+$finalResource=$final.resource_samples[-1]
+$final.resource_samples[-1]=[pscustomobject]@{elapsed_seconds=$finalResource.elapsed_seconds;missing=$true}
+$finalResource.elapsed_seconds+=3601
+$finalResource.working_set_bytes+=100MB
+$finalResource.private_bytes+=100MB
+$final.resource_samples+=@($finalResource)
 $final|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $finalFixture -Encoding UTF8
 Assert-CaseOutput (Invoke-ProofCase 'final-hour-growth' $finalFixture) 1 'final growth'
 $shortFixture=Join-Path $fixtures 'short-23h30m.json'

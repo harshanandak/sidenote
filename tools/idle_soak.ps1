@@ -6,10 +6,12 @@ $script:IdleSoakThresholds=[ordered]@{
     working_set_slope_bytes_per_hour=4MB; private_bytes_slope_bytes_per_hour=4MB; handle_count_slope_per_hour=4.0
     working_set_final_growth_bytes=64MB; private_bytes_final_growth_bytes=64MB; handle_count_final_growth=64.0
 }
-function Get-IdleSoakFullPath([string]$Path) { [IO.Path]::GetFullPath($Path).TrimEnd('\') }
+function Get-IdleSoakFullPath([string]$Path) { [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar) }
 function Test-IdleSoakPathInside([string]$Path,[string]$Root) {
-    $p=(Get-IdleSoakFullPath $Path)+'\'; $r=(Get-IdleSoakFullPath $Root)+'\'
-    $p.StartsWith($r,[StringComparison]::OrdinalIgnoreCase)
+    $separator=[IO.Path]::DirectorySeparatorChar
+    $p=(Get-IdleSoakFullPath $Path)+$separator; $r=(Get-IdleSoakFullPath $Root)+$separator
+    $comparison=if ($separator -eq '\') {[StringComparison]::OrdinalIgnoreCase} else {[StringComparison]::Ordinal}
+    $p.StartsWith($r,$comparison)
 }
 function Assert-IdleSoakSyntheticRoot([string]$Path,[bool]$Approved) {
     if ([string]::IsNullOrWhiteSpace($Path)) { throw 'an explicit synthetic data root is required' }
@@ -171,18 +173,17 @@ function Get-IdleSoakLinearSlope($Points,[string]$Property) {
     }
     if ($denominator -eq 0) {0.0} else {$numerator/$denominator}
 }
-function Select-IdleSoakThroughEnd($Samples,[double]$WarmupSeconds,[double]$DurationSeconds) {
-    $selected=@(); $complete=$false
+function Select-IdleSoakPresentThroughEnd($Samples,[double]$WarmupSeconds,[double]$DurationSeconds) {
+    $selected=@()
     foreach ($sample in @($Samples)) {
-        if ($complete) { break }
-        if ([double]$sample.elapsed_seconds -lt $WarmupSeconds) { continue }
+        if ([bool]$sample.missing -or [double]$sample.elapsed_seconds -lt $WarmupSeconds) { continue }
         $selected+=$sample
-        if ([double]$sample.elapsed_seconds -ge $DurationSeconds) { $complete=$true }
+        if ([double]$sample.elapsed_seconds -ge $DurationSeconds) { break }
     }
     $selected
 }
 function Measure-IdleSoakTrend($Samples,[string]$Property,[double]$SlopeLimit,[double]$FinalLimit,[double]$WarmupSeconds,[double]$DurationSeconds) {
-    $points=@(Select-IdleSoakThroughEnd $Samples $WarmupSeconds $DurationSeconds|Where-Object {-not [bool]$_.missing})
+    $points=@(Select-IdleSoakPresentThroughEnd $Samples $WarmupSeconds $DurationSeconds)
     if ($points.Count -lt 3) { return [pscustomobject]@{samples=$points.Count;slope_per_hour=$null;final_delta=$null;positive_step_fraction=$null;insufficient=$true;trend_detected=$false;final_growth_exceeded=$false} }
     $slope=Get-IdleSoakLinearSlope $points $Property
     $first=[double]$points[0].PSObject.Properties[$Property].Value; $last=[double]$points[-1].PSObject.Properties[$Property].Value
@@ -203,7 +204,7 @@ function Measure-IdleSoakSeries($CpuSamples,$ResourceSamples,[string]$EndState,[
     foreach ($entry in @(@('cpu',$cpuMissing),@('resource',$resourceMissing))) {
         if ($entry[1].percent -gt $script:IdleSoakThresholds.missing_sample_percent -or $entry[1].max_consecutive -gt $script:IdleSoakThresholds.consecutive_missing_samples) { $failures+="$($entry[0]) missing samples exceed the pass bar" }
     }
-    $cpuPoints=@(Select-IdleSoakThroughEnd $CpuSamples $WarmupSeconds $DurationSeconds|Where-Object {-not [bool]$_.missing})
+    $cpuPoints=@(Select-IdleSoakPresentThroughEnd $CpuSamples $WarmupSeconds $DurationSeconds)
     $averageCpu=$null
     if ($cpuPoints.Count -lt 2 -or [double]$cpuPoints[-1].elapsed_seconds -le [double]$cpuPoints[0].elapsed_seconds) { $failures+='post-warm-up cpu samples are insufficient' }
     else {
