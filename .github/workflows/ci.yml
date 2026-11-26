@@ -323,7 +323,8 @@ jobs:
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
-            ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights
+            ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
+            ui::meeting::reading::tests::opening_go_to_time_leaves_transcript_room_on_a_short_phone
           cargo test --locked -p sidenote --no-default-features --test channel_boundary
           cargo test --locked -p sidenote --lib --bin sidenote -- \
             core::agent_tools:: core::ask_options:: listener::pipeline_tests:: \

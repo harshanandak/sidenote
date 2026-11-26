@@ -357,15 +357,14 @@ pub(super) fn status_chip(
         tx.focus("meeting-status", true);
         true
     };
-    let (status, name) = if english {
-        ("English only", "Transcript status: English only")
+    let name = if english {
+        "Transcript status: English only"
     } else {
-        ("Transcript status", "Transcript status")
+        "Transcript status"
     };
     let toggle = pressable(
         fact(&icons::INFO, p)
             .px(8.0)
-            .child(roles::FACT.line(status, p.faint))
             .fill(if s.meeting_ui.status_open {
                 p.chip
             } else {
@@ -374,6 +373,7 @@ pub(super) fn status_chip(
     )
     .key("meeting-status")
     .label(name)
+    .help(name)
     .hover(p.chip)
     .focus_ring(2.0, 1.0, p.accent)
     .on_key(close_on_escape)
@@ -634,8 +634,14 @@ fn narrative(
                 .mb(12.0),
         );
     }
-    if !m.has_summary() && draft.is_none() {
-        return body.children(notes_status::meeting_banner(s, m, p));
+    if (!m.has_summary() && draft.is_none())
+        || (summary.context.is_empty() && summary.topics.is_empty() && summary.verify.is_empty())
+    {
+        return body.child(notes_status::meeting_banner(s, m, p).unwrap_or_else(|| {
+            roles::READ
+                .wrap("No summary is available for this meeting.", p.soft)
+                .key("meeting-empty-summary")
+        }));
     }
     let mut first = true;
     let mut heading = |label: &str, key, first, p| visit.heading(sections, label, key, first, p);
@@ -928,8 +934,18 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
     .child(crate::ui::memory::settled::meeting_footer(s, m, p).mt(20.0))
 }
 
+pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
+
 pub fn transcript_height(s: &State) -> f32 {
-    (s.pane_h.get() * 0.34).clamp(124.0, 320.0)
+    // Leave room for transcript rows when the time controls wrap on a phone.
+    let time_controls =
+        super::phone(s) && s.meeting_ui.time_open && s.current().is_some_and(Meeting::timed);
+    let minimum = if time_controls {
+        TIME_CONTROLS_MIN_HEIGHT
+    } else {
+        124.0
+    };
+    (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -1428,6 +1444,38 @@ mod tests {
         section_key(&mut rt, Key::Down);
         section_key(&mut rt, Key::Enter);
         section_landed(&rt, "topic-1");
+    }
+
+    #[test]
+    fn opening_go_to_time_leaves_transcript_room_on_a_short_phone() {
+        const ID: &str = "1800000000144-998";
+        crate::test_paths::isolate();
+        let folder = core::meetings_dir().join(ID);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("english-summary.json"), b"{}").unwrap();
+        std::fs::write(
+            folder.join("english-transcript.md"),
+            "[00:00:06.000] Maya (English): Ready?\n[00:00:27.000] Tom (English): Start the review.\n",
+        )
+        .unwrap();
+        let mut rt = reading_page(ID, 360.0, None);
+        rt.update(|s, _| s.toggle_transcript());
+        rt.settle_all();
+        rt.frame(0.0);
+        let [x, y, w, h] = element(&rt, "transcript-time-toggle").rect;
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.settle_all();
+        rt.frame(0.0);
+
+        let is_jump =
+            |e: rune::ElementInfo| e.focusable && e.label.as_deref() == Some("Go to a time");
+        assert!(rt.elements().into_iter().any(is_jump));
+        let scroll = element(&rt, "transcript-scroll").rect;
+        assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
+        let [_, y, _, h] = element(&rt, "transcript-copy").rect;
+        let hide = element(&rt, "meeting-hide-transcript").rect;
+        assert!(scroll[1] + scroll[3] <= y && y + h <= hide[1]);
     }
 
     #[test]

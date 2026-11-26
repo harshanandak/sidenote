@@ -1349,7 +1349,11 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         )
         .child(
             quiet_button("Hide", "live-panel-hide", p)
-                .on_press(|s: &mut State| s.live_toggle_panel()),
+                .label("Hide transcript")
+                .on_press_tx(|s: &mut State, tx| {
+                    s.live_toggle_panel();
+                    tx.focus("meeting-transcript", true);
+                }),
         );
     let note = |text: &str| {
         roles::SMALL
@@ -1383,10 +1387,8 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         c
     } else {
         let mut rows = col().w_full().px(16.0).py(6.0);
-        let mut last: Option<bool> = None;
         for (i, line) in feed.lines.iter().enumerate() {
             if line.text == "Recording resumed" {
-                last = None;
                 rows = rows.child(
                     row().w_full().justify_center().py(8.0).child(
                         roles::META
@@ -1396,8 +1398,8 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                 );
                 continue;
             }
-            let who = (last != Some(line.you)).then_some(line.you);
-            last = Some(line.you);
+            let time = stamp(line.seconds);
+            let elapsed = format!("+{}", time.strip_prefix('0').unwrap_or(&time));
             rows = rows.child(
                 row()
                     .key(format!("live-line-{i}"))
@@ -1405,19 +1407,15 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                     .gap(10.0)
                     .items_start()
                     .py(3.0)
-                    .child(roles::META.wrap(stamp(line.seconds), p.faint).w(46.0))
+                    .child(roles::META.line(elapsed, p.soft).w(44.0))
                     .child(
                         roles::META
                             .bold()
                             .wrap(
-                                match who {
-                                    Some(true) => "You",
-                                    Some(false) => "Others",
-                                    None => "",
-                                },
-                                if who == Some(true) { p.ink } else { p.soft },
+                                if line.you { "You" } else { "Others" },
+                                if line.you { p.ink } else { p.soft },
                             )
-                            .w(48.0),
+                            .w(40.0),
                     )
                     .child(roles::SMALL.wrap(&line.text, p.ink).grow(1.0).min_w(0.0)),
             );
@@ -1486,9 +1484,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
                 .pb(6.0),
         );
     }
-    let hint = if s.live.as_ref().is_some_and(|l| l.phase == Phase::Paused) {
-        "Nothing is recorded while paused."
-    } else if starting {
+    let hint = if starting {
         "Starting the recording. You can start writing now."
     } else {
         "Your notes save as you type. You can generate notes after pausing."
@@ -1569,7 +1565,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
                         })),
                 ),
         );
-    } else {
+    } else if !s.live.as_ref().is_some_and(|l| l.phase == Phase::Paused) {
         c = c.child(roles::META.wrap(hint, p.faint));
     }
     c = c.child(
