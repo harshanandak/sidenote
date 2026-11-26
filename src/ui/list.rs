@@ -562,6 +562,8 @@ mod tests {
 
     fn home_state(meetings: Vec<Meeting>) -> State {
         let mut state = State::new();
+        // Without Hex (as on Windows CI) startup opens Hex setup over the list.
+        state.hex_open = false;
         state.meetings = meetings;
         state.refresh_list();
         state
