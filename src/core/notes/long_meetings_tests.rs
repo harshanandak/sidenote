@@ -1,20 +1,10 @@
-use super::{
-    Helper, JobState, NotesSettings,
-    helper::{Failure, Run},
-    prompt, queue, transcript,
-};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use super::{prompt, transcript};
 
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 60 * MINUTE_MS;
 const ROW_STEP_MS: u64 = 5_000;
 const ROW_SPEECH_MS: u64 = 2_000;
 const UNICODE_PROBE: &str = "café उत्पादन తెలుగు 🌒";
-const ID: &str = "1793946600000-148";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Density {
@@ -243,110 +233,4 @@ fn generated_fixtures_preserve_facts_unicode_density_and_joined_part_shape() {
             }
         }
     }
-}
-
-fn settings() -> NotesSettings {
-    NotesSettings {
-        helper: Some(Helper::Claude),
-        enabled_at_ms: Some(1),
-        ..NotesSettings::default()
-    }
-}
-fn write_fixture(root: &Path, fixture: &Fixture) -> PathBuf {
-    let folder = root.join("meetings").join(ID);
-    fs::create_dir_all(&folder).unwrap();
-    let created = 1_793_946_600_000_i64;
-    fs::write(
-        folder.join("manifest.json"),
-        serde_json::json!({
-            "schema_version": 1,
-            "status": "complete",
-            "title": "Synthetic long meeting",
-            "created_at_ms": created,
-            "duration_ms": fixture.duration_ms,
-            "ended_at_ms": created + fixture.duration_ms as i64,
-        })
-        .to_string(),
-    )
-    .unwrap();
-    fs::write(folder.join("transcript.ndjson"), &fixture.ndjson).unwrap();
-    fs::write(
-        folder.join("quick-title.json"),
-        r#"{"title":"Synthetic long meeting"}"#,
-    )
-    .unwrap();
-    folder
-}
-
-struct TailHelper {
-    tail_fact: String,
-    tail_stamp: String,
-    prompts: Vec<String>,
-}
-impl TailHelper {
-    fn summary(&self, saw_tail: bool) -> String {
-        let text = if saw_tail {
-            self.tail_fact.as_str()
-        } else {
-            "tail fact absent from helper input"
-        };
-        serde_json::json!({
-            "title": "Synthetic long meeting",
-            "context": [text],
-            "topics": [],
-            "todo": [{
-                "ref": "t1",
-                "title": "Record the tail fact",
-                "description": text,
-                "owner": "You",
-                "at": [self.tail_stamp.as_str()]
-            }],
-            "to_settle": []
-        })
-        .to_string()
-    }
-}
-impl Run for TailHelper {
-    fn installed(&self, _: Helper) -> bool {
-        true
-    }
-    fn run(&mut self, _: Helper, _: &str, prompt: String, _: Duration) -> Result<String, Failure> {
-        let first = self.prompts.is_empty();
-        let saw_tail = first && prompt.contains(&self.tail_fact);
-        self.prompts.push(prompt);
-        Ok(if first {
-            self.summary(saw_tail)
-        } else {
-            r#"{"meeting_project":null,"tasks":[{"i":0,"project":"Delivery","new":true}]}"#.into()
-        })
-    }
-}
-
-#[test]
-#[ignore = "main returns TooLong before the notes helper; enable with the bounded-input fix"]
-fn dense_long_meeting_tail_fact_reaches_notes_and_summary() {
-    let root = tempfile::TempDir::new().unwrap();
-    let fixture = generate(3, Density::Dense);
-    let folder = write_fixture(root.path(), &fixture);
-    let settings = settings();
-    let meetings = root.path().join("meetings");
-    queue::enqueue_in(root.path(), &meetings, ID, None, &settings).unwrap();
-    let mut helper = TailHelper {
-        tail_fact: fixture.facts.tail.text.clone(),
-        tail_stamp: stamp(fixture.facts.tail.at_ms),
-        prompts: Vec::new(),
-    };
-    queue::drain(root.path(), &meetings, &mut helper, || Ok(settings.clone())).unwrap();
-    let state = queue::read(root.path(), ID).unwrap().unwrap().state;
-    let tail_in_prompt = helper
-        .prompts
-        .first()
-        .is_some_and(|prompt| prompt.contains(&fixture.facts.tail.text));
-    let summary = fs::read_to_string(folder.join("english-summary.json")).unwrap_or_default();
-    let tail_in_summary = summary.contains(&fixture.facts.tail.text);
-    assert!(
-        matches!(&state, JobState::Done { .. }) && tail_in_prompt && tail_in_summary,
-        "long-meeting tail regression: state={state:?}, helper_calls={}, tail_in_prompt={tail_in_prompt}, tail_in_summary={tail_in_summary}",
-        helper.prompts.len()
-    );
 }

@@ -213,8 +213,6 @@
 
   "src/core/notes/joined.rs": "27f33b5b99b9fbeb08ddf3868de47026a98cd5e2b9c74e694ec9f2942ab9b481",
 
-  "src/core/notes/long_meetings_tests.rs": "67f730039e8d7a6147185ba66c96c9377022935db1ee9dcf6e4717d7dcb40fbf",
-
   "src/core/notes/queue.rs": "c60265324ad52993d7b33ae2debd99be26f94e6402f48a82005f831e8451282b",
 
   "src/core/notes/status_detail.rs": "8c9c642856258caf225a450469d2649ef2801b749d1baa6cc29e236114558dad",
