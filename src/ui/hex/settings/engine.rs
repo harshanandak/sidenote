@@ -4,10 +4,10 @@
 //! validates only that field and a stored value that is already wrong never blocks another edit.
 //! Status lines say where a value came from and whether it is valid. They never print a value
 //! the status did not come from, so nothing a script import rejected can appear here.
-use super::{Page, group_highlight, navigate, panel, row_field_kit, row_icon};
+use super::{Page, group_highlight, navigate, panel, row_field_kit};
 use crate::ui::{
     State, ai_notes,
-    cards::{settings_copy, settings_divider, settings_row, settings_tile},
+    cards::{settings_copy, settings_row},
     roles,
     theme::Palette,
     widgets::{ButtonDisabled, action, row_action},
@@ -626,16 +626,12 @@ fn step_row(
     settings_row(true)
         .key(key)
         .fill(group_highlight(s, key, p))
-        .child(settings_tile(row_icon(key), p))
         .child(copy)
         .child(switch)
 }
 fn steps_card(s: &State, k: &Kit, p: Palette, statuses: &BTreeMap<String, FieldStatus>) -> El {
     let mut rows = col().w_full();
-    for (index, step) in Step::ALL.iter().enumerate() {
-        if index > 0 {
-            rows = rows.child(settings_divider(p));
-        }
+    for step in Step::ALL.iter() {
         rows = rows.child(step_row(s, k, p, *step, statuses));
     }
     if let Some(error) = s.hex.shell.engine.error {
@@ -661,7 +657,6 @@ fn import_row(s: &State, p: Palette) -> El {
     let line = settings_row(true)
         .key(key)
         .fill(group_highlight(s, key, p))
-        .child(settings_tile(row_icon(key), p))
         .child(copy)
         .child(button);
     col()
@@ -721,7 +716,6 @@ fn prompt_row(
     let top = settings_row(true)
         .key(key)
         .fill(group_highlight(s, key, p))
-        .child(settings_tile(row_icon(key), p))
         .child(copy);
     let edit = col().w_full().gap(10.0).px(14.0).pb(14.0);
     col()
@@ -731,14 +725,10 @@ fn prompt_row(
 }
 fn prompts_card(s: &State, k: &Kit, p: Palette, statuses: &BTreeMap<String, FieldStatus>) -> El {
     let mut rows = col().w_full();
-    for (index, field) in Field::PROMPTS
+    for field in Field::PROMPTS
         .iter()
         .filter(|field| field.visible(&s.config))
-        .enumerate()
     {
-        if index > 0 {
-            rows = rows.child(settings_divider(p));
-        }
         rows = rows.child(prompt_row(s, k, p, *field, statuses));
     }
     let engine = &s.hex.shell.engine;
@@ -793,7 +783,6 @@ fn field_row(
     settings_row(true)
         .key(key)
         .fill(group_highlight(s, key, p))
-        .child(settings_tile(row_icon(key), p))
         .child(copy)
         .child(input)
 }
@@ -807,14 +796,7 @@ fn group(
     statuses: &BTreeMap<String, FieldStatus>,
 ) -> El {
     let mut rows = col().w_full();
-    for (index, field) in fields
-        .iter()
-        .filter(|field| field.visible(&s.config))
-        .enumerate()
-    {
-        if index > 0 {
-            rows = rows.child(settings_divider(p));
-        }
+    for field in fields.iter().filter(|field| field.visible(&s.config)) {
         rows = rows.child(field_row(s, k, p, *field, statuses));
     }
     let engine = &s.hex.shell.engine;
@@ -835,7 +817,7 @@ fn group(
         .mt(18.0)
         .key(key)
         .child(roles::GROUP.wrap(title, p.soft))
-        .child(panel(p).child(rows.child(settings_divider(p)).child(footer)))
+        .child(panel(p).child(rows.child(footer)))
 }
 
 /// The notes writer is the existing dev.28 choice. This row shows it and links to where it is
@@ -870,7 +852,6 @@ fn notes_writer(s: &State, p: Palette, statuses: &BTreeMap<String, FieldStatus>)
     let line = settings_row(true)
         .key(key)
         .fill(group_highlight(s, key, p))
-        .child(settings_tile(row_icon(key), p))
         .child(copy)
         .child(control);
     panel(p).child(line)

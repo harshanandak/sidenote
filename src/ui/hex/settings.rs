@@ -431,7 +431,7 @@ pub(crate) fn group_highlight(s: &State, key: &str, p: Palette) -> Color {
         p.bg.alpha(0.0)
     }
 }
-pub(crate) use crate::ui::cards::{icon_tile, panel};
+pub(crate) use crate::ui::cards::panel;
 
 pub(super) fn compact_rows(s: &State) -> bool {
     !matches!(active(s).0, Page::General | Page::Appearance)
@@ -574,7 +574,6 @@ pub(crate) fn setting_row(
         return cards::settings_row(!help.is_empty())
             .key(key)
             .fill(group_highlight(s, key, p))
-            .child(cards::settings_tile(row_icon(key), p))
             .child(copy)
             .child(row_control(s, control));
     }
@@ -582,8 +581,9 @@ pub(crate) fn setting_row(
     crate::ui::cards::row_shell()
         .key(key)
         .flex_wrap()
+        .px(16.0)
+        .py(11.0)
         .fill(group_highlight(s, key, p))
-        .child(icon_tile(row_icon(key), p))
         .child(crate::ui::cards::copy(title, help, p))
         .child(control)
 }
@@ -1675,7 +1675,7 @@ fn hex_rows(
         _ => 6,
     });
     let compact = compact_rows(s);
-    let mut has_row = items.iter().any(|st| {
+    let has_row = items.iter().any(|st| {
         matches!(
             st.key.as_str(),
             "meetings.audio_retention" | "labs.expire_meeting_audio"
@@ -1699,10 +1699,8 @@ fn hex_rows(
             continue;
         }
         body = body
-            .children((compact && has_row).then(|| cards::settings_divider(p)))
             .child(super::setting_row(s, k, st, place(st), p, layer))
             .children((!compact).then(|| hairline(p)));
-        has_row = true;
     }
     body
 }
@@ -1789,21 +1787,17 @@ fn labs(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             Switch::new(s.config.labs.language_detection)
                 .label("Language detection (experimental)").hide_label()
                 .on_toggle(|s: &mut State| save_labs(s, |labs| labs.language_detection = !labs.language_detection)).build(k).key("labs-language-detection-toggle"), true, p)))
-        .children(s.config.features.indic_engine.then(|| cards::settings_divider(p)))
         .child(setting_row(s, "labs-stop-forgotten", "Stop forgotten recordings",
             &format!("If a recording hears no speech for {minutes} minutes, Sidenote stops it so it doesn't run for hours."),
             Switch::new(s.config.labs.stop_forgotten_recordings)
                 .label("Stop forgotten recordings").hide_label()
                 .on_toggle(|s: &mut State| save_labs(s, |labs| labs.stop_forgotten_recordings = !labs.stop_forgotten_recordings)).build(k).key("labs-stop-forgotten-toggle"), true, p))
-        .child(cards::settings_divider(p))
         .child(setting_row(s, "labs-silence-duration", "Stop after no speech for", "Choose 10, 20, 30 or 60 minutes.", duration, false, p))
-        .child(cards::settings_divider(p))
         .child(setting_row(s, "labs-measure-files", "Measure recording files (diagnostics)",
             "Save file sizes, WAV header details and transcript line counts during recordings. No audio or text is saved.",
             Switch::new(s.config.labs.measure_recording_files)
                 .label("Measure recording files (diagnostics)").hide_label()
                 .on_toggle(|s: &mut State| save_labs(s, |labs| labs.measure_recording_files = !labs.measure_recording_files)).build(k).key("labs-measure-files-toggle"), true, p))
-        .children(s.config.features.indic_engine.then(|| cards::settings_divider(p)))
         .children(s.config.features.indic_engine.then(|| setting_row(s, "labs-process-windows", "Process meetings in 5-minute windows (test)",
             "Test calls only. Runs Telugu and Hindi models while recording and saves audio windows, results and timings in Sidenote. May slow live transcription. Your meeting notes stay as they are.",
             Switch::new(s.config.labs.process_meeting_windows)
@@ -1887,7 +1881,7 @@ fn devices(s: &State, k: &Kit, p: Palette) -> El {
         }
     }
     for (device, (count, last)) in peers {
-        out = out.child(cards::settings_divider(p)).child(setting_row(
+        out = out.child(setting_row(
             s,
             &format!("sync-device-{device}"),
             device,
@@ -1897,7 +1891,7 @@ fn devices(s: &State, k: &Kit, p: Palette) -> El {
             p,
         ));
     }
-    out.child(cards::settings_divider(p)).child(
+    out.child(
         roles::SMALL
             .wrap(
                 "Folder sync lists the meetings each device recorded. It does not show whether a device is online.",
@@ -2071,20 +2065,18 @@ fn vocabulary(s: &State, k: &Kit, p: Palette) -> El {
 fn sync_page(s: &State, k: &Kit, p: Palette) -> El {
     let devices = col().w_full().child(settings_card(
         "Devices",
-        devices(s, k, p)
-            .child(cards::settings_divider(p))
-            .child(feature(
-                s,
-                k,
-                AppFeature::OtherDevices,
-                "Other devices",
-                &match s.nav.peers {
-                    0 => "Show meetings recorded on your other devices.".into(),
-                    1 => "1 meeting from another device.".into(),
-                    n => format!("{n} meetings from other devices."),
-                },
-                p,
-            )),
+        devices(s, k, p).child(feature(
+            s,
+            k,
+            AppFeature::OtherDevices,
+            "Other devices",
+            &match s.nav.peers {
+                0 => "Show meetings recorded on your other devices.".into(),
+                1 => "1 meeting from another device.".into(),
+                n => format!("{n} meetings from other devices."),
+            },
+            p,
+        )),
         p,
     ));
     if s.hex.shell.relay.enabled {
@@ -2121,7 +2113,6 @@ fn hex_group(index: usize, body: El) -> El {
 }
 fn hex_group_rows(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, group: usize) -> El {
     let mut body = col().w_full();
-    let mut has_row = false;
     for st in &s.hex.settings {
         if readable::windows_only_hidden(st) || location(st).0 != Page::Hex {
             continue;
@@ -2136,10 +2127,7 @@ fn hex_group_rows(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, group: us
             2
         };
         if index == group {
-            body = body
-                .children(has_row.then(|| cards::settings_divider(p)))
-                .child(super::setting_row(s, k, st, place(st), p, layer));
-            has_row = true;
+            body = body.child(super::setting_row(s, k, st, place(st), p, layer));
         }
     }
     body
@@ -2199,10 +2187,7 @@ fn labs_group(s: &State, p: Palette) -> El {
             continue;
         }
         let mut rows = col().w_full();
-        for (index, (id, _, _)) in members.iter().enumerate() {
-            if index != 0 {
-                rows = rows.child(cards::settings_divider(p));
-            }
+        for (id, _, _) in members.iter() {
             rows = rows.child(lab_row(s, snapshot, id, p));
         }
         out = out.child(
@@ -2341,10 +2326,8 @@ fn hex_summaries(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     );
     if open {
         let mut rows = col().w_full();
-        for (index, st) in settings.into_iter().enumerate() {
-            rows = rows
-                .children((index > 0).then(|| cards::settings_divider(p)))
-                .child(super::setting_row(s, k, st, place(st), p, layer));
+        for st in settings.into_iter() {
+            rows = rows.child(super::setting_row(s, k, st, place(st), p, layer));
         }
         out = out.child(settings_card("Hex · Separate summary engine", rows, p));
     }

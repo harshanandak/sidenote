@@ -1019,7 +1019,6 @@ pub(in crate::ui) fn agents_section(
 ) -> El {
     use super::super::{
         ask_settings::model_menu,
-        cards::settings_divider,
         hex::settings::{row_field_kit, setting_row, short_select_width},
         widgets::row_action,
     };
@@ -1112,7 +1111,6 @@ pub(in crate::ui) fn agents_section(
     }
     let mut body = col().w_full()
         .child(setting_row(s, "annotation-agent-row", "Agent", "Images and words are sent only after Send for note. Image input for OpenCode is not supported in this version.", choices, true, p))
-        .child(settings_divider(p))
         .child(setting_row(s, "annotation-model-row", "Model", "Choose an offered model, or choose Other to enter a model name.", model, true, p));
     if !s.annotations.status.is_empty() {
         body = body.child(
