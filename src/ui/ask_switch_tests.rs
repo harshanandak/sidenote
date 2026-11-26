@@ -1179,10 +1179,8 @@ fn ask_retry_submits_the_failed_question_once() {
         assert_eq!(failed.first(), recording.then_some(&original));
         let visible_draft = if recording { draft } else { STOP_QUESTION };
         assert_eq!(rt.state.question.text, visible_draft);
-        assert_eq!(
-            rt.state.ask_key(),
-            if all { core::ALL_KEY } else { MEETING }
-        );
+        let expected_scope = if all { core::ALL_KEY } else { MEETING };
+        assert_eq!(rt.state.ask_key(), expected_scope);
         assert_eq!(rt.find("ask-retry").is_some(), !all);
         if !draft.is_empty() {
             assert!(!element(&rt, "ask-retry").focusable);
@@ -1193,6 +1191,7 @@ fn ask_retry_submits_the_failed_question_once() {
                 s.question = TextEdit::default();
             }
         });
+        rt.settle_all();
         rt.frame(0.0);
         tap(&mut rt, "ask-retry");
         assert!(rt.state.asks.contains_key(MEETING));
@@ -1202,6 +1201,8 @@ fn ask_retry_submits_the_failed_question_once() {
             assert_eq!(rt.state.asks[MEETING].submitted_message_id, original.id);
         }
         finish_answer(&mut rt);
+        rt.settle_all();
+        rt.frame(0.0);
         assert_no_ask_alert(&rt);
     }
 }
