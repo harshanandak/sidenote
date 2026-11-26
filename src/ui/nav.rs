@@ -22,6 +22,7 @@ pub const COLLAPSE_AT: f32 = 820.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
+    Home,
     Companies,
     Meetings,
     Annotations,
@@ -77,6 +78,8 @@ impl State {
             Page::Check
         } else if self.on_hex() {
             Page::Hex
+        } else if self.view == View::Home && self.selected.is_none() && !self.on_live() {
+            Page::Home
         } else {
             Page::Meetings
         }
@@ -142,7 +145,7 @@ impl State {
         {
             return;
         }
-        self.go_home();
+        self.reset_navigation();
         if matches!(filter, Filter::Area(_)) {
             self.areas.show_all = false;
         }
@@ -327,14 +330,26 @@ fn places(s: &State, p: Palette) -> (Vec<Place>, Option<Place>) {
     let proposals = s.memory.proposals.len();
     let high = s.check.latest.high;
     let mut places = vec![Place {
+        key: "nav-home",
+        name: "Home",
+        help: "Home".into(),
+        active: page == Page::Home,
+        icon: icons::HOME,
+        flag: None,
+        press: |s| {
+            s.go_home();
+            s.nav_done();
+        },
+    }];
+    places.push(Place {
         key: "nav-meetings",
         name: "Meetings",
         help: "Meetings".into(),
         active: page == Page::Meetings && s.filter == Filter::All,
         icon: &icons::MEETINGS,
         flag: None,
-        press: |s| s.go_meetings(),
-    }];
+        press: State::go_meetings,
+    });
     if features.tasks {
         places.push(Place {
             key: "view-tasks",
@@ -1343,7 +1358,7 @@ mod tests {
         s.nav.peers = 1;
         let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
-        let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
+        let expected = "Home, Meetings, Tasks, People, Memory, Annotations, Diary";
         // S1 sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
@@ -1351,6 +1366,7 @@ mod tests {
         );
 
         let glyphs = [
+            "solar-home-smile",
             "solar-document",
             "solar-check-circle",
             "solar-users-group-rounded",
@@ -1375,7 +1391,7 @@ mod tests {
         let (places, _) = places(&state, super::super::theme::palette(true));
         assert_eq!(
             places.iter().map(|place| place.name).collect::<Vec<_>>(),
-            ["Meetings", "Tasks"]
+            ["Home", "Meetings", "Tasks"]
         );
     }
 }

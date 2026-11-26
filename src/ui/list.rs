@@ -491,6 +491,7 @@ mod tests {
     fn home_names_the_failed_step_beside_retry() {
         crate::test_paths::isolate();
         let mut state = State::new();
+        state.go_meetings(); // Startup moved from Meetings to Home; exercise the Meetings list here.
         let meeting = fixture();
         let action_key = format!("notes-list-action-{}", meeting.id);
         let root = tempfile::tempdir().unwrap();
@@ -723,6 +724,7 @@ mod tests {
         crate::test_paths::isolate();
         let detect = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        state.go_meetings(); // Startup moved from Meetings to Home; exercise the Meetings list here.
         crate::ui::hex::SKIP_INSTALL_DETECT.set(detect);
         crate::ui::scene_agents(&mut state, &["codex"]);
         let meeting = fixture();

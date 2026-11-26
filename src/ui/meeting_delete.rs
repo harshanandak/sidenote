@@ -344,7 +344,7 @@ impl State {
         self.tasks.items_changed();
         if self.selected.is_some() && self.current().is_none() {
             if current {
-                self.go_home();
+                self.reset_navigation();
             } else {
                 self.selected = None;
                 self.saved = Default::default();
@@ -607,7 +607,7 @@ mod tests {
     }
 
     fn runtime(mut state: State) -> Runtime<State> {
-        state.go_home();
+        state.go_meetings();
         state.delete_ui.enabled_in_fixture = true;
         wait_tasks(&mut state);
         let mut rt = Runtime::with_text(
@@ -771,7 +771,7 @@ mod tests {
         tap(&mut rt, "delete-cancel");
         assert_eq!(rt.state.current().unwrap().id, id);
         rt.update(|s, _| {
-            s.go_home();
+            s.go_meetings();
             s.search = rune::TextEdit::new(TITLE);
             s.refresh_list();
         });

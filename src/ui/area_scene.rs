@@ -114,7 +114,7 @@ fn proof(s: &mut State) {
     fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"activity_runs_on_worker":true,"preview_apply_undo_run_on_workers":true,"ui_returns_while_workers_held":true,"repeat_clicks_ignored":true,"undo_restores_area_view":true,"refresh_coalesced":true,"project_edits_blocked_while_pending":true,"unreadable_running_marker_does_not_fail_refresh":true})).unwrap()).unwrap();
 }
 pub fn scene(s: &mut State, kind: &str) {
-    s.go_home();
+    s.go_meetings();
     wait(s);
     if kind == "refresh-error" {
         let device = s.tasks.store.root.join("device.json");

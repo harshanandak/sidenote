@@ -1326,7 +1326,7 @@ pub fn section(s: &State, k: &Kit, p: Palette, part: Part) -> El {
     c
 }
 pub fn setup_visible(s: &State) -> bool {
-    s.view == super::tasks::View::Meetings
+    (s.on_hex() || s.view == super::tasks::View::Meetings)
         && s.selected.is_none()
         && (!s.on_hex() || s.hex.section == super::hex::Section::Connect)
         && !s.on_memory()
