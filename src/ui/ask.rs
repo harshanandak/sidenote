@@ -535,6 +535,8 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
         ("What did I miss", SUGGESTIONS)
     } else if s.ask_meeting_id().is_some() {
         ("What did we decide?", SUGGESTIONS)
+    } else if s.page() == super::nav::Page::Home && !s.on_live() {
+        ("What's on my plate this week?", ask_all::SUGGESTIONS)
     } else {
         ("List my tasks", ask_all::SUGGESTIONS)
     }
