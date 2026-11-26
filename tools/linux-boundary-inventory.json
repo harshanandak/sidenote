@@ -431,6 +431,8 @@
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
+  "src/ui/icons.rs": "f61bc8ca7cf8249e38377d485279dfb7a754cfb636ed0331ce64dfcf4de42068",
+
   "src/ui/idle_cpu.rs": "e0d44a4a2aa72668e127baf5f100e1ad6267971c73ce46230d279701e94b27f0",
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
@@ -441,9 +443,9 @@
 
   "src/ui/meeting_delete.rs": "5f5f1662ecba8afe9172cc84ea7c401ff4b7fc79d76393dc4fa11d42d2e60c6c",
 
-  "src/ui/memory.rs": "7414eb22f15f02acfbd80d3595c000712abe5b8c905832b7daa6777fa6a110e6",
+  "src/ui/memory.rs": "271cd5370c09e4d49c2d3f0b1cf7d187909d8778d72f1c4ce0d4e34386f133a8",
 
-  "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
+  "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
   "src/ui/mod.rs": "3e75fafac24763644e78cb993dade070d6d1b92b0ac6aad62ffc6cb5432660ec",
 

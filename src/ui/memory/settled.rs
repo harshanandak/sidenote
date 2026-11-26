@@ -333,8 +333,8 @@ mod tests {
             (change::Icon::Date, "lucide-calendar"),
             (change::Icon::Project, "lucide-folder"),
             (change::Icon::Team, "lucide-users-round"),
-            (change::Icon::Waiting, "lucide-hourglass"),
-            (change::Icon::Ours, "lucide-circle-check"),
+            (change::Icon::Waiting, "solar-hourglass"),
+            (change::Icon::Ours, "solar-check-circle"),
         ] {
             assert_eq!(change_icon(kind).name, name);
         }

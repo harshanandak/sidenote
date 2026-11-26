@@ -391,7 +391,13 @@ fn row_states_draw_glyphs_without_pills_and_borders() {
     ] {
         let item = by_key(key);
         assert_eq!(item.fill, fill, "{key}");
-        let icon = format!("lucide-{icon}");
+        let icon = match icon {
+            "circle-check" => "check-circle",
+            "circle-pause" => "pause-circle",
+            "circle-dashed" => "question-circle",
+            _ => icon,
+        };
+        let icon = format!("solar-{icon}");
         let glyph = nodes.iter().any(|n| {
             n.path.starts_with(&item.path)
                 && n.trace_name == Some(icon.as_str())
