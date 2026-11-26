@@ -1128,6 +1128,204 @@ fn late_status_replies_do_not_renew_recording_freshness() {
     }
 }
 
+fn control(pause: bool, state: &mut State) {
+    if pause {
+        state.meeting_pause();
+    } else {
+        state.hex_record_stop(recording_id(state));
+    }
+}
+
+fn finish_control(state: &mut State) {
+    Fixture::finish(state);
+    Fixture::stop_status(state);
+    assert!(!state.hex_stop_pending());
+    assert!(!state.hex_recording());
+}
+
+#[test]
+fn stop_and_pause_reach_hex_when_session_save_failed() {
+    if isolated_api_test("stop_and_pause_reach_hex_when_session_save_failed") {
+        return;
+    }
+    use sidenote::core;
+    for pause in [false, true] {
+        let (api, mut state, _) = Fixture::start();
+        let part = core::meetings_dir().join("100-1");
+        std::fs::create_dir_all(&part).unwrap();
+        std::fs::write(part.join("manifest.json"), r#"{"status":"recording"}"#).unwrap();
+        let local = core::state_dir().join("local");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("meeting-parts"), []).unwrap();
+        state.open_live();
+        state.parts_sync();
+        assert!(state.live.as_ref().unwrap().session.is_none());
+        assert_eq!(
+            state.hex.error,
+            Some("Could not save meeting parts. Pause is unavailable.")
+        );
+
+        control(pause, &mut state);
+        finish_control(&mut state);
+        api.assert_stops(1);
+    }
+}
+
+#[test]
+fn stop_and_pause_send_no_stop_when_idle() {
+    if isolated_api_test("stop_and_pause_send_no_stop_when_idle") {
+        return;
+    }
+    let (api, mut state, _) = Fixture::start_idle();
+    for pause in [false, true] {
+        control(pause, &mut state);
+        assert!(!state.hex_record_busy());
+    }
+    api.assert_stops(0);
+}
+
+#[test]
+fn stop_and_pause_each_send_one_stop_while_recording() {
+    if isolated_api_test("stop_and_pause_each_send_one_stop_while_recording") {
+        return;
+    }
+    for pause in [false, true] {
+        let (api, mut state, _) = Fixture::start();
+        assert!(state.hex_recording());
+        control(pause, &mut state);
+        finish_control(&mut state);
+        api.assert_stops(1);
+    }
+}
+
+#[test]
+fn stop_and_pause_reach_hex_while_notes_are_busy() {
+    if isolated_api_test("stop_and_pause_reach_hex_while_notes_are_busy") {
+        return;
+    }
+    use sidenote::core::{self, notes};
+    for pause in [false, true] {
+        let (api, mut state, _) = Fixture::start();
+        let jobs = core::state_dir().join("local/notes-jobs");
+        std::fs::create_dir_all(&jobs).unwrap();
+        std::fs::write(
+            jobs.join("100-1.json"),
+            r#"{"state":"running","attempts":1,"updated_at":0,"model":"","instructions":"default","message":""}"#,
+        )
+        .unwrap();
+        assert_eq!(notes::status("100-1"), Some(notes::JobState::Running));
+        control(pause, &mut state);
+        finish_control(&mut state);
+        api.assert_stops(1);
+        assert_eq!(notes::status("100-1"), Some(notes::JobState::Running));
+    }
+}
+
+#[test]
+fn pending_stop_coalesces_stop_and_pause() {
+    if isolated_api_test("pending_stop_coalesces_stop_and_pause") {
+        return;
+    }
+    for pause in [false, true] {
+        let (api, mut state, _) = Fixture::start();
+        api.data.lock().unwrap().commands.clear();
+        let (arrived, release) = api.hold_stop();
+        control(pause, &mut state);
+        arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(state.hex_stop_pending());
+        control(false, &mut state);
+        control(true, &mut state);
+        api.assert_stops(1);
+        let (drained, read) = std::sync::mpsc::channel();
+        assert!(state.live_work(move || drained.send(()).unwrap()));
+        release.send(()).unwrap();
+        read.recv_timeout(Duration::from_secs(5)).unwrap();
+        finish_control(&mut state);
+        api.assert_stops(1);
+        assert_eq!(
+            api.data.lock().unwrap().commands,
+            ["status", "meeting-stop", "status"]
+        );
+    }
+}
+
+#[test]
+fn refused_stop_allows_retry_without_arming_notes() {
+    if isolated_api_test("refused_stop_allows_retry_without_arming_notes") {
+        return;
+    }
+    use sidenote::core::{self, meeting_parts, notes};
+    let (api, mut state, _) = Fixture::start();
+    let part = core::meetings_dir().join("100-1");
+    std::fs::create_dir_all(&part).unwrap();
+    let manifest = part.join("manifest.json");
+    std::fs::write(&manifest, r#"{"status":"recording","duration_ms":1000}"#).unwrap();
+    std::fs::write(
+        part.join("transcript.ndjson"),
+        r#"{"start_ms":0,"end_ms":1000,"text":"Synthetic part","source":"microphone"}"#,
+    )
+    .unwrap();
+    state.hex_apply(Msg::ObservedStatus(command_status_sample(&state)));
+    assert!(state.live.as_ref().unwrap().session.is_some());
+    api.data.lock().unwrap().stop_busy = true;
+
+    for (pause, count) in [(false, 1), (true, 2)] {
+        control(pause, &mut state);
+        Fixture::finish(&mut state);
+        api.assert_stops(count);
+        assert!(!state.hex_stop_pending());
+        assert!(state.hex_recording());
+    }
+    state.parts_paused();
+    state.meeting_generate();
+    Fixture::finish(&mut state);
+    api.assert_stops(3);
+    assert!(!state.hex_stop_pending());
+    assert!(!state.live.as_ref().unwrap().generate_after_pause);
+
+    std::fs::write(&manifest, r#"{"status":"complete","duration_ms":1000}"#).unwrap();
+    api.data.lock().unwrap().stop_busy = false;
+    state.meeting_pause();
+    finish_control(&mut state);
+    api.assert_stops(4);
+    let saved = meeting_parts::read(&core::state_dir(), "100-1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.requested_parts, 0);
+    assert_eq!(notes::status("100-1"), None);
+}
+
+#[test]
+fn late_stop_reply_preserves_newer_hex_status() {
+    if isolated_api_test("late_stop_reply_preserves_newer_hex_status") {
+        return;
+    }
+    for pause in [false, true] {
+        let (api, mut state, _) = Fixture::start();
+        api.data.lock().unwrap().stop_state = Some("transcribing");
+        let (arrived, release) = api.hold_stop();
+        control(pause, &mut state);
+        arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+        let newer = command_status_sample(&state);
+        state.hex_apply(Msg::ObservedStatus(newer));
+        assert!(!state.hex_recording());
+        release.send(()).unwrap();
+        Fixture::finish(&mut state);
+        assert_eq!(state.hex.state().unwrap().meeting_state, "transcribing");
+        Fixture::stop_status(&mut state);
+        assert!(state.hex_stop_pending());
+        control(false, &mut state);
+        control(true, &mut state);
+        api.assert_stops(1);
+
+        api.data.lock().unwrap().meeting_state = None;
+        state.hex_apply(Msg::ObservedStatus(command_status_sample(&state)));
+        Fixture::stop_status(&mut state);
+        assert!(!state.hex_stop_pending());
+        api.assert_stops(1);
+    }
+}
+
 #[test]
 fn successful_snapshot_expires_without_another_poll() {
     if isolated_api_test("successful_snapshot_expires_without_another_poll") {
