@@ -73,7 +73,10 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
           RELEASE_ASSETS: ${{ runner.temp }}/sidenote-release
-        run: ./tools/release_ci.ps1 -OutputDirectory $env:RELEASE_ASSETS
+        run: |
+          # Spectre injects ANSI into vpk help on Actions, including when the packer captures it.
+          $env:GITHUB_ACTIONS = $null
+          ./tools/release_ci.ps1 -OutputDirectory $env:RELEASE_ASSETS
       # Preparation builds distribute unsigned packages through Actions only.
       - name: Upload validated packages
         if: steps.package.outcome == 'success'
