@@ -35,9 +35,9 @@
 
   "src/core/annotations/generation.rs": "6df3a5b2f6edc7e5a7d35c39458c5e099b8dba53a0681fb1819c153431cfc974",
 
-  "src/core/annotations/media.rs": "50f497f4c6d6e9666e3aa832ff151c02d3b95596a8e978e9324dddb8e1e55cfa",
+  "src/core/annotations/media.rs": "60c22e79537d36dfbc24a577c042e3ce8679e4a38212d95c4e602dc631315b7a",
 
-  "src/core/annotations/mod.rs": "a65864b66854289be199d770f313a8e53611eb9d3eb80d040a3aa1815416d389",
+  "src/core/annotations/mod.rs": "43a5826728ee08fa3c54cede459ad6c04222478f86daf8aac97484a7681f55d1",
 
   "src/core/annotations/note.rs": "fd948e045a966d55b23c427f6e63181935d5caefde9a4080ce792b0b55899ff3",
 
@@ -47,7 +47,7 @@
 
   "src/core/annotations/share.rs": "f2fb84ec62413ca2c3994e410a0186366ecd91934aded9dd1791579b9cc68307",
 
-  "src/core/annotations/tests.rs": "24896c5559e58b408557651c2e13d091a2dd869bd4c523eb3112dd88b2731f01",
+  "src/core/annotations/tests.rs": "6e9d6893290b81b59310f83b47b2609724b3cb70a3ed6900a3d4c2dbe0212db9",
 
   "src/core/area_ops.rs": "7e9116623a9e190a24827f7d1b5be4480ada18959e22ff84c4df9bee087c314d",
 
@@ -393,7 +393,7 @@
 
   "src/ui/ai_notes.rs": "3bef66267f56d436c8348d33915eb599740707e19e2c252386ad0d7355997839",
 
-  "src/ui/annotations.rs": "e8913a6e98da0bca092852e5f3b5ff0db4eb1237630594106f084470d7bb146e",
+  "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
 
   "src/ui/annotations/notebooks.rs": "b01a26b59d7c308ea9b6b071ff7c93afab8271d55ddfb4fe616c76411616645d",
 
