@@ -948,6 +948,22 @@ pub fn transcript_height(s: &State) -> f32 {
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
+fn transcript_min_height() -> f32 {
+    // Measure the chrome after flex wrapping so the viewport keeps room at any toolbar width.
+    let chrome: f32 = [
+        "transcript-header",
+        "transcript-toolbar",
+        "transcript-top-rule",
+        "transcript-bottom-rule",
+        "transcript-footer",
+        "meeting-hide-transcript",
+    ]
+    .into_iter()
+    .filter_map(|key| rune::memo::layout_with(key, |rect| rect[3]))
+    .sum();
+    chrome + 56.0
+}
+
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let Some(m) = s.current() else {
         return col();
@@ -1044,7 +1060,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                         .key("meeting-transcript-surface")
                         .w_full()
                         .h(transcript_height(s))
-                        .min_h(0.0)
+                        .min_h(transcript_min_height())
                         .shrink()
                         .radius(14.0)
                         .clip_rounded(14.0)
@@ -1205,16 +1221,26 @@ mod tests {
     }
 
     fn reading_page(id: &str, width: f32, session: Option<live::Live>) -> Runtime<State> {
+        reading_page_at(Some(id), (width, 600.0), session)
+    }
+
+    fn reading_page_at(
+        id: Option<&str>,
+        size: (f32, f32),
+        session: Option<live::Live>,
+    ) -> Runtime<State> {
+        let detect = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        crate::ui::hex::SKIP_INSTALL_DETECT.set(detect);
         state.meeting_ui.tabs = false;
         crate::ui::scene_agents(&mut state, &["codex"]);
-        state.selected = Some(id.into());
+        state.selected = id.map(str::to_owned);
         state.live = session;
         state.load_saved();
         let mut rt = Runtime::with_text(
             state,
             view,
-            (width, 600.0),
+            size,
             Env::default(),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
         );
@@ -1476,6 +1502,134 @@ mod tests {
         let [_, y, _, h] = element(&rt, "transcript-copy").rect;
         let hide = element(&rt, "meeting-hide-transcript").rect;
         assert!(scroll[1] + scroll[3] <= y && y + h <= hide[1]);
+    }
+
+    fn citation_on_short_reading_page(width: f32, from_ask: bool) {
+        use std::fmt::Write;
+
+        let id = format!(
+            "1800000000147-{}",
+            match (width == 360.0, from_ask) {
+                (true, false) => 1,
+                (false, false) => 2,
+                (true, true) => 3,
+                (false, true) => 4,
+            }
+        );
+        crate::test_paths::isolate();
+        let folder = core::meetings_dir().join(&id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("english-summary.json"),
+            r#"{"title":"Workshop","topics":[{"title":"Venue","points":[{"type":"decided","text":"Book the hall.","at":["00:27"]}]}]}"#,
+        )
+        .unwrap();
+        let mut transcript = String::new();
+        for second in 0..55 {
+            let words = if second == 27 {
+                "Book the hall."
+            } else {
+                "Discuss the workshop."
+            };
+            writeln!(
+                transcript,
+                "[00:00:{second:02}.000] Maya (English): {words}"
+            )
+            .unwrap();
+        }
+        std::fs::write(folder.join("english-transcript.md"), transcript).unwrap();
+        let routed = core::state_dir().join("local/transcripts").join(&id);
+        std::fs::create_dir_all(&routed).unwrap();
+        std::fs::write(
+            routed.join("transcript.segments.v1.json"),
+            serde_json::json!({
+                "schema": "transcript.segments.v1",
+                "experimental": false,
+                "input_checksum": "",
+                "segments": [{
+                    "start": 27.0, "end": 28.0, "route": "en", "lang": "en",
+                    "text_original": "Book the hall.", "english_reading": "Book the hall.",
+                    "provider": "fixture", "model": "fixture", "status": "ok",
+                    "sources": [], "translate": false,
+                }],
+                "english_reading": "Book the hall.",
+                "wall_seconds": 0,
+                "warnings": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut rt = reading_page_at((!from_ask).then_some(id.as_str()), (width, 480.0), None);
+        if from_ask {
+            rt.update(|s, _| {
+                s.saved.messages.push(core::Message {
+                    role: "assistant".into(),
+                    text: format!("[[{id}@00:27]]"),
+                    ..Default::default()
+                });
+            });
+            rt.settle_all();
+            rt.frame(0.0);
+            let [x, y, w, h] = element(&rt, &format!("cite:{id}@00:27")).visible;
+            assert!(w > 0.0 && h > 0.0, "Ask citation must be visible");
+            rt.pointer_down(x + w / 2.0, y + h / 2.0);
+            rt.pointer_up(x + w / 2.0, y + h / 2.0);
+            rt.settle_all();
+            rt.frame(0.0);
+        } else {
+            section_focus(&mut rt, "meeting-source-pt-0-0");
+            section_key(&mut rt, Key::Text(" ".into()));
+        }
+
+        assert!(rt.state.transcript_open);
+        assert!(!rt.state.meeting_ui.time_open);
+        assert_eq!(rt.state.highlight, Some(27));
+        let search = element(&rt, "transcript-filter").rect;
+        let language = element(&rt, "transcript-language-view").rect;
+        let time = element(&rt, "transcript-time-toggle").rect;
+        assert_eq!(language[1].max(time[1]) > search[1], width == 360.0);
+        let scroll = element(&rt, "transcript-scroll").rect;
+        assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
+        let words = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.key.as_deref() == Some("transcript-words")
+                    && e.text.as_deref() == Some("Book the hall.")
+            })
+            .expect("cited transcript text");
+        assert_eq!(words.visible, words.rect, "Cited text: {words:?}");
+        let [x, y, w, h] = element(&rt, "meeting-transcript-surface").rect;
+        for key in ["transcript-copy", "meeting-hide-transcript"] {
+            let control = element(&rt, key);
+            let [left, top, width, height] = control.rect;
+            assert!(
+                left >= x && top >= y && left + width <= x + w && top + height <= y + h,
+                "{key} is outside the transcript surface"
+            );
+            assert_eq!(control.visible, control.rect, "{key} is clipped");
+        }
+    }
+
+    #[test]
+    fn summary_source_keeps_transcript_room_on_short_phone() {
+        citation_on_short_reading_page(360.0, false);
+    }
+
+    #[test]
+    fn summary_source_keeps_transcript_room_on_short_desktop() {
+        citation_on_short_reading_page(1334.0, false);
+    }
+
+    #[test]
+    fn ask_citation_keeps_transcript_room_on_short_phone() {
+        citation_on_short_reading_page(360.0, true);
+    }
+
+    #[test]
+    fn ask_citation_keeps_transcript_room_on_short_desktop() {
+        citation_on_short_reading_page(1334.0, true);
     }
 
     #[test]

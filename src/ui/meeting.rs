@@ -308,7 +308,7 @@ impl State {
             center: true,
             left: 3,
         });
-        tx.scroll_key_to(format!("line-{line}"), self.panel_offset());
+        self.scroll_to_centered_target(format!("line-{line}"), tx);
     }
 }
 
@@ -592,7 +592,7 @@ fn transcript_lines(s: &State, m: &Meeting, p: Palette) -> (El, usize) {
                     .child(roles::META.line(super::widgets::recording_time(&line.at), p.faint));
             }
             let bubble = words
-                .child(body)
+                .child(body.key("transcript-words"))
                 .padding(10.0)
                 .radius(10.0)
                 .max_w((page_w(s) - 2.0 * gutter(s)).min(COLUMN) * 0.86)
@@ -694,6 +694,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
         .grow(1.0)
         .min_w(0.0);
     let mut tools = row()
+        .key("transcript-toolbar")
         .w_full()
         .flex_wrap()
         .gaps(8.0, 8.0)
@@ -780,6 +781,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
         8.0
     };
     let foot = row()
+        .key("transcript-footer")
         .w_full()
         .items_center()
         .gap(8.0)
@@ -839,9 +841,9 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
     }
     frame = frame
         .child(tools)
-        .child(hairline(p))
+        .child(hairline(p).key("transcript-top-rule"))
         .child(scroll(lines, "transcript-scroll"))
-        .child(hairline(p))
+        .child(hairline(p).key("transcript-bottom-rule"))
         .child(foot);
     // Covering the page, the floating Ask bar sits over the panel's bottom edge. Keep the foot
     // above it.
