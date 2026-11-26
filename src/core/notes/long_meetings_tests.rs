@@ -97,7 +97,7 @@ fn filler(row: usize, words: usize) -> String {
         .map(|word| TERMS[(row + word) % TERMS.len()])
         .collect::<Vec<_>>()
         .join(" ");
-    let probe = if row % 19 == 0 {
+    let probe = if row.is_multiple_of(19) {
         format!(" {UNICODE_PROBE}")
     } else {
         String::new()
@@ -172,7 +172,7 @@ fn line_ms(line: &str) -> u64 {
         .map(|(stamp, _)| stamp)
         .unwrap();
     let mut pieces = stamp
-        .split(|c| c == ':' || c == '.')
+        .split([':', '.'])
         .map(|piece| piece.parse::<u64>().unwrap());
     pieces.next().unwrap() * 3_600_000
         + pieces.next().unwrap() * 60_000
