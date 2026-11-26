@@ -2326,7 +2326,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
             }
             true
         }
-        // Escape steps back from a meeting to the meetings list.
+        // Escape steps back from a meeting to the home list.
         Key::Escape if !home => {
             s.reset_navigation();
             true

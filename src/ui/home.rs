@@ -149,7 +149,9 @@ mod tests {
         use super::super::{nav::Filter, tasks::View, view};
         use rune::{Env, Runtime, text::TextSystem};
         crate::test_paths::isolate();
-        let s = State::new();
+        let mut s = State::new();
+        // Without Hex (as on Windows CI) startup opens Hex setup over the Home default.
+        s.hex_open = false;
         assert!(s.page() == Page::Home);
         s.sidebar_open.set(true);
         let mut rt = Runtime::with_text(
