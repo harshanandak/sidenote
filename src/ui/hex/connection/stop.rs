@@ -60,7 +60,7 @@ impl State {
         }
         let refused = matches!(error, HexError::Unsupported)
             || matches!(error, HexError::Failed { code: Some(code), .. }
-                if matches!(code.as_str(), "recording-changed" | "not-recording"));
+                if matches!(code.as_str(), "recording-changed" | "not-recording" | "busy"));
         let status = self.hex.status.as_ref().and_then(|r| r.as_ref().ok());
         if status.is_some_and(terminal) {
             self.hex_complete_stop(recording);
