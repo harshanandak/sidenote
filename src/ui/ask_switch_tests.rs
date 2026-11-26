@@ -1362,8 +1362,11 @@ fn at_390_wide_the_ask_header_keeps_clear_off_the_edge_and_the_page_fades_out() 
         |rt: &Runtime<State>, key: &str| rt.presented(key).unwrap_or_else(|| panic!("{key}")).0;
     let (overlay, thread) = (rect(&rt, "ask-overlay"), rect(&rt, "ask-thread"));
     assert_eq!(
-        (thread[0], overlay[0] + overlay[2] - (thread[0] + thread[2])),
-        (16.0, 0.0),
+        (
+            thread[0] - overlay[0],
+            overlay[0] + overlay[2] - (thread[0] + thread[2])
+        ),
+        (16.0, 16.0),
         "the panel keeps the 16 px gutter on both sides"
     );
     let (caption, hide, clear) = (
@@ -1381,7 +1384,7 @@ fn at_390_wide_the_ask_header_keeps_clear_off_the_edge_and_the_page_fades_out() 
         "the caption runs under Hide or Clear"
     );
     let scroll = rect(&rt, "meeting-scroll");
-    assert!(scroll[1] + scroll[3] <= overlay[1]);
+    assert_eq!(scroll[1] + scroll[3], overlay[1] + overlay[3]);
     assert!(rt.find("meeting-scroll-fade").is_none());
 }
 
@@ -1390,18 +1393,38 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     if in_parent("the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat") {
         return;
     }
-    let mut rt = page();
-    rt.update(|s, _| scene_agents(s, ALL_AGENTS));
-    rt.frame(0.0);
-    assert!(rt.find("runner-menu").is_none());
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with(DEFAULT_SIZE, || {
+        let mut runner = core::list_runners()
+            .unwrap()
+            .into_iter()
+            .find(|runner| runner.name == "Codex")
+            .unwrap();
+        let executable = core::state_dir().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        runner.program = executable.to_str().unwrap().into();
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&[runner]).unwrap(),
+        )
+        .unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
     for context in ["meeting", "new chat", "live screen"] {
-        if context == "new chat" {
-            rt.update(|s, _| s.selected = None);
-        } else if context == "live screen" {
-            rt.update(|s, _| scene_live(s, "", &[], false));
-        }
+        rt.update(|s, _| {
+            if context == "new chat" {
+                s.go_meetings();
+            } else if context == "live screen" {
+                scene_live(s, "", &[], false);
+                s.reload_runners();
+            }
+        });
+        rt.settle_all();
         rt.frame(0.0);
+        assert!(rt.find("ask-options-menu").is_none(), "{context}");
         tap(&mut rt, "ask-options");
+        rt.settle_all();
+        rt.frame(0.0);
         let model = rt
             .elements()
             .into_iter()
@@ -1415,9 +1438,9 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             })
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
+        assert!(rt.state.runner_open, "{context}");
         assert!(rt.find("runner-menu").is_some(), "{context}");
         rt.update(|s, _| s.runner_open = false);
-        rt.frame(0.0);
     }
 }
 
@@ -1427,34 +1450,37 @@ fn meeting_ticks_keep_the_all_meetings_chat() {
         return;
     }
     let mut rt = page_with_tasks(DEFAULT_SIZE);
-    let all = core::ALL_KEY;
-    let global = Message {
+    let message = Message {
         role: "user".into(),
         text: "Across meetings".into(),
         ..Default::default()
     };
     rt.update(|s, _| {
         s.meeting_ui.tabs = true;
-        s.store.append_message(all, global.clone()).unwrap();
+        s.store.append_message(core::ALL_KEY, message).unwrap();
     });
+    let global = rt.state.store.load(core::ALL_KEY).unwrap().messages;
     rt.frame(0.0);
-    tap(&mut rt, "tick-0");
-    wait_for_tick(&mut rt, 0, true);
+    let tick = |rt: &mut Runtime<State>, index| {
+        let task = element(rt, &format!("tick-{index}")).label.unwrap();
+        rt.update(|s, _| s.toggle_task(&task));
+        wait_for_tick(rt, index, true);
+    };
+    tick(&mut rt, 0);
     assert!(!rt.state.saved.checked.is_empty());
     assert_eq!(rt.state.saved.checked, rt.state.tasks.checked[MEETING]);
     let checked = element(&rt, "tick-0").fill;
     rt.update(|s, _| s.set_ask_scope(true));
     rt.frame(0.0);
     assert_eq!(element(&rt, "tick-0").fill, checked);
-    tap(&mut rt, "tick-1");
-    wait_for_tick(&mut rt, 1, true);
+    tick(&mut rt, 1);
     assert_eq!(element(&rt, "tick-1").fill, checked);
-    assert_eq!(rt.state.saved.messages, [global.clone()]);
-    rt.update(|s, _| s.move_card(MEETING, 2, core::BoardColumn::Done));
+    assert_eq!(rt.state.saved.messages, global);
+    rt.update(|s, _| s.toggle_row(MEETING, 2));
     wait_for_tick(&mut rt, 2, true);
     assert_eq!(element(&rt, "tick-2").fill, checked);
-    assert_eq!(rt.state.ask_key(), all);
-    assert_eq!(rt.state.saved.messages, [global]);
+    assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+    assert_eq!(rt.state.saved.messages, global);
 }
 
 #[test]
@@ -1466,9 +1492,12 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         let mut rt = page_at(size);
         rt.update(|s, _| {
             scene_agents(s, ALL_AGENTS);
+            super::live::parts_scene(s, "paused");
             s.ask_open = true;
         });
         rt.frame(0.0);
+        assert!(rt.find("meeting-resume").is_some());
+        assert!(rt.find("meeting-generate").is_some());
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
         let chip = |rt: &Runtime<State>| element(rt, "ask-prompt").label.unwrap();
         assert_eq!(rt.state.ask_key(), MEETING);
@@ -2032,7 +2061,6 @@ fn retiring_memory_shares_the_wait_between_two_contended_locks() {
     );
 }
 
-/// The dock lines up with the notes column and its prompt sits above it.
 fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     if in_parent(name) {
         return;
@@ -2078,7 +2106,7 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks") {
         return;
     }
-    let mut rt = page_with_tasks((1334.0, 900.0));
+    let mut rt = page_with_tasks((1334.0, 390.0));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
@@ -2107,6 +2135,11 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
     assert_eq!((head[0], head[2]), (main[0], 640.0), "header");
     assert_eq!(rect(&rt, "ask-pill")[2], 640.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
+    rt.frame(0.0);
+    let [x, _, w, _] = rect(&rt, "ask-pill");
+    let [_, y, _, h] = rect(&rt, "meeting-actions");
+    assert!(tasks[0] >= x + w || y + h <= rect(&rt, "ask-overlay")[1]);
     // The transcript sheet rises inside the notes column.
     rt.update(|s, _| s.transcript_open = true);
     rt.frame(0.2);
@@ -2126,7 +2159,7 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         let point = |kind: &str, text: &str| serde_json::json!({"type": kind, "text": text});
         let summary = serde_json::json!({
             "title": "Beta launch plan",
-            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions."],
+            "context": ["The team reviewed the new onboarding flow. The launch date and the pricing copy were the two open questions. ".repeat(24)],
             "topics": [
                 {"title": "Launch date", "points": [
                     point("decided", "Launch in the second week of December, if the copy is done."),
@@ -2145,6 +2178,7 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         std::fs::write(folder.join("english-summary.json"), summary.to_string()).unwrap();
     };
     let mut rt = page_with((1334.0, 900.0), long);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-scroll"));
     rt.settle_all();
     rt.frame(0.0);
     let rect =
@@ -2159,7 +2193,6 @@ fn the_dock_leaves_the_last_notes_row_clear() {
         last[1] + last[3] <= dock[1],
         "the last notes row {last:?} sits under the dock {dock:?}"
     );
-    // The answer adds a panel without introducing a fade.
     rt.update(|s, _| {
         s.saved.messages = ["What did we decide?", "The beta ships on Friday."]
             .iter()
@@ -3006,12 +3039,14 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
     }
     for width in [1334.0, 390.0] {
         for height in [600.0, 720.0, 900.0] {
+            let detect = hex::SKIP_INSTALL_DETECT.replace(true);
             let mut rt = page_at((width, height));
+            hex::SKIP_INSTALL_DETECT.set(detect);
             for phase in ["transcript", "paused"] {
                 rt.update(|s, _| {
                     s.selected = None;
                     super::live::parts_scene(s, phase);
-                    scene_agents(s, ALL_AGENTS);
+                    scene_agents(s, &["codex"]);
                     s.saved.messages.clear();
                     s.live.as_mut().unwrap().panel_open = false;
                 });

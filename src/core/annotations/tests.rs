@@ -27,6 +27,12 @@ impl Temp {
         fs::write(folder.join("scrawl.json"), json).unwrap();
         folder
     }
+    fn hex_bundle(&self, name: &str, json: &str) -> PathBuf {
+        let folder = self.0.join(format!("{name}.hexannotation"));
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("annotation.json"), json).unwrap();
+        folder
+    }
 }
 impl Drop for Temp {
     fn drop(&mut self) {
@@ -459,6 +465,168 @@ fn scan_is_newest_first_and_does_not_open_audio_or_video() {
     assert_eq!(fs::read(newest.join("scrawl.json")).unwrap(), before);
     assert!(scan.captures[0].data.transcript.words.is_empty());
     assert!(super::scan(&temp.0.join("missing")).captures.is_empty());
+}
+
+#[test]
+fn hexannotation_package_reads_marks_frames_and_millisecond_times() {
+    let temp = Temp::new();
+    let folder = temp.hex_bundle(
+        "chart-note",
+        r#"{
+          "formatVersion": 1,
+          "annotation": {
+            "version": 1,
+            "id": "chart-note",
+            "createdAtMs": 1777000000123,
+            "durationMs": 3200,
+            "target": {"mode":"window","app":"Example","windowTitle":"Chart"},
+            "transcript": {
+              "source":"hex",
+              "text":"Move this",
+              "segments":[{"t0":400,"t1":1050,"text":"Move this"}],
+              "words":[{"t0":400,"t1":650,"text":"Move"},{"t0":700,"t1":1050,"text":"this"}]
+            },
+            "strokes": [{"t0":600,"t1":790,"pts":[1000,2000,0]}],
+            "marks": [{
+              "id":"m1",
+              "strokes":[0],
+              "t0":600,
+              "t1":790,
+              "boxNorm":[0.1,0.2,0.5,0.2],
+              "shape":"line",
+              "description":"underline",
+              "frame":"frames/frame-01.png"
+            }],
+            "events": [],
+            "keyframes": [{
+              "index":1,
+              "t":790,
+              "reason":"mark",
+              "file":"frames/frame-01.png",
+              "event":"underline",
+              "markId":"m1"
+            }],
+            "contactSheet":"contact-sheet.png",
+            "video":"recording.mp4",
+            "videoOffsetMs":120,
+            "destination":{"session":"example-session"}
+          }
+        }"#,
+    );
+    fs::create_dir(folder.join("frames")).unwrap();
+    fs::write(
+        folder.join("frames/frame-01.png"),
+        include_bytes!("../../../tests/fixtures/annotations/synthetic.scrawl/frames/frame-01.png"),
+    )
+    .unwrap();
+    let capture = read_capture(&folder).unwrap();
+    assert_eq!(capture.data.id, "chart-note");
+    assert_eq!(capture.data.marks.len(), 1);
+    assert_eq!(
+        capture.data.marks[0].description.as_deref(),
+        Some("underline")
+    );
+    assert!((capture.data.marks[0].t0 - 0.6).abs() < 0.000001);
+    assert!((capture.data.transcript.words[1].t1 - 1.05).abs() < 0.000001);
+    assert!((capture.data.keyframes[0].t - 0.79).abs() < 0.000001);
+    assert_eq!(
+        capture
+            .frame_for_mark(&capture.data.marks[0])
+            .unwrap()
+            .index,
+        1
+    );
+    assert!(
+        capture
+            .frame_path(&capture.data.keyframes[0])
+            .unwrap()
+            .ends_with("frames/frame-01.png")
+    );
+    let mut clean = capture.data.keyframes[0].clone();
+    clean.file = Some("frames-clean/frame-01.png".into());
+    fs::create_dir(folder.join("frames-clean")).unwrap();
+    fs::write(
+        folder.join("frames-clean/frame-01.png"),
+        include_bytes!("../../../tests/fixtures/annotations/synthetic.scrawl/frames/frame-01.png"),
+    )
+    .unwrap();
+    assert!(
+        capture
+            .frame_path(&clean)
+            .unwrap()
+            .ends_with("frames-clean/frame-01.png")
+    );
+    let scan = scan(&temp.0);
+    assert_eq!(scan.captures.len(), 1);
+    assert!(scan.errors.is_empty());
+}
+
+#[test]
+fn hexannotation_without_manifest_is_skipped() {
+    let temp = Temp::new();
+    fs::create_dir(temp.0.join("partial.hexannotation")).unwrap();
+    let scan = scan(&temp.0);
+    assert!(scan.captures.is_empty());
+    assert!(scan.errors.is_empty());
+}
+
+#[test]
+fn hexannotation_future_format_is_skipped_with_a_clear_error() {
+    let temp = Temp::new();
+    temp.hex_bundle("future", r#"{"formatVersion":2}"#);
+    let scan = scan(&temp.0);
+    assert!(scan.captures.is_empty());
+    assert_eq!(scan.errors.len(), 1);
+    assert!(scan.errors[0].contains("formatVersion 2"));
+    assert!(scan.errors[0].contains("future format"));
+}
+
+#[test]
+fn hexannotation_duplicate_id_keeps_the_legacy_capture() {
+    let legacy_root = Temp::new();
+    let hex_root = Temp::new();
+    let legacy = legacy_root.bundle("legacy", r#"{"id":"duplicate","createdAtMs":2}"#);
+    hex_root.hex_bundle(
+        "hex",
+        r#"{"formatVersion":1,"annotation":{"id":"duplicate","createdAtMs":1}}"#,
+    );
+    let scan = scan_roots(&[hex_root.0.clone(), legacy_root.0.clone()]);
+    assert_eq!(scan.captures.len(), 1);
+    assert_eq!(scan.captures[0].folder, legacy);
+    assert_eq!(scan.captures[0].data.created_at_ms, 2);
+    assert!(scan.errors.is_empty());
+}
+
+#[test]
+fn hexannotation_duplicate_keeps_legacy_saved_note_readable() {
+    use super::{media, note, notebook};
+    let store = Temp::new();
+    let hex_root = Temp::new();
+    let legacy = fixture();
+    let root = legacy.parent().unwrap().to_owned();
+    let initial = scan_roots(std::slice::from_ref(&root));
+    let capture = initial.captures.into_iter().next().unwrap();
+    let review = [media::ReviewFrame {
+        index: 1,
+        included: true,
+        masks: Vec::new(),
+    }];
+    let approved = media::approve(&capture, &review, &store.0).unwrap();
+    let saved = note::synthetic_note(&approved);
+    note::save(&approved.folder, &saved).unwrap();
+    media::publish_latest(&store.0, &approved).unwrap();
+    hex_root.hex_bundle(
+        "hex",
+        r#"{"formatVersion":1,"annotation":{"id":"synthetic","createdAtMs":1}}"#,
+    );
+    let scan = scan_roots(&[hex_root.0.clone(), root]);
+    assert_eq!(scan.captures.len(), 1);
+    assert_eq!(scan.captures[0].folder, legacy);
+    let (approved, loaded) = notebook::load_capture_note(&store.0, &scan.captures[0])
+        .unwrap()
+        .unwrap();
+    note::validate(&loaded, &approved).unwrap();
+    assert_eq!(loaded, saved);
 }
 
 #[test]
