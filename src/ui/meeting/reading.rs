@@ -1,9 +1,6 @@
 //! Reading keeps the narrative, actions and transcript in their own scroll areas.
 use super::*;
-use crate::ui::{
-    icons, notes_status, rows, tasks,
-    widgets::{self, HelpHint},
-};
+use crate::ui::{cards, icons, notes_status, rows, tasks, widgets};
 use rune::KeyEvent;
 use rune_kit::{Placement, Popover};
 use sidenote::core::{self, TaskItem, TaskStatus, Urgency, people::Side};
@@ -699,9 +696,11 @@ fn narrative(
     .children(crate::ui::notes_status::provenance(m, p))
 }
 
-/// The label over a rail group: the name at 600 in soft, the count at 400 in faint, the help hint.
-fn rail_label(name: String, count: Option<usize>, hint: Option<El>, p: Palette) -> El {
+/// The label over a rail card: the name at 600 in soft, the count at 400 in faint, and any
+/// urgency note at the row's end.
+fn rail_label(name: String, count: Option<usize>, note: Option<El>, p: Palette) -> El {
     row()
+        .w_full()
         .items_center()
         .gap(6.0)
         .h(22.0)
@@ -709,7 +708,8 @@ fn rail_label(name: String, count: Option<usize>, hint: Option<El>, p: Palette) 
         .mb(4.0)
         .child(roles::FACT.bold().wrap(name, p.soft))
         .children(count.map(|n| roles::COUNT.wrap(n.to_string(), p.faint)))
-        .children(hint)
+        .child(el().grow(1.0))
+        .children(note)
 }
 
 /// The small label over one side of the tasks ("Ours 4", "They will 2").
@@ -794,7 +794,7 @@ fn rail_list(s: &State, mut list: El, tasks: &[&TaskItem], width: f32, p: Palett
     list
 }
 
-fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El {
+fn rail(s: &State, m: &Meeting, p: Palette) -> El {
     let width = s.app_w.get();
     let visit = &s.meeting_ui.rail;
     let (folded, items): (Vec<_>, Vec<_>) = s
@@ -803,7 +803,8 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
         .iter()
         .filter(|t| t.meeting_id == m.id && !t.manual)
         .partition(|t| t.done && !visit.kept.contains(&t.index));
-    let mut rail = col().key("meeting-actions");
+    let mut questions_card = cards::panel(p).padding(4.0).key("meeting-questions-card");
+    let mut tasks_card = cards::panel(p).padding(4.0).key("meeting-tasks-card");
     let mut top = 0.0;
     let mut task_notice = notes_status::tasks_notice(s, m, p).map(|n| n.px(8.0).mb(4.0));
     let groups: Vec<_> = [(false, "Ours"), (true, "They will")]
@@ -829,18 +830,29 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
     // "Tasks 4". "Ours" only means something next to "They will", so the two sides get their
     // own small labels only when a They-will group exists.
     let sides = groups.iter().any(|(external, ..)| *external);
-    if !items.is_empty() || !folded.is_empty() {
+    let has_tasks = !items.is_empty() || !folded.is_empty();
+    let show_tasks = has_tasks || task_notice.is_some();
+    if show_tasks {
         let total = items.iter().filter(|t| !t.done).count();
-        let hint = HelpHint::Tasks.build(k, p, layer);
-        rail = rail
-            .child(rail_label("Tasks".into(), Some(total), Some(hint), p).key("meeting-task-count"))
+        let late = items.iter().filter(|t| t.is_overdue(s.tasks.today)).count();
+        let note = (late > 0).then(|| {
+            roles::META
+                .bold()
+                .line(format!("{late} late"), p.warn)
+                .key("meeting-late-count")
+        });
+        tasks_card = tasks_card
+            .child(
+                rail_label("Tasks".into(), has_tasks.then_some(total), note, p)
+                    .key("meeting-task-count"),
+            )
             .children(task_notice.take());
     }
     let mut keys = Vec::new();
     for (external, name, group) in groups {
         if sides {
             let count = group.iter().filter(|t| !t.done).count();
-            rail = rail.child(rail_side(name, count, p).mt(top).key(if external {
+            tasks_card = tasks_card.child(rail_side(name, count, p).mt(top).key(if external {
                 "meeting-external-task-count"
             } else {
                 "meeting-ours-task-count"
@@ -856,14 +868,15 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
                 .iter()
                 .map(|t| (format!("meeting-task-{}", t.index), Some(t.index))),
         );
-        rail = rail.child(rail_list(s, list, &group, width, p));
+        tasks_card = tasks_card.child(rail_list(s, list, &group, width, p));
         top = roles::SECTION_TOP;
     }
     if !folded.is_empty() {
         let toggle = Rc::new(|s: &mut State| s.meeting_ui.rail.done_open ^= true);
         let key = "meeting-done";
         keys.push((key.into(), None));
-        rail = rail.child(rows::done_line(folded.len(), visit.done_open, toggle, p).key(key));
+        tasks_card =
+            tasks_card.child(rows::done_line(folded.len(), visit.done_open, toggle, p).key(key));
         if visit.done_open {
             keys.extend(
                 folded
@@ -871,26 +884,17 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
                     .map(|t| (format!("meeting-task-{}", t.index), Some(t.index))),
             );
             let list = col().w_full().key("meeting-done-tasks");
-            rail = rail.child(rail_list(s, list, &folded, width, p));
+            tasks_card = tasks_card.child(rail_list(s, list, &folded, width, p));
         }
-        top = roles::SECTION_TOP;
     }
-    if let Some(notice) = task_notice {
-        rail = rail
-            .child(rail_label("Tasks".into(), None, None, p).mt(top))
-            .child(notice);
-        top = roles::SECTION_TOP;
-    }
-    if !m.summary.to_settle.is_empty() {
-        rail = rail.child(
-            rail_label(
-                "Open questions".into(),
-                Some(m.summary.to_settle.len()),
-                Some(HelpHint::Questions.build(k, p, layer)),
-                p,
-            )
-            .mt(top),
-        );
+    let show_questions = !m.summary.to_settle.is_empty();
+    if show_questions {
+        questions_card = questions_card.child(rail_label(
+            "Open questions".into(),
+            Some(m.summary.to_settle.len()),
+            None,
+            p,
+        ));
         let mut list = col().w_full().key("meeting-questions");
         for (i, q) in m.summary.to_settle.iter().enumerate() {
             if i > 0 {
@@ -902,10 +906,26 @@ fn rail(s: &State, k: &Kit, m: &Meeting, p: Palette, layer: &mut Vec<El>) -> El 
                 ..rows::Row::default()
             };
             let item =
-                rows::question_row(question, details.as_deref().unwrap_or(""), false, width, p);
+                rows::question_row(question, details.as_deref().unwrap_or(""), false, width, p)
+                    .border_sides([0.0, 0.0, 0.0, 2.0], p.line)
+                    .border_layout();
             list = list.child(item.key(format!("meeting-question-{i}")));
         }
-        rail = rail.child(list);
+        questions_card = questions_card.child(list);
+    }
+    let mut rail = col().key("meeting-actions");
+    if show_questions || show_tasks {
+        rail = rail.gap(10.0).child(
+            roles::META
+                .line("Sorted by what needs you", p.faint)
+                .key("meeting-rail-caption"),
+        );
+        if show_questions {
+            rail = rail.child(questions_card);
+        }
+        if show_tasks {
+            rail = rail.child(tasks_card);
+        }
     }
     let id = m.id.clone();
     rail.on_key(move |s: &mut State, e, tx| {
@@ -1022,9 +1042,6 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         } else {
             0.0
         };
-    // With no gutter and the tasks stacked, their rows hang 8 either side of the column, so the
-    // scroll area is 8 wider each side there, as the tasks column's is on the wide grid.
-    let hang = if strip && !wide { 8.0 } else { 0.0 };
     let mut visit = s.meeting_ui.sections.borrow_mut();
     visit.sync(m, s.meeting_tab, strip);
     let mut sections = Vec::new();
@@ -1047,12 +1064,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     });
     drop(visit);
     if !wide && !transcript_only {
-        let inset = if s.app_w.get() < super::PHONE {
-            0.0
-        } else {
-            -8.0
-        };
-        doc = doc.child(rail(s, k, m, p, layer).mx(inset).mt(roles::SECTION_TOP));
+        doc = doc.child(rail(s, m, p).mt(roles::SECTION_TOP));
     }
     let mut main = col()
         .key("meeting-main")
@@ -1074,18 +1086,12 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     main = if transcript_only {
         main.justify_between()
     } else {
-        let frame = col().key("meeting-scroll-frame");
-        let frame = if hang > 0.0 {
-            let w = COLUMN + 2.0 * hang;
-            frame.w(w).min_w(w).max_w(w).ml(-hang).mr(-hang)
-        } else {
-            frame.w_full()
-        };
+        let frame = col().key("meeting-scroll-frame").w_full();
         main.child(
             frame.grow(1.0).min_w(0.0).min_h(0.0).child(
                 scroll(
-                    doc.max_w(COLUMN + 2.0 * (side + hang))
-                        .px(side + hang)
+                    doc.max_w(COLUMN + 2.0 * side)
+                        .px(side)
                         .pt(6.0)
                         .pb(bottom_pad),
                     "meeting-scroll",
@@ -1156,23 +1162,20 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
         columns = columns.pr(EDGE);
-        // The tasks' rows hang 8 either side of their column, like the mock, so the text gap to the
-        // notes is the 40 and the rows' hairlines and check circles are not cut by the scroll area.
         let tasks = scroll(
-            col().px(8.0).pb(24.0).child(
+            col().pb(24.0).child(
                 col()
                     .key("meeting-tasks-column")
                     .w(TASKS)
-                    .child(rail(s, k, m, p, layer).mx(-8.0)),
+                    .child(rail(s, m, p)),
             ),
             "meeting-rail-scroll",
         )
-        .w(TASKS + 16.0)
-        .min_w(TASKS + 16.0)
-        .max_w(TASKS + 16.0)
+        .w(TASKS)
+        .min_w(TASKS)
+        .max_w(TASKS)
         .grow(0.0)
-        .ml(GAP - 8.0)
-        .mr(-8.0);
+        .ml(GAP);
         columns = columns
             .justify_center()
             .child(grid("meeting-grid", main, GRID, marks).child(tasks));

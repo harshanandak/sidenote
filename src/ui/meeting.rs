@@ -58,11 +58,11 @@ pub enum Tab {
 }
 
 /// The saved meeting page's notes column, text width. Wide pages lay out left to right as a strip
-/// kept for the section rail, the notes, a gap and the tasks, centred as one 1024 point grid.
-pub const COLUMN: f32 = 640.0;
+/// kept for the section rail, the notes, a gap and the tasks, centred as one 990 point grid.
+pub const COLUMN: f32 = 620.0;
 pub const STRIP: f32 = 44.0;
-pub const GAP: f32 = 40.0;
-pub const TASKS: f32 = 300.0;
+pub const GAP: f32 = 36.0;
+pub const TASKS: f32 = 290.0;
 pub const GRID: f32 = STRIP + COLUMN + GAP + TASKS;
 /// Page gutter below the wide grid.
 pub const SIDE: f32 = 24.0;
