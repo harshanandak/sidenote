@@ -417,7 +417,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "3e194c49f0f471a90e1344245755c3e967d8462a3f786428e8cd3e52aa2a7492",
+  "src/ui/hex.rs": "1fdbcbf2da58ed9fe3028289848dbcf79961ea0f214cde686b38edd6a378da10",
 
   "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
 
@@ -435,7 +435,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "ba05a7e6fa38799846b4d92ed7cafed7670140d82e3980c08f734769ab46791a",
+  "src/ui/live.rs": "b365565ab48d47f5a1fc342fcd1d1fa70baf56f713c410c3481d8155dc48b2b2",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 

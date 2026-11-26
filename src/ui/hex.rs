@@ -168,6 +168,7 @@ pub struct HexState {
     vocab_error: Option<&'static str>,
     record_busy: bool,
     stop: Option<stop::Completion>,
+    notes_stop_recording: Option<u64>,
     vocab_busy: bool,
     model_busy: bool,
     busy_keys: HashSet<String>,
@@ -227,6 +228,7 @@ impl Default for HexState {
             vocab_error: None,
             record_busy: false,
             stop: None,
+            notes_stop_recording: None,
             vocab_busy: false,
             model_busy: false,
             busy_keys: HashSet::new(),
@@ -859,9 +861,12 @@ impl State {
     }
 
     fn hex_done(&mut self, mut action: Action, r: Result<(), HexError>) {
-        let sample = match &mut action {
-            Action::Stop(_, sample) => sample.take().map(|sample| *sample),
-            _ => None,
+        let (sample, notes_requested) = match &mut action {
+            Action::Stop(recording, sample) => (
+                sample.take().map(|sample| *sample),
+                self.hex.notes_stop_recording.take() == Some(*recording),
+            ),
+            _ => (None, false),
         };
         let checked = sample.is_some();
         let observed = sample.filter(|sample| self.hex_accept_status(sample));
@@ -878,7 +883,13 @@ impl State {
                 match r {
                     Ok(()) => {
                         self.hex.error = None;
-                        if matches!(action, Action::Stop(..)) {
+                        if let Action::Stop(recording, _) = action {
+                            if notes_requested
+                                && let Some(live) = &mut self.live
+                                && live.recording_id == recording
+                            {
+                                live.generate_after_pause = true;
+                            }
                             self.hex_check_stop();
                         } else {
                             self.hex_spawn(|e| Msg::ObservedStatus(sample_status(|| e.status())));
@@ -1068,6 +1079,10 @@ impl State {
     }
 
     pub fn hex_record_stop(&mut self, displayed_id: Option<String>) {
+        self.hex_submit_stop(displayed_id, false);
+    }
+
+    pub(super) fn hex_submit_stop(&mut self, displayed_id: Option<String>, generate_notes: bool) {
         if self.hex_stop_pending() {
             return;
         }
@@ -1113,7 +1128,7 @@ impl State {
         let events = self.events_tx.clone();
         let wake = self.waker.clone();
         self.hex_begin_stop(recording, pressed);
-        if !self.live_work(move || {
+        if self.live_work(move || {
             let (status, result) = engine.record_stop(&expected_id, &cached);
             let _ = events.send(Event::Hex(Msg::Done(
                 Action::Stop(recording, status.map(Box::new)),
@@ -1123,6 +1138,8 @@ impl State {
                 wake();
             }
         }) {
+            self.hex.notes_stop_recording = generate_notes.then_some(recording);
+        } else {
             self.hex.record_busy = false;
             self.hex.stop = None;
             self.hex.error = Some("Could not stop recording. Try Stop again or stop it in Hex.");
@@ -2301,5 +2318,198 @@ mod model_action_tests {
             model_action(&missing_selected, true),
             Some(ModelAction::Install)
         );
+    }
+}
+
+#[cfg(test)]
+mod notes_stop_tests {
+    use super::*;
+    use crate::ui::live::Phase;
+    use sidenote::core::{self, notes};
+    use std::{fs, path::Path, process::Command};
+
+    const PART: &str = "100-1";
+
+    fn fixture(name: &str) -> Option<State> {
+        if std::env::var("SIDENOTE_NOTES_STOP_TEST").as_deref() != Ok(name) {
+            let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-storage");
+            fs::create_dir_all(&parent).unwrap();
+            let root = tempfile::tempdir_in(parent).unwrap();
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", &format!("ui::hex::notes_stop_tests::{name}")])
+                .env("SIDENOTE_NOTES_STOP_TEST", name)
+                .env("SIDENOTE_DATA_DIR", root.path().join("state"))
+                .env("SIDENOTE_STATE_DIR", root.path().join("state"))
+                .env("SIDENOTE_HEX_DIR", root.path().join("meetings"))
+                .env("SIDENOTE_PEERS_DIR", root.path().join("peers"));
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            assert!(command.status().unwrap().success());
+            return None;
+        }
+        SKIP_INSTALL_DETECT.set(true);
+        let mut state = State::new();
+        let part = core::meetings_dir().join(PART);
+        fs::create_dir_all(&part).unwrap();
+        fs::write(
+            part.join("manifest.json"),
+            r#"{"status":"recording","duration_ms":1000}"#,
+        )
+        .unwrap();
+        fs::write(
+            part.join("transcript.ndjson"),
+            r#"{"start_ms":0,"end_ms":1000,"text":"Synthetic part","source":"microphone"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(core::state_dir()).unwrap();
+        fs::write(
+            core::state_dir().join("config.json"),
+            r#"{"version":1,"features":{"indic_engine":false},"notes":{"engine":"app","auto":false}}"#,
+        )
+        .unwrap();
+        state.hex_apply(Msg::Caps(
+            "test".into(),
+            Ok(Capabilities::from([(
+                Feature::RecordStop,
+                Support::Supported,
+            )])),
+        ));
+        state.hex_apply(Msg::ObservedStatus(sample_status(|| Ok(status(true)))));
+        state.parts_sync();
+        state.parts_paused();
+        assert_eq!(state.live.as_ref().unwrap().phase, Phase::Paused);
+        assert!(state.hex_recording());
+        Some(state)
+    }
+
+    fn status(recording: bool) -> EngineState {
+        EngineState {
+            running: true,
+            version: "test".into(),
+            protocol: 4,
+            recording: recording.then(|| Recording {
+                id: Some(PART.into()),
+                title: None,
+                since: None,
+                elapsed_seconds: Some(1),
+            }),
+            meeting_state: if recording { "recording" } else { "idle" }.into(),
+            dictating: Some(false),
+            capture_state: "idle".into(),
+            model: serde_json::from_str("{}").unwrap(),
+            labs: Default::default(),
+        }
+    }
+
+    fn stop_reply(state: &mut State, result: Result<(), HexError>) {
+        let recording = state.live.as_ref().unwrap().recording_id;
+        assert!(state.hex_stop_pending());
+        state.hex_apply(Msg::Done(
+            Action::Stop(
+                recording,
+                Some(Box::new(sample_status(|| Ok(status(true))))),
+            ),
+            result,
+        ));
+    }
+
+    fn finish_stop(state: &mut State) {
+        stop_reply(state, Ok(()));
+        fs::write(
+            core::meetings_dir().join(PART).join("manifest.json"),
+            r#"{"status":"complete","duration_ms":1000}"#,
+        )
+        .unwrap();
+        let deadline = state.hex.stop.as_ref().unwrap().deadline.unwrap();
+        state.hex_apply(Msg::StopStatus(
+            deadline,
+            sample_status(|| Ok(status(false))),
+        ));
+        assert!(!state.hex_stop_pending());
+    }
+
+    fn pause_without_notes(state: &mut State) {
+        let work = state.capture_live_work();
+        state.meeting_pause();
+        drop(work.try_recv().unwrap());
+        finish_stop(state);
+        assert_eq!(state.live.as_ref().unwrap().phase, Phase::Paused);
+        assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(notes::status(PART), None);
+    }
+
+    #[test]
+    fn refused_generate_stop_does_not_start_notes_on_pause() {
+        let Some(mut state) = fixture("refused_generate_stop_does_not_start_notes_on_pause") else {
+            return;
+        };
+        let work = state.capture_live_work();
+        state.meeting_generate();
+        drop(work.try_recv().unwrap());
+        assert!(!state.live.as_ref().unwrap().generate_after_pause);
+        stop_reply(
+            &mut state,
+            Err(HexError::Failed {
+                code: Some("not-recording".into()),
+                stderr_summary: "Synthetic Stop refusal",
+            }),
+        );
+        assert!(!state.hex_stop_pending());
+        pause_without_notes(&mut state);
+    }
+
+    #[test]
+    fn unavailable_generate_stop_does_not_start_notes_on_pause() {
+        let Some(mut state) = fixture("unavailable_generate_stop_does_not_start_notes_on_pause")
+        else {
+            return;
+        };
+        let caps = state.hex.caps.take();
+        state.meeting_generate();
+        assert_eq!(
+            state.hex.error,
+            Some("This Hex build cannot stop. Stop it from Hex.")
+        );
+        assert!(!state.hex_stop_pending());
+        state.hex.caps = caps;
+        pause_without_notes(&mut state);
+    }
+
+    #[test]
+    fn failed_generate_stop_submission_does_not_start_notes_on_pause() {
+        let Some(mut state) =
+            fixture("failed_generate_stop_submission_does_not_start_notes_on_pause")
+        else {
+            return;
+        };
+        drop(state.capture_live_work());
+        state.meeting_generate();
+        assert_eq!(
+            state.hex.error,
+            Some("Could not stop recording. Try Stop again or stop it in Hex.")
+        );
+        assert!(!state.hex_stop_pending());
+        pause_without_notes(&mut state);
+    }
+
+    #[test]
+    fn accepted_generate_stop_starts_one_notes_job() {
+        let Some(mut state) = fixture("accepted_generate_stop_starts_one_notes_job") else {
+            return;
+        };
+        let work = state.capture_live_work();
+        state.meeting_generate();
+        drop(work.try_recv().unwrap());
+        assert_eq!(notes::status(PART), None);
+        finish_stop(&mut state);
+        assert_eq!(state.live.as_ref().unwrap().phase, Phase::Making);
+        work.try_recv().unwrap()();
+        state.live_sync();
+        assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(notes::status(PART), Some(notes::JobState::Queued));
     }
 }

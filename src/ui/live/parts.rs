@@ -230,6 +230,7 @@ impl State {
         let Some(m) = &mut live.session else {
             return;
         };
+        let generate_notes = std::mem::take(&mut live.generate_after_pause);
         let _ = m.refresh(&core::meetings_dir());
         if m.pause(&core::state_dir()).is_err() {
             self.hex.error = Some("Could not save paused meeting.");
@@ -238,8 +239,14 @@ impl State {
         live.phase = Phase::Paused;
         live.stopped = Some(Instant::now());
         self.request_refresh();
+        if generate_notes {
+            self.generate_live_notes();
+        }
     }
     pub(in crate::ui) fn meeting_pause(&mut self) {
+        self.pause_meeting(false);
+    }
+    fn pause_meeting(&mut self, generate_notes: bool) {
         if self.hex_stop_pending() {
             return;
         }
@@ -254,7 +261,7 @@ impl State {
         {
             return;
         }
-        self.hex_record_stop(hex::recording_id(self));
+        self.hex_submit_stop(hex::recording_id(self), generate_notes);
     }
     fn parts_select(&mut self) -> bool {
         if let Some(live) = &self.live {
@@ -347,16 +354,13 @@ impl State {
             return;
         }
         if self.hex_recording() {
-            if let Some(live) = &mut self.live {
-                live.generate_after_pause = true;
-            }
-            self.meeting_pause();
+            self.pause_meeting(true);
             return;
         }
         self.generate_live_notes();
     }
 
-    pub(super) fn generate_live_notes(&mut self) {
+    fn generate_live_notes(&mut self) {
         let Some(live) = &mut self.live else {
             return;
         };
@@ -371,7 +375,6 @@ impl State {
             Ok(folder) => {
                 live.folder = Some(folder);
                 live.phase = Phase::Making;
-                live.generate_after_pause = false;
                 let id = m.id.clone();
                 self.live_flush();
                 let events = self.events_tx.clone();
