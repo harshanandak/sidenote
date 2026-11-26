@@ -9,6 +9,10 @@ const POINT: &str = "Ship the beta on Friday.";
 
 /// Relaunches the named test in a child process; true in the parent, which has then checked it.
 fn in_parent(name: &str) -> bool {
+    in_parent_with(name, |_| {})
+}
+
+fn in_parent_with(name: &str, configure: impl FnOnce(&mut std::process::Command)) -> bool {
     const FLAG: &str = "SIDENOTE_ASK_V3_TEST";
     if std::env::var(FLAG).ok().as_deref() == Some(name) {
         return false;
@@ -26,6 +30,7 @@ fn in_parent(name: &str) -> bool {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    configure(&mut command);
     let output = command.output().unwrap();
     assert!(
         output.status.success(),
@@ -3052,6 +3057,297 @@ fn deletion_cancels_delayed_ask_text_and_answers_in_all_scopes() {
             }
         }
     }
+}
+
+const OTHER_MEETING: &str = "1800000000001-2";
+
+fn navigation_case(name: &str) -> Option<String> {
+    const DESTINATION: &str = "SIDENOTE_TEST_NAV_DESTINATION";
+    if let Ok(destination) = std::env::var(DESTINATION) {
+        return Some(destination);
+    }
+    let storage = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-storage");
+    std::fs::create_dir_all(&storage).unwrap();
+    for destination in ["home", "meeting", "settings"] {
+        let root = tempfile::tempdir_in(&storage).unwrap();
+        let root = root.path();
+        in_parent_with(name, |command| {
+            command
+                .env(DESTINATION, destination)
+                .env("SIDENOTE_DATA_DIR", root.join("state"))
+                .env("SIDENOTE_STATE_DIR", root.join("state"))
+                .env("SIDENOTE_HEX_DIR", root.join("meetings"))
+                .env("SIDENOTE_PEERS_DIR", root.join("peers"));
+        });
+    }
+    None
+}
+
+fn write_result(folder: &std::path::Path, text: &str) {
+    std::fs::create_dir_all(folder).unwrap();
+    let summary = serde_json::json!({"title":"Synthetic meeting","context":[text]});
+    std::fs::write(folder.join("english-summary.json"), summary.to_string()).unwrap();
+}
+
+fn navigation_page(stored: impl FnOnce()) -> Runtime<State> {
+    page_with(DEFAULT_SIZE, || {
+        write_result(&core::meetings_dir().join(OTHER_MEETING), CONTEXT);
+        stored();
+    })
+}
+
+fn navigate(rt: &mut Runtime<State>, destination: &str) {
+    rt.update(|s, tx| match destination {
+        "home" => s.go_meetings(),
+        "meeting" => s.select(OTHER_MEETING, tx),
+        "settings" => s.open_hex(),
+        _ => unreachable!(),
+    });
+    rt.frame(0.0);
+    assert_destination(rt, destination);
+}
+
+fn assert_destination(rt: &Runtime<State>, destination: &str) {
+    assert_eq!(
+        rt.state.selected.as_deref(),
+        (destination == "meeting").then_some(OTHER_MEETING)
+    );
+    assert_eq!(rt.state.on_hex(), destination == "settings");
+    assert!(!rt.state.on_live());
+}
+
+fn navigation_snapshot(s: &State) -> Event {
+    let options = s.refresh_options();
+    Event::Refreshed(refresh::Result {
+        generation: core::mutation_generation(),
+        options,
+        data: Some(Box::new(refresh::Data::read(options))),
+    })
+}
+
+fn refresh_navigation(rt: &mut Runtime<State>) {
+    rt.update(|s, _| s.apply_event(navigation_snapshot(s)));
+    rt.frame(0.0);
+}
+
+fn return_to_source(rt: &mut Runtime<State>) {
+    rt.update(|s, tx| s.select(MEETING, tx));
+    rt.settle_all();
+    rt.frame(0.0);
+    assert_eq!(rt.state.current().unwrap().id, MEETING);
+}
+
+fn assert_rendered(rt: &Runtime<State>, text: &str, visible: bool) {
+    let shown = rt
+        .elements()
+        .iter()
+        .any(|e| e.text.as_deref() == Some(text));
+    assert_eq!(shown, visible, "{text}");
+}
+
+fn answer_ready(rt: &mut Runtime<State>, text: &str) -> core::ask::Cancel {
+    let run = rt.state.asks.get_mut(MEETING).unwrap();
+    run.live = true;
+    run.visibility = *core::meeting_delete::read_visibility();
+    let (tx, rx) = mpsc::channel();
+    tx.send(Ok(text.into())).unwrap();
+    run.rx = rx;
+    run.cancel.clone()
+}
+
+#[test]
+fn ask_finishes_on_its_meeting_after_navigation() {
+    let Some(destination) = navigation_case("ask_finishes_on_its_meeting_after_navigation") else {
+        return;
+    };
+    let mut rt = navigation_page(|| {});
+    start_stop_fixture(&mut rt);
+    let cancel = answer_ready(&mut rt, PARTIAL_ANSWER);
+    navigate(&mut rt, &destination);
+    assert!(rt.state.asks.contains_key(MEETING));
+    assert!(!cancel.stopped());
+    ask_fixture_progress(&mut rt, AskProgress::Finished);
+    assert_destination(&rt, &destination);
+    assert!(rt.state.saved.messages.is_empty());
+    for id in [OTHER_MEETING, core::ALL_KEY] {
+        assert!(rt.state.store.load(id).unwrap().messages.is_empty());
+    }
+    return_to_source(&mut rt);
+    assert_eq!(rt.state.saved.messages.last().unwrap().text, PARTIAL_ANSWER);
+    assert_rendered(&rt, PARTIAL_ANSWER, true);
+}
+
+#[test]
+fn meeting_ask_stop_drops_a_queued_answer_and_later_text() {
+    if in_parent("meeting_ask_stop_drops_a_queued_answer_and_later_text") {
+        return;
+    }
+    let mut rt = page();
+    start_stop_fixture(&mut rt);
+    let cancel = answer_ready(&mut rt, "Late final answer");
+    tap(&mut rt, "ask-stop");
+    assert!(cancel.stopped());
+    let text = "Late streamed answer".into();
+    ask_fixture_progress(&mut rt, AskProgress::Text { text });
+    assert!(rt.state.asks[MEETING].text.is_empty());
+    ask_fixture_progress(&mut rt, AskProgress::Finished);
+    assert!(rt.state.store.load(MEETING).unwrap().messages.is_empty());
+    assert_eq!(rt.state.question.text, STOP_QUESTION);
+    assert_no_ask_alert(&rt);
+}
+
+#[test]
+fn meeting_ask_drops_the_answer_when_its_source_leaves_the_catalog() {
+    if in_parent("meeting_ask_drops_the_answer_when_its_source_leaves_the_catalog") {
+        return;
+    }
+    let mut rt = navigation_page(|| {});
+    start_stop_fixture(&mut rt);
+    let cancel = answer_ready(&mut rt, PARTIAL_ANSWER);
+    navigate(&mut rt, "meeting");
+    let folder = core::meetings_dir().join(MEETING);
+    std::fs::remove_file(folder.join("english-summary.json")).unwrap();
+    refresh_navigation(&mut rt);
+    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
+    assert!(cancel.stopped());
+    ask_fixture_progress(&mut rt, AskProgress::Finished);
+
+    write_result(&folder, CONTEXT);
+    refresh_navigation(&mut rt);
+    return_to_source(&mut rt);
+    let messages = &rt.state.saved.messages;
+    assert!(messages.iter().all(|m| m.role != "assistant"));
+}
+
+#[test]
+fn generated_notes_finish_after_navigation() {
+    let Some(destination) = navigation_case("generated_notes_finish_after_navigation") else {
+        return;
+    };
+    let mut rt = navigation_page(|| {
+        let root = core::state_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let folder = core::meetings_dir().join(MEETING);
+        std::fs::write(root.join("config.json"), r#"{"version":1,"features":{"indic_engine":false},"notes":{"engine":"app","auto":false}}"#).unwrap();
+        let manifest = r#"{"status":"complete","duration_ms":1000}"#;
+        let lines = r#"{"start_ms":0,"end_ms":1000,"text":"Synthetic part","source":"microphone"}"#;
+        std::fs::write(folder.join("manifest.json"), manifest).unwrap();
+        std::fs::write(folder.join("transcript.ndjson"), lines).unwrap();
+        let mut session =
+            core::meeting_parts::Meeting::begin(&root, MEETING, 1_800_000_000_000).unwrap();
+        session.pause(&root).unwrap();
+    });
+    rt.update(|s, _| s.meeting_generate());
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, live::Phase::Making);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        if let Event::Hex(hex::Msg::NotesRequested(result)) =
+            rt.state.events_rx.recv_timeout(wait).unwrap()
+        {
+            break result.unwrap();
+        }
+    }
+    let root = core::state_dir();
+    let status = root.join(format!("local/notes-jobs/{MEETING}.json"));
+    let mut job: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&status).unwrap()).unwrap();
+    assert_eq!(job["state"], "queued");
+    assert!(core::notes::status(OTHER_MEETING).is_none());
+    navigate(&mut rt, &destination);
+    let folder = core::meeting_parts::inputs(&root).join(MEETING);
+    const RESULT: &str = "Completed notes from the joined recording.";
+    write_result(&folder, RESULT);
+    job["state"] = "done".into();
+    job["fallback"] = false.into();
+    job["tasks_failed"] = false.into();
+    std::fs::write(status, job.to_string()).unwrap();
+    refresh_navigation(&mut rt);
+    assert_destination(&rt, &destination);
+    assert!(rt.state.live.is_none());
+    assert_rendered(&rt, RESULT, false);
+    let session = core::meeting_parts::read(&root, MEETING).unwrap().unwrap();
+    assert_eq!(session.notes_parts, session.requested_parts);
+    assert_eq!(session.notes_parts, 1);
+    return_to_source(&mut rt);
+    assert_rendered(&rt, RESULT, true);
+}
+
+#[test]
+fn summary_waits_for_its_meeting_after_navigation() {
+    let Some(destination) = navigation_case("summary_waits_for_its_meeting_after_navigation")
+    else {
+        return;
+    };
+    let mut rt = navigation_page(|| {
+        let hex = core::meetings_dir();
+        for id in [MEETING, OTHER_MEETING] {
+            std::fs::remove_file(hex.join(id).join("english-summary.json")).unwrap();
+        }
+        let manifest = hex.join(OTHER_MEETING).join("manifest.json");
+        std::fs::write(manifest, r#"{"status":"complete"}"#).unwrap();
+    });
+    rt.update(|s, _| {
+        s.go_home();
+        live::scene_wait_for_summary(s, MEETING);
+    });
+    rt.frame(0.0);
+    assert!(rt.state.on_live());
+    navigate(&mut rt, &destination);
+    let hex = core::meetings_dir();
+    write_result(&hex.join(OTHER_MEETING), "The other meeting finished.");
+    refresh_navigation(&mut rt);
+    assert!(rt.state.live.is_some(), "the other meeting finished first");
+
+    const RESULT: &str = "Completed summary from the stopped recording.";
+    write_result(&hex.join(MEETING), RESULT);
+    refresh_navigation(&mut rt);
+    assert_destination(&rt, &destination);
+    assert!(rt.state.live.is_none());
+    assert_rendered(&rt, RESULT, false);
+    return_to_source(&mut rt);
+    assert_rendered(&rt, RESULT, true);
+}
+
+#[test]
+fn a_deleted_meeting_drops_late_notes_status_and_summary() {
+    if in_parent("a_deleted_meeting_drops_late_notes_status_and_summary") {
+        return;
+    }
+    use sidenote::core::meeting_delete::{Eligibility, Storage};
+
+    let mut rt = navigation_page(|| {
+        let manifest = core::meetings_dir().join(MEETING).join("manifest.json");
+        std::fs::write(manifest, br#"{"status":"complete"}"#).unwrap();
+    });
+    navigate(&mut rt, "meeting");
+    let hex = core::meetings_dir();
+    let folder = hex.join(MEETING);
+    let root = core::state_dir();
+    const RESULT: &str = "Late notes from a deleted meeting.";
+    write_result(&folder, RESULT);
+    write_done_job(false, false);
+    let stale = navigation_snapshot(&rt.state);
+    let store = Storage::new(&hex, &root).unwrap();
+    store
+        .delete(
+            MEETING,
+            "Synthetic".into(),
+            1,
+            |_| Ok(Eligibility::Ready),
+            |_| Ok(()),
+        )
+        .unwrap();
+    refresh_navigation(&mut rt);
+    rt.update(|s, _| s.apply_event(stale));
+    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
+    write_result(&folder, RESULT);
+    write_done_job(false, false);
+    refresh_navigation(&mut rt);
+    assert_destination(&rt, "meeting");
+    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
+    assert!(!rt.state.ai_notes.jobs.contains_key(MEETING));
+    assert_rendered(&rt, RESULT, false);
 }
 
 #[cfg(windows)]

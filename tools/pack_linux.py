@@ -6,7 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 TARGET, FEATURES = 'x86_64-unknown-linux-gnu', 'desktop,asr-runtime'
 GIT_ENV = dict(PATH='/usr/bin:/bin', GIT_NO_REPLACE_OBJECTS='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_OPTIONAL_LOCKS='0', GIT_ALLOW_PROTOCOL='file')
-NOTICES = ['LICENSE', 'THIRD_PARTY.md', 'assets/fonts/Inter-LICENSE.txt', 'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt']
+NOTICES = ['LICENSE', 'THIRD_PARTY.md', 'assets/fonts/Inter-LICENSE.txt', 'assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt', 'assets/licenses/lucide-LICENSE.txt', 'assets/licenses/solar-LICENSE.txt']
 
 def run(args, **kw):
     if 'cargo' in args: subprocess.run(['timeout', '--kill-after=10s', '2700s', 'bash', '-c', 'while pgrep -x cargo >/dev/null; do sleep 1; done'], env=GIT_ENV, check=True)
