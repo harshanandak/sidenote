@@ -2392,7 +2392,7 @@ fn titlebar(s: &State, cx: &mut Cx<State>, p: theme::Palette, narrow: bool) -> E
     } else {
         (left.grow(1.0), center, right.grow(1.0))
     };
-    let bar = row()
+    row()
         .key("top-bar")
         .w_full()
         .h(TITLEBAR_H)
@@ -2403,8 +2403,7 @@ fn titlebar(s: &State, cx: &mut Cx<State>, p: theme::Palette, narrow: bool) -> E
         .window_drag()
         .child(left.h(TITLEBAR_H))
         .child(center)
-        .child(right);
-    bar
+        .child(right)
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
