@@ -37,10 +37,13 @@ What you do not need: an account, a Sidenote server, or any cloud service to rea
 meetings you already have. Reading saved meetings does not need an agent. Building
 Sidenote and running its tests does not need Hex.
 
-## Install
+## Download
 
-Releases: not published yet. There is no installer to download today.
-To try Sidenote now, build it from source.
+The one official source for Sidenote downloads is the [GitHub Releases page](https://github.com/harshanandak/sidenote/releases). No other site or mirror is official.
+
+Each release includes a `SHA256SUMS` file. Download it with your installer, then run `Get-FileHash <file> -Algorithm SHA256` in PowerShell and compare the result with the matching line in `SHA256SUMS`.
+
+Windows may show a "Windows protected your PC" prompt because the build is unsigned for now: choose More info, then Run anyway.
 
 ## Build from source
 
