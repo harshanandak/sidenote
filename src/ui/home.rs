@@ -148,7 +148,7 @@ mod tests {
     fn startup_home_and_meeting_breadcrumb_route() {
         use super::super::{nav::Filter, tasks::View, view};
         use rune::{Env, Runtime, text::TextSystem};
-
+        crate::test_paths::isolate();
         let s = State::new();
         assert!(s.page() == Page::Home);
         s.sidebar_open.set(true);
