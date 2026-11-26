@@ -18,12 +18,21 @@ const _: () = {
 macro_rules! lucide {
     ($entry:ident, $name:literal, $body:literal) => {
         pub static $entry: LazyLock<Icon> = LazyLock::new(|| {
-            static BODY: LazyLock<String> =
-                LazyLock::new(|| $body.replace("STROKE_WIDTH", &STROKE_WIDTH.to_string()));
-            Icon {
-                name: $name,
-                view: 24.0,
-                body: BODY.as_str(),
+            if let Some(variants) = action_solar_variants($name) {
+                let icon = &variants[REGULAR];
+                Icon {
+                    name: icon.name,
+                    view: icon.view,
+                    body: icon.body,
+                }
+            } else {
+                static BODY: LazyLock<String> =
+                    LazyLock::new(|| $body.replace("STROKE_WIDTH", &STROKE_WIDTH.to_string()));
+                Icon {
+                    name: $name,
+                    view: 24.0,
+                    body: BODY.as_str(),
+                }
             }
         });
     };
@@ -98,14 +107,49 @@ pub(super) const PRIVACY: &Icon = &solar::PRIVACY[REGULAR];
 pub(super) const SETTINGS_UPDATES: &Icon = &solar::UPDATES[REGULAR];
 pub(super) const DIAGNOSTICS: &Icon = &solar::DIAGNOSTICS[REGULAR];
 
-/// Static addresses let Rune reuse the raster atlas entry for each weight and size.
-pub(super) fn weighted(icon: &'static Icon, weight: IconWeight) -> &'static Icon {
-    let variants = match icon.name {
+fn action_solar_variants(name: &str) -> Option<&'static [Icon; 3]> {
+    Some(match name {
+        "lucide-refresh-cw" => &solar::REFRESH,
+        "lucide-plus" => &solar::ADD,
+        "lucide-square" => &solar::STOP,
+        "lucide-check" => &solar::CHECK,
+        "lucide-chevron-down" => &solar::ALT_ARROW_DOWN,
+        "lucide-chevron-right" => &solar::ALT_ARROW_RIGHT,
+        "lucide-chevron-left" => &solar::ALT_ARROW_LEFT,
+        "lucide-chevrons-up-down" => &solar::SORT_VERTICAL,
+        "lucide-x" => &solar::CLOSE,
+        "lucide-ellipsis" => &solar::MENU_DOTS,
+        "lucide-search" => &solar::MAGNIFIER,
+        "lucide-circle" => &solar::CIRCLE,
+        "lucide-circle-pause" => &solar::PAUSE_CIRCLE,
+        "lucide-circle-dot" => &solar::CIRCLE_DOT,
+        "lucide-circle-dashed" => &solar::QUESTION_CIRCLE,
+        "lucide-loader-circle" => &solar::REFRESH,
+        "lucide-chevron-up" => &solar::ALT_ARROW_UP,
+        "lucide-copy" => &solar::COPY,
+        "lucide-lock" => &solar::PRIVACY,
+        "lucide-eye" => &solar::EYE,
+        "lucide-eye-off" => &solar::EYE_OFF,
+        "lucide-circle-x" => &solar::CLOSE_CIRCLE,
+        "lucide-minus" => &solar::MINUS,
+        "lucide-circle-check" => &solar::TASKS,
+        "lucide-trash-2" => &solar::TRASH_BIN_TRASH,
+        "lucide-circle-stop" => &solar::STOP_CIRCLE,
+        "lucide-hourglass" => &solar::HOURGLASS,
+        _ => return None,
+    })
+}
+
+fn solar_variants(name: &str) -> Option<&'static [Icon; 3]> {
+    if let Some(variants) = action_solar_variants(name) {
+        return Some(variants);
+    }
+    Some(match name {
         "lucide-clock" => &solar::CLOCK,
         "lucide-folder" => &solar::FOLDER,
         name if name == HOME.name => &solar::HOME,
         "lucide-notepad-text" => &solar::MEETINGS,
-        "lucide-list-checks" => &solar::TASKS,
+        "lucide-list-checks" | "solar-check-circle" => &solar::TASKS,
         "lucide-users-round" => &solar::PEOPLE,
         "lucide-book-open" => &solar::MEMORY,
         "lucide-calendar" => &solar::DIARY,
@@ -122,7 +166,39 @@ pub(super) fn weighted(icon: &'static Icon, weight: IconWeight) -> &'static Icon
         "solar-lock-keyhole-minimalistic" => &solar::PRIVACY,
         "solar-download-minimalistic" => &solar::UPDATES,
         "solar-pulse" => &solar::DIAGNOSTICS,
-        _ => return icon,
+        "solar-add" => &solar::ADD,
+        "solar-check" => &solar::CHECK,
+        "solar-alt-arrow-down" | "settings-chevron-down" => &solar::ALT_ARROW_DOWN,
+        "solar-alt-arrow-up" | "settings-chevron-up" => &solar::ALT_ARROW_UP,
+        "solar-alt-arrow-right" => &solar::ALT_ARROW_RIGHT,
+        "solar-alt-arrow-left" => &solar::ALT_ARROW_LEFT,
+        "solar-sort-vertical" => &solar::SORT_VERTICAL,
+        "solar-close" => &solar::CLOSE,
+        "solar-close-circle" => &solar::CLOSE_CIRCLE,
+        "solar-copy" => &solar::COPY,
+        "solar-magnifier" => &solar::MAGNIFIER,
+        "solar-eye" => &solar::EYE,
+        "solar-eye-off" => &solar::EYE_OFF,
+        "solar-minus" => &solar::MINUS,
+        "solar-menu-dots" => &solar::MENU_DOTS,
+        "solar-refresh" => &solar::REFRESH,
+        "solar-play" => &solar::PLAY,
+        "solar-stop" => &solar::STOP,
+        "solar-stop-circle" => &solar::STOP_CIRCLE,
+        "solar-circle" => &solar::CIRCLE,
+        "solar-pause-circle" => &solar::PAUSE_CIRCLE,
+        "solar-circle-dot" => &solar::CIRCLE_DOT,
+        "solar-question-circle" => &solar::QUESTION_CIRCLE,
+        "solar-hourglass" => &solar::HOURGLASS,
+        "solar-trash-bin-trash" => &solar::TRASH_BIN_TRASH,
+        _ => return None,
+    })
+}
+
+/// Static addresses let Rune reuse the raster atlas entry for each weight and size.
+pub(super) fn weighted(icon: &'static Icon, weight: IconWeight) -> &'static Icon {
+    let Some(variants) = solar_variants(icon.name) else {
+        return icon;
     };
     &variants[weight as usize]
 }
@@ -796,9 +872,9 @@ lucide!(
 );
 
 pub static PLAY: Icon = Icon {
-    name: "sidenote-play",
-    view: 24.0,
-    body: r#"<path d="M8 4v16l12-8Z" fill="currentColor"/>"#,
+    name: solar::PLAY[REGULAR].name,
+    view: solar::PLAY[REGULAR].view,
+    body: solar::PLAY[REGULAR].body,
 };
 
 #[cfg(test)]
@@ -871,9 +947,87 @@ mod tests {
     }
 
     #[test]
+    fn action_kit_selector_and_status_glyphs_have_all_three_weights() {
+        for (source, name) in [
+            (&*REFRESH_CW, "solar-refresh"),
+            (&*PLUS, "solar-add"),
+            (&*STOP, "solar-stop"),
+            (&PLAY, "solar-play"),
+            (&*TRASH, "solar-trash-bin-trash"),
+            (&*MORE, "solar-menu-dots"),
+            (&*CHEVRON_LEFT, "solar-alt-arrow-left"),
+            (&*CHECK, "solar-check"),
+            (&*CHEVRON_DOWN, "solar-alt-arrow-down"),
+            (&*CHEVRON_UP, "solar-alt-arrow-up"),
+            (&*CHEVRON_RIGHT, "solar-alt-arrow-right"),
+            (&*X, "solar-close"),
+            (&*COPY, "solar-copy"),
+            (&*SEARCH, "solar-magnifier"),
+            (&*LOCK, "solar-lock-keyhole-minimalistic"),
+            (&*EYE, "solar-eye"),
+            (&*EYE_OFF, "solar-eye-off"),
+            (&*CIRCLE_X, "solar-close-circle"),
+            (&*DASH, "solar-minus"),
+            (&*SELECT_DOWN, "solar-alt-arrow-down"),
+            (&*SELECT_UP, "solar-alt-arrow-up"),
+            (&*CIRCLE, "solar-circle"),
+            (&*DONE, "solar-check-circle"),
+            (&*WAITING, "solar-pause-circle"),
+            (&*CIRCLE_PAUSE, "solar-pause-circle"),
+            (&*CIRCLE_DOT, "solar-circle-dot"),
+            (&*CIRCLE_DASHED, "solar-question-circle"),
+            (&*LOADER_CIRCLE, "solar-refresh"),
+            (&*CIRCLE_STOP, "solar-stop-circle"),
+            (&*HOURGLASS, "solar-hourglass"),
+        ] {
+            assert_solar_weights(source, name);
+        }
+    }
+
+    #[test]
+    fn waiting_review_and_done_statuses_use_three_distinct_glyphs() {
+        let waiting = weighted(&WAITING, IconWeight::Regular);
+        let review = weighted(&CIRCLE_DOT, IconWeight::Regular);
+        let done = weighted(&DONE, IconWeight::Regular);
+        assert_ne!(waiting.name, review.name);
+        assert_ne!(waiting.name, done.name);
+        assert_ne!(review.name, done.name);
+    }
+
+    fn module_glyph_check(path: &str, source: &str) -> Result<(), String> {
+        let icon_module =
+            path.ends_with("src/ui/icons.rs") || path.ends_with("src/ui/icons/solar.rs");
+        if !icon_module && (source.contains("<path") || source.contains("stroke-width")) {
+            return Err(format!(
+                "embedded glyph geometry outside the icon module: {path}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn glyph_geometry_source_check_rejects_a_negative_fixture() {
+        let negative = "<path stroke-width=\"2\" d=\"M0 0L1 1\"/>";
+        assert!(module_glyph_check("src/ui/rows.rs", negative).is_err());
+        assert!(module_glyph_check("src/ui/icons.rs", negative).is_ok());
+        for file in ["src/ui/theme.rs", "src/ui/rows.rs"] {
+            let source = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file),
+            )
+            .expect("owned UI source file");
+            assert!(module_glyph_check(file, &source).is_ok());
+        }
+    }
+
+    #[test]
     fn shell_lucide_icons_use_the_shared_stroke_and_requested_glyphs() {
         let manual = [&BUILDING_2, &CIRCLE_PAUSE, &SLIDERS];
-        for icon in GENERATED_LUCIDE_ICONS.iter().copied().chain(manual) {
+        for icon in GENERATED_LUCIDE_ICONS
+            .iter()
+            .copied()
+            .chain(manual)
+            .filter(|icon| icon.name.starts_with("lucide-"))
+        {
             let mut widths = icon.body.split("stroke-width=\"").skip(1).peekable();
             assert!(
                 widths.peek().is_some() && widths.all(|width| width.starts_with("2\"")),
@@ -893,10 +1047,8 @@ mod tests {
             (&*UPDATES, "lucide-download"),
             (&*PANEL_CLOSE, "lucide-panel-left"),
             (&*PANEL_OPEN, "lucide-panel-left"),
-            (&*STOP, "lucide-square"),
         ] {
             assert_eq!(icon.name, name);
         }
-        assert!(STOP.body.contains("fill=\"currentColor\""));
     }
 }
