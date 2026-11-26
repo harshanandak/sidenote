@@ -101,3 +101,4 @@ Assert-Proof $installRefused 'an installed candidate path was not refused'
 Write-Output 'CASE installed-candidate: refused before sampling'
 Write-Output 'PASS: passing fixture plus 11 negative cases (timeout, crash, missing samples, upward trend, final-hour growth, short run, deadline gap, nonempty root, unapproved root, live Hex, installed candidate) behaved as required.'
 Write-Output "Evidence: $proofRoot"
+exit 0
