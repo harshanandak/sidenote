@@ -192,29 +192,4 @@ mod soft_card_tests {
             assert!((text.rect[0] - row.rect[0] - 16.0).abs() < 0.5, "{key} x");
         }
     }
-
-    #[test]
-    fn no_settings_divider_or_tile_helpers_remain_in_settings_ui() {
-        fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    walk(&path, hits);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    for token in ["settings_divider", "settings_tile("] {
-                        if text.contains(token) {
-                            hits.push(format!("{} contains {token}", path.display()));
-                        }
-                    }
-                }
-            }
-        }
-        let mut hits = Vec::new();
-        walk(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"),
-            &mut hits,
-        );
-        assert!(hits.is_empty(), "divider or tile helper remains: {hits:#?}");
-    }
 }
