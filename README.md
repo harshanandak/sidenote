@@ -5,7 +5,7 @@ It lists your meetings and shows their transcripts, summaries and tasks, and it 
 ask questions about them through an agent CLI or a model endpoint you choose.
 Your meetings stay as files on your computer. There is no account.
 
-Status: early development (version 0.0.1-dev.40). Expect rough edges and breaking changes.
+Status: first public preview (version 0.1.0-dev.1). Expect rough edges.
 
 ## What works today
 
