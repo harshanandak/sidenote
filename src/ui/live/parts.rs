@@ -243,13 +243,14 @@ impl State {
         if self.hex_stop_pending() {
             return;
         }
-        // Persist ownership before Stop can produce a completion event.
+        // Try to persist ownership before Stop can produce a completion event.
         self.parts_sync();
-        if self
-            .live
-            .as_ref()
-            .and_then(|l| l.session.as_ref())
-            .is_none()
+        if !self.hex_recording()
+            && self
+                .live
+                .as_ref()
+                .and_then(|l| l.session.as_ref())
+                .is_none()
         {
             return;
         }
