@@ -125,11 +125,8 @@ fn task_sections<'a>(
     let mut waiting = Vec::new();
     for task in tasks.iter().filter(|task| !task.done) {
         let mine = needs_you(task, &owner, teams);
-        if task.status == TaskStatus::Waiting
-            || task.waiting_on.is_some()
-            || task.waiting_label.is_some()
-            || (!mine && task.owner.is_some())
-        {
+        // Status, not waiting_on: a finished blocker turns the task back to Todo but keeps the link.
+        if task.status == TaskStatus::Waiting || (!mine && task.owner.is_some()) {
             waiting.push(task);
         } else if mine {
             needs.push(task);
@@ -348,7 +345,8 @@ mod tests {
             {"task":"External sample task","owner":"Lee"},
             {"task":"Today sample task","owner":"Casey Morgan"},
             {"task":"Late sample task","owner":"Casey Morgan"},
-            {"task":"Waiting sample task","owner":"Casey Morgan","waiting_on":{"text":"Sign-off"}}
+            {"task":"Waiting sample task","owner":"Casey Morgan","status":"waiting","waiting_on":{"text":"Sign-off"}},
+            {"task":"Released sample task","owner":"Casey Morgan","waiting_on":{"text":"Done blocker"}}
         ]"#,
         )
         .unwrap();
@@ -376,7 +374,7 @@ mod tests {
             .filter_map(|el| el.text.as_deref())
             .collect();
         for row in [
-            "4 tasks need you",
+            "5 tasks need you",
             "Decided",
             "Ship the sample.",
             "Still open",
@@ -399,6 +397,7 @@ mod tests {
             "Late sample task",
             "Today sample task",
             "Future sample task",
+            "Released sample task",
             "Waiting on others",
             "External sample task",
             "Waiting sample task",
