@@ -18,13 +18,14 @@ pub struct Palette {
     pub ink: Color,
     pub body: Color,
     pub soft: Color,
-    /// The dimmest text grey: facts, placeholders and small notes. Still 4.5:1 on every fill,
-    /// and in dark mode never below #a9a69f on a raised surface.
+    /// The dimmest text: facts, placeholders and small notes. Still 4.5:1 on its fills.
     pub faint: Color,
     pub line: Color,
     pub mark: Color,
-    /// Coral: the one main action on a screen (the primary button) and the focus ring.
+    /// Focus ring. The primary button uses its own fill.
     pub accent: Color,
+    /// Preset link colour. Classic uses the current page ink.
+    pub link: Option<Color>,
     pub ok: Color,
     pub okbg: Color,
     pub warn: Color,
@@ -32,18 +33,18 @@ pub struct Palette {
     pub open: Color,
     /// Hover fills, count pills and quiet buttons.
     pub chip: Color,
-    /// The selected row in a list: a grey, never the accent.
+    /// The selected row in a list.
     pub sel: Color,
     pub hit: Color,
     pub shadow: Color,
     /// Dims the page under a modal, dark enough that page headings do not compete with it.
     pub scrim: Color,
-    /// The primary button: the accent, with ink that keeps 4.5:1 on it.
+    /// The primary button and its contrasting ink.
     pub button_fill: Color,
     pub button_ink: Color,
     /// Classic uses the positive status green for an enabled switch in both modes.
     pub switch_on: Color,
-    /// The enabled knob is white in light mode and deep green in dark mode.
+    /// The enabled knob uses a colour that contrasts with the track.
     pub switch_knob: Color,
     pub button_border: Color,
     pub danger: Color,
@@ -66,9 +67,18 @@ struct TextTokens {
     tertiary: Color,
 }
 
+#[derive(Clone, Copy)]
 struct SurfaceTokens {
     fill: Color,
     text: TextTokens,
+    quiet_fill: Color,
+    selected_fill: Color,
+    border_subtle: Color,
+    focus_ring: Color,
+    link: Option<Color>,
+    open_status: Color,
+    warning: Color,
+    danger: Color,
 }
 
 struct MeaningTokens {
@@ -76,26 +86,20 @@ struct MeaningTokens {
     sidebar: SurfaceTokens,
     surface: Color,
     floating_surface: Color,
-    border_subtle: Color,
     border_strong: Color,
     mark: Color,
     accent_solid: Color,
     accent_on: Color,
     accent_hover_overlay: Color,
     accent_pressed_overlay: Color,
-    focus_ring: Color,
     positive: Color,
     positive_fill: Color,
-    on_positive: Color,
-    warning: Color,
+    switch_track: Color,
+    switch_knob: Color,
     warning_fill: Color,
-    danger: Color,
     danger_outline: Color,
-    open_status: Color,
-    quiet_fill: Color,
     quiet_hover_overlay: Color,
     quiet_pressed_overlay: Color,
-    selected_fill: Color,
     search_highlight: Color,
     shadow: Color,
     scrim: Color,
@@ -164,44 +168,47 @@ mod classic {
 
     pub(super) fn meaning(dark: bool) -> MeaningTokens {
         let pick = |light, night| hex(if dark { night } else { light });
-        let text = TextTokens {
-            primary: pick(GREY_900, GREY_125),
-            body: pick(GREY_700, GREY_225),
-            secondary: pick(GREY_600, GREY_300),
-            tertiary: pick(GREY_550, GREY_350),
-        };
         let accent = pick(CORAL_700, CORAL_400);
-        MeaningTokens {
-            page: SurfaceTokens {
-                fill: pick(GREY_10, GREY_925),
-                text,
+        let positive = pick(GREEN_700, GREEN_400);
+        let page = SurfaceTokens {
+            fill: pick(GREY_10, GREY_925),
+            text: TextTokens {
+                primary: pick(GREY_900, GREY_125),
+                body: pick(GREY_700, GREY_225),
+                secondary: pick(GREY_600, GREY_300),
+                tertiary: pick(GREY_550, GREY_350),
             },
+            quiet_fill: pick(GREY_75, GREY_830),
+            selected_fill: pick(GREY_100, GREY_810),
+            border_subtle: pick(GREY_150, GREY_800),
+            focus_ring: accent,
+            link: None,
+            open_status: pick(VIOLET_700, VIOLET_400),
+            warning: pick(AMBER_700, AMBER_400),
+            danger: pick(RED_700, RED_300),
+        };
+        MeaningTokens {
+            page,
             sidebar: SurfaceTokens {
                 fill: pick(GREY_50, GREY_950),
-                text,
+                ..page
             },
             surface: pick(GREY_0, GREY_850),
             floating_surface: pick(GREY_0, GREY_825),
-            border_subtle: pick(GREY_150, GREY_800),
             border_strong: pick(GREY_200, GREY_800),
             mark: pick(GREY_400, GREY_500),
             accent_solid: accent,
             accent_on: pick(GREY_0, SLATE_900),
             accent_hover_overlay: pick(BLACK_14, WHITE_14),
             accent_pressed_overlay: pick(BLACK_29, WHITE_24),
-            focus_ring: accent,
-            positive: pick(GREEN_700, GREEN_400),
+            positive,
             positive_fill: pick(GREEN_50, GREEN_900),
-            on_positive: pick(GREY_0, GREEN_950),
-            warning: pick(AMBER_700, AMBER_400),
+            switch_track: positive,
+            switch_knob: pick(GREY_0, GREEN_950),
             warning_fill: pick(AMBER_50, AMBER_950),
-            danger: pick(RED_700, RED_300),
             danger_outline: pick(RED_100, RED_800),
-            open_status: pick(VIOLET_700, VIOLET_400),
-            quiet_fill: pick(GREY_75, GREY_830),
             quiet_hover_overlay: pick(BLACK_08, WHITE_0F),
             quiet_pressed_overlay: pick(BLACK_14, WHITE_1F),
-            selected_fill: pick(GREY_100, GREY_810),
             search_highlight: pick(AMBER_100, AMBER_900),
             shadow: pick(GREY_900_1F, BLACK_66),
             scrim: pick(GREY_900_73, BLACK_B3),
@@ -209,39 +216,207 @@ mod classic {
     }
 }
 
+type PresetConstructor = fn(bool) -> MeaningTokens;
+
+// `palette` uses the first constructor for existing renderers.
+const PRESETS: [(&str, PresetConstructor); 4] = [
+    ("Classic", classic::meaning),
+    ("Olive", olive),
+    ("Lime", lime),
+    ("Rose Clay", rose_clay),
+];
+
+fn olive(dark: bool) -> MeaningTokens {
+    let pick = |light, night| hex(if dark { night } else { light });
+    let base = classic::meaning(dark);
+    let accent = pick("#55682a", "#a9c25a");
+    let ink_on_accent = pick("#ffffff", "#141a08");
+    let page = SurfaceTokens {
+        fill: pick("#f5f0e6", "#161a12"),
+        text: TextTokens {
+            primary: pick("#1f2118", "#eef0e6"),
+            body: pick("#3b3d31", "#d3d7c6"),
+            secondary: pick("#4f5143", "#b3b8a2"),
+            tertiary: pick("#5f6152", "#a0a690"),
+        },
+        quiet_fill: pick("#ece4d3", "#232a1d"),
+        selected_fill: pick("#e9e1cf", "#2c3424"),
+        border_subtle: pick("#e2d9c6", "#2f3628"),
+        focus_ring: accent,
+        link: Some(pick("#55682a", "#b8cf6c")),
+        warning: pick("#8f5200", "#e8b25e"),
+        danger: pick("#b42318", "#f4a19a"),
+        ..base.page
+    };
+    let sidebar = if dark {
+        SurfaceTokens {
+            fill: hex("#11140d"),
+            ..page
+        }
+    } else {
+        // The sidebar has a dark fill even when the page is light.
+        let link = hex("#b8cf6c");
+        SurfaceTokens {
+            fill: hex("#2f3a28"),
+            text: TextTokens {
+                primary: hex("#f3f1e8"),
+                body: hex("#e6e8da"),
+                secondary: hex("#d9dccb"),
+                tertiary: hex("#c3c8b0"),
+            },
+            quiet_fill: hex("#3b4732"),
+            selected_fill: hex("#45533b"),
+            border_subtle: hex("#3d4a35"),
+            focus_ring: link,
+            link: Some(link),
+            open_status: hex("#b49ee3"),
+            warning: hex("#e8b25e"),
+            danger: hex("#f4a19a"),
+        }
+    };
+    MeaningTokens {
+        page,
+        sidebar,
+        surface: pick("#fffdf8", "#1e2319"),
+        floating_surface: pick("#fffdf8", "#252b1f"),
+        border_strong: pick("#d8ceb9", "#2f3628"),
+        mark: pick("#9a9886", "#6d7360"),
+        accent_solid: accent,
+        accent_on: ink_on_accent,
+        positive: pick("#2e7a1f", "#8fd37a"),
+        switch_track: accent,
+        switch_knob: ink_on_accent,
+        warning_fill: pick("#f8ead2", "#2e2414"),
+        shadow: pick("#2f3a281f", "#00000066"),
+        scrim: pick("#1f211873", "#000000b3"),
+        ..base
+    }
+}
+
+fn lime(dark: bool) -> MeaningTokens {
+    let pick = |light, night| hex(if dark { night } else { light });
+    let base = classic::meaning(dark);
+    let accent = hex("#c8f53a");
+    let link = pick("#3f6212", "#c8f53a");
+    let page = SurfaceTokens {
+        fill: pick("#fbfcf7", "#0e0f0d"),
+        text: TextTokens {
+            primary: pick("#14160f", "#f1f3ec"),
+            body: pick("#33372a", "#cdd1c4"),
+            secondary: pick("#4a4e40", "#adb2a3"),
+            tertiary: pick("#5c604f", "#999f8f"),
+        },
+        quiet_fill: pick("#eef1e4", "#1f221c"),
+        selected_fill: pick("#e6eadb", "#23261f"),
+        border_subtle: pick("#e1e5d6", "#2a2d26"),
+        focus_ring: link,
+        link: Some(link),
+        warning: pick("#8f5200", "#f2b75b"),
+        danger: pick("#b42318", "#ff9a95"),
+        ..base.page
+    };
+    MeaningTokens {
+        page,
+        sidebar: SurfaceTokens {
+            fill: pick("#f1f3ea", "#0a0b09"),
+            ..page
+        },
+        surface: pick("#ffffff", "#171915"),
+        floating_surface: pick("#ffffff", "#1d1f1a"),
+        border_strong: pick("#d6dbc8", "#2a2d26"),
+        mark: pick("#9da38f", "#62675a"),
+        accent_solid: accent,
+        accent_on: hex("#11140a"),
+        positive: link,
+        switch_track: pick("#14160f", "#c8f53a"),
+        switch_knob: pick("#ffffff", "#11140a"),
+        warning_fill: pick("#f8ead2", "#2e2414"),
+        shadow: pick("#14160f1f", "#00000066"),
+        scrim: pick("#14160f73", "#000000b3"),
+        ..base
+    }
+}
+
+fn rose_clay(dark: bool) -> MeaningTokens {
+    let pick = |light, night| hex(if dark { night } else { light });
+    let base = classic::meaning(dark);
+    let accent = pick("#a3244f", "#f07aa0");
+    let ink_on_accent = pick("#ffffff", "#1f0a12");
+    let page = SurfaceTokens {
+        fill: pick("#fbf4f2", "#1a1214"),
+        text: TextTokens {
+            primary: pick("#2a1719", "#f6ecee"),
+            body: pick("#4a3235", "#dccdd0"),
+            secondary: pick("#5d4447", "#bfaeb2"),
+            tertiary: pick("#6c5356", "#ab9a9e"),
+        },
+        quiet_fill: pick("#f3e3df", "#2a1f22"),
+        selected_fill: pick("#eedad5", "#33262a"),
+        border_subtle: pick("#ecd8d3", "#3a2b2e"),
+        focus_ring: accent,
+        link: Some(pick("#a3244f", "#f48fb0")),
+        warning: pick("#8f5200", "#e8b25e"),
+        danger: pick("#b42318", "#ff9a95"),
+        ..base.page
+    };
+    MeaningTokens {
+        page,
+        sidebar: SurfaceTokens {
+            fill: pick("#f4e6e2", "#140d0f"),
+            ..page
+        },
+        surface: pick("#fffbfa", "#231a1c"),
+        floating_surface: pick("#fffbfa", "#2b2023"),
+        border_strong: pick("#e5cfc9", "#3a2b2e"),
+        mark: pick("#a8908f", "#76666a"),
+        accent_solid: accent,
+        accent_on: ink_on_accent,
+        positive: pick("#17773f", "#7fd6a4"),
+        switch_track: accent,
+        switch_knob: ink_on_accent,
+        warning_fill: pick("#f8ead2", "#2e2414"),
+        shadow: pick("#2a17191f", "#00000066"),
+        scrim: pick("#2a171973", "#000000b3"),
+        ..base
+    }
+}
+
 pub fn palette(dark: bool) -> Palette {
-    component_palette(&classic::meaning(dark))
+    let [(_, classic), ..] = PRESETS;
+    component_palette(&classic(dark))
 }
 
 fn component_palette(tokens: &MeaningTokens) -> Palette {
+    let page = tokens.page;
     Palette {
-        bg: tokens.page.fill,
+        bg: page.fill,
         card: tokens.surface,
         raised: tokens.floating_surface,
         side: tokens.sidebar.fill,
-        ink: tokens.page.text.primary,
-        body: tokens.page.text.body,
-        soft: tokens.page.text.secondary,
-        faint: tokens.page.text.tertiary,
-        line: tokens.border_subtle,
+        ink: page.text.primary,
+        body: page.text.body,
+        soft: page.text.secondary,
+        faint: page.text.tertiary,
+        line: page.border_subtle,
         mark: tokens.mark,
-        accent: tokens.focus_ring,
+        accent: page.focus_ring,
+        link: page.link,
         ok: tokens.positive,
         okbg: tokens.positive_fill,
-        warn: tokens.warning,
+        warn: page.warning,
         warnbg: tokens.warning_fill,
-        open: tokens.open_status,
-        chip: tokens.quiet_fill,
-        sel: tokens.selected_fill,
+        open: page.open_status,
+        chip: page.quiet_fill,
+        sel: page.selected_fill,
         hit: tokens.search_highlight,
         shadow: tokens.shadow,
         scrim: tokens.scrim,
         button_fill: tokens.accent_solid,
         button_ink: tokens.accent_on,
-        switch_on: tokens.positive,
-        switch_knob: tokens.on_positive,
+        switch_on: tokens.switch_track,
+        switch_knob: tokens.switch_knob,
         button_border: tokens.border_strong,
-        danger: tokens.danger,
+        danger: page.danger,
         danger_border: tokens.danger_outline,
         button_hover: tokens.quiet_hover_overlay,
         button_pressed: tokens.quiet_pressed_overlay,
@@ -277,8 +452,7 @@ pub fn kit(p: &Palette) -> Kit {
     };
     kit.c.bg_accent = p.switch_on;
     kit.c.knob_on = p.switch_knob;
-    // Links and the text selection are not the main action: they draw in ink, not the accent.
-    kit.c.text_accent = p.ink;
+    kit.c.text_accent = p.link.unwrap_or(p.ink);
     kit.c.knob = Color::WHITE;
     kit.c.text_faint = p.faint;
     kit.ty.ui = super::roles::CONTROL.style();
@@ -415,16 +589,28 @@ mod token_tests {
     #[test]
     fn component_palette_maps_meanings_independently() {
         let mut meaning = classic::meaning(false);
-        meaning.focus_ring = hex("#ff0000");
+        meaning.page.focus_ring = hex("#ff0000");
         meaning.accent_solid = hex("#0000ff");
         meaning.sidebar.text.primary = hex("#ffffff");
         let p = component_palette(&meaning);
-        assert_eq!(p.accent, meaning.focus_ring);
+        assert_eq!(p.accent, meaning.page.focus_ring);
         assert_eq!(p.button_fill, meaning.accent_solid);
         assert_eq!(p.switch_on, meaning.positive);
         assert_eq!(p.ink, meaning.page.text.primary);
         assert_eq!(p.side, meaning.sidebar.fill);
         assert_eq!(p.raised, meaning.floating_surface);
+    }
+
+    #[test]
+    fn olive_light_sidebar_popovers_keep_the_page_palette() {
+        let meaning = olive(false);
+        let p = component_palette(&meaning);
+        assert_eq!(meaning.sidebar.text.primary, hex("#f3f1e8"));
+        assert_eq!(meaning.sidebar.quiet_fill, hex("#3b4732"));
+        assert_eq!(meaning.sidebar.selected_fill, hex("#45533b"));
+        assert_eq!(meaning.sidebar.border_subtle, hex("#3d4a35"));
+        assert_eq!(p.raised, hex("#fffdf8"));
+        assert_eq!(p.ink, hex("#1f2118"));
     }
 }
 
@@ -605,20 +791,49 @@ mod type_and_contrast_tests {
     #[test]
     fn text_tokens_keep_four_and_a_half_to_one() {
         let mut failures = Vec::new();
-        for dark in [false, true] {
-            let p = palette(dark);
+        for ((preset, constructor), dark) in PRESETS
+            .into_iter()
+            .flat_map(|preset| [false, true].map(|dark| (preset, dark)))
+        {
+            let tokens = constructor(dark);
+            let p = component_palette(&tokens);
             let k = kit(&p);
-            let plain = [p.bg, p.card, p.raised, p.side, p.chip, p.sel, p.hit];
+            // Sidebar popovers use the page surface or raised fill and the page text.
+            let plain = [p.bg, p.card, p.raised, p.chip, p.sel, p.hit];
+            let side = tokens.sidebar;
+            let sidebar_fills = [side.fill, side.quiet_fill, side.selected_fill];
             let rows: Vec<(&str, Color, Vec<Color>)> = vec![
                 ("ink", p.ink, plain.to_vec()),
                 ("body", p.body, plain.to_vec()),
                 ("soft", p.soft, plain.to_vec()),
                 ("faint", p.faint, plain.to_vec()),
-                ("accent", p.accent, vec![p.bg, p.card, p.side]),
-                ("open", p.open, vec![p.bg, p.card, p.side]),
-                ("danger", p.danger, vec![p.bg, p.card, p.side]),
+                ("sidebar ink", side.text.primary, sidebar_fills.to_vec()),
+                ("sidebar body", side.text.body, sidebar_fills.to_vec()),
+                ("sidebar soft", side.text.secondary, sidebar_fills.to_vec()),
+                ("sidebar faint", side.text.tertiary, sidebar_fills.to_vec()),
+                ("accent", p.accent, vec![p.bg, p.card, p.raised]),
+                ("sidebar accent", side.focus_ring, vec![side.fill]),
+                ("link", k.c.text_accent, vec![p.bg, p.card, p.raised]),
+                (
+                    "sidebar link",
+                    side.link.unwrap_or(side.text.primary),
+                    sidebar_fills.to_vec(),
+                ),
+                ("open", p.open, vec![p.bg, p.card, p.raised, p.chip]),
+                ("sidebar open", side.open_status, vec![side.fill]),
+                ("danger", p.danger, vec![p.bg, p.card, p.raised]),
+                ("sidebar danger", side.danger, vec![side.fill]),
                 ("ok", p.ok, vec![p.bg, p.card, p.okbg]),
-                ("warn", p.warn, vec![p.bg, p.card, p.side, p.chip, p.warnbg]),
+                (
+                    "warn",
+                    p.warn,
+                    vec![p.bg, p.card, p.raised, p.chip, p.warnbg],
+                ),
+                (
+                    "sidebar warn",
+                    side.warning,
+                    vec![side.fill, side.quiet_fill],
+                ),
                 ("button ink", p.button_ink, vec![p.button_fill]),
                 (
                     "button ink pressed",
@@ -642,7 +857,7 @@ mod type_and_contrast_tests {
                     let r = ratio(ink, fill);
                     if r < 4.5 {
                         failures.push(format!(
-                            "{} {name} on fill {i}: {r:.2}",
+                            "{preset} {} {name} on fill {i}: {r:.2}",
                             if dark { "dark" } else { "light" }
                         ));
                     }
