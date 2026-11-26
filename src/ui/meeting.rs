@@ -430,10 +430,10 @@ fn tab_row(s: &State, k: &Kit, m: &Meeting, narrow: bool, p: Palette, layer: &mu
                 .items_end()
                 .gap(12.0)
                 .child(tabs)
-                .children(reading::status_chip(s, k, m, p, layer))
                 .child(el().grow(1.0))
                 .child(more::menu(s, k, m, "meeting", p, layer).pb(2.0)),
         )
+        .children(reading::status_chip(s, k, m, p, layer))
         .child(hairline(p))
 }
 

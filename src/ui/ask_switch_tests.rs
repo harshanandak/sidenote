@@ -523,7 +523,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             ),
             (
                 folder.join("english-summary.json"),
-                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Maya","Tom"]}),
+                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Sam"," ","Ravi"," Ravi "]}),
             ),
             (
                 folder.join("tasks.json"),
@@ -546,7 +546,11 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
     let date = chrono::DateTime::from_timestamp_millis(start)
         .unwrap()
         .with_timezone(&chrono::Local);
-    let facts = format!("Date: {}. Duration: 22 min", date.format("%-d %b"));
+    // S4 fact format change: was "%-d %b" (for example "6 Nov"), now includes weekday and time.
+    let facts = format!(
+        "Date: {}. Duration: 22 min",
+        date.format("%a %-d %b, %H:%M")
+    );
     rt.update(|s, tx| {
         let deadline = Instant::now() + Duration::from_secs(2);
         while s.areas.refresh_pending {
@@ -556,25 +560,53 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
                 .expect("area worker finished");
             s.apply_event(event);
         }
-        tx.focus("segment0", true);
+        tx.focus(more.as_str(), true);
     });
     rt.frame(0.0);
-    let press = |rt: &mut Runtime<State>, key| {
+    let press = |rt: &mut Runtime<State>, key, shift| {
         rt.key(KeyEvent {
             key,
-            mods: rune::Mods::default(),
+            mods: rune::Mods {
+                shift,
+                ..Default::default()
+            },
         });
         rt.frame(0.2);
     };
-    // Tab reaches both controls before the facts below them.
-    for (key, name) in [
-        (more.as_str(), "More actions"),
-        ("meeting-facts", facts.as_str()),
-        ("meeting-people", "2 people"),
-        (&project, "Suggested project: Atlas 2. Change it"),
-        ("meeting-status", "Transcript status: English only"),
-    ] {
-        press(&mut rt, Key::Tab);
+    let row_path = element(&rt, "meeting-facts-row").path;
+    assert!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.path.starts_with(&format!("{row_path}/")))
+            .all(|e| !e.key.as_deref().unwrap_or("").starts_with("help-hint")),
+        "the facts row has no help hints"
+    );
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.text.as_deref() == Some("Sam, Ravi"))
+            .count(),
+        1
+    );
+    assert!(rt.find("meeting-english-only").is_some());
+    // Tab reaches the facts from More; Shift+Tab comes back, then the forward order is exact.
+    press(&mut rt, Key::Tab, false);
+    assert!(element(&rt, "meeting-facts").focused);
+    press(&mut rt, Key::Tab, true);
+    for (index, (key, name, height)) in [
+        (more.as_str(), "More actions", 28.0),
+        ("meeting-facts", facts.as_str(), 28.0),
+        ("meeting-people", "People: Sam, Ravi", 28.0),
+        (&project, "Suggested project: Atlas 2. Change it", 28.0),
+        ("segment0", "Summary", 24.0),
+        ("meeting-status", "Transcript status: English only", 0.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            press(&mut rt, Key::Tab, false);
+        }
         let item = rt
             .elements()
             .into_iter()
@@ -583,23 +615,18 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
         assert!(item.focusable && item.focused, "{key}");
         assert!(item.focus_visible, "{key}");
         assert_eq!(item.label.as_deref(), Some(name), "{key}");
-        assert_eq!(item.rect[3], 28.0, "{key}");
+        if height > 0.0 {
+            assert_eq!(item.rect[3], height, "{key}");
+        }
         assert!(
             item.rect[0] >= 0.0 && item.rect[0] + item.rect[2] <= 390.0,
             "{key}"
         );
     }
-    let focused = |rt: &Runtime<State>, key| {
-        rt.elements()
-            .iter()
-            .any(|e| e.focused && e.key.as_deref() == Some(key))
-    };
-    press(&mut rt, Key::Text(" ".into()));
-    assert!(rt.find("meeting-english-only").is_some());
-    assert!(focused(&rt, "meeting-status-settings"));
-    press(&mut rt, Key::Escape);
-    assert!(rt.find("meeting-english-only").is_none());
-    assert!(focused(&rt, "meeting-status"));
+    press(&mut rt, Key::Text(" ".into()), false);
+    assert!(element(&rt, "meeting-status-settings").focused);
+    press(&mut rt, Key::Escape, false);
+    assert!(element(&rt, "meeting-status").focused);
 }
 
 /// Three tasks and two open questions: one task with a detail, one with a guessed date and one
@@ -2346,7 +2373,8 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
     let date = chrono::DateTime::from_timestamp_millis(start)
         .unwrap()
         .with_timezone(&chrono::Local)
-        .format("%-d %b")
+        // S4 fact format change: was "%-d %b" (for example "6 Nov"), now includes weekday and time.
+        .format("%a %-d %b, %H:%M")
         .to_string();
     let both = serde_json::json!({"status":"complete","created_at_ms":start,"duration_ms":1320000});
     let date_only = serde_json::json!({"status":"complete","created_at_ms":start});
@@ -2378,11 +2406,27 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
             .collect();
         assert_eq!(shown, want, "{label}");
     }
+    let rt = page_with(DEFAULT_SIZE, || {
+        let path = core::meetings_dir()
+            .join(MEETING)
+            .join("english-summary.json");
+        std::fs::write(path, serde_json::json!({"people":[" "]}).to_string()).unwrap();
+    });
+    assert!(rt.find("meeting-people").is_none());
 }
 
 #[test]
-fn a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls() {
-    if in_parent("a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls") {
+fn a_desktop_meeting_title_is_26_on_a_33_line() {
+    if in_parent("a_desktop_meeting_title_is_26_on_a_33_line") {
+        return;
+    }
+    // S4 title-size change: the header now passes 26 explicitly; display() rounds its line height to 33.
+    assert_eq!(rect_of(&page(), "meeting-title")[3], 33.0);
+}
+
+#[test]
+fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
+    if in_parent("a_phone_page_has_a_24_title_then_facts_then_the_view_switch") {
         return;
     }
     let rt = page_with_every_meta_item((390.0, 900.0));
@@ -2394,36 +2438,41 @@ fn a_phone_page_has_a_24_title_16_gutters_and_facts_below_the_controls() {
     // The title is 24 on a 30 line.
     let title = r("meeting-title");
     assert_eq!((title[0], title[3]), (left, 30.0), "title {title:?}");
-    // Line one: the switch and the menu at opposite gutters.
-    let (view, facts, menu) = (r("meeting-view"), r("meeting-facts"), r(&more));
-    assert_eq!(menu[1], view[1], "line one");
+    // S4 header order change: facts were below the controls; they now sit between title and controls.
+    let (menu, facts_row, facts, view) = (
+        r(&more),
+        r("meeting-facts-row"),
+        r("meeting-facts"),
+        r("meeting-view"),
+    );
+    assert_eq!(menu[1], title[1], "More shares the title row");
     assert_eq!(
         menu[0] + menu[2],
         390.0 - 16.0,
         "the menu is at the right gutter"
     );
-    assert_eq!(view[0], left, "the switch is at the left gutter");
-    // The facts start 6 below the controls and wrap in reading order, ending with the section
-    // rail's slot.
-    let (people, chip, status, slot) = (
-        r("meeting-people"),
-        r(&project),
-        r("meeting-status"),
-        r("meeting-sections-slot"),
+    assert_eq!(
+        (facts_row[0], facts_row[1]),
+        (left, title[1] + title[3] + 6.0)
     );
-    assert_eq!((facts[0], facts[1]), (left, view[1] + view[3] + 6.0));
-    for (before, after) in [
-        (facts, people),
-        (people, chip),
-        (chip, status),
-        (status, slot),
-    ] {
+    assert_eq!(
+        (view[0], view[1]),
+        (left, facts_row[1] + facts_row[3] + 16.0)
+    );
+    // The facts wrap in reading order; the visible status text stays below the view switch.
+    let (people, chip, status) = (r("meeting-people"), r(&project), r("meeting-status"));
+    for (before, after) in [(facts, people), (people, chip)] {
         assert!(
             after[1] >= before[1] + before[3]
                 || (after[1] >= before[1] && after[0] >= before[0] + before[2]),
             "{after:?} follows {before:?}"
         );
     }
+    // S4 status change: was an icon beside the view switch; now the visible text is below it.
+    assert!(
+        status[1] >= view[1] + view[3],
+        "status {status:?} is below the switch {view:?}"
+    );
     assert_eq!(r("sec-context")[0], left, "notes gutter");
     assert_inside(&rt, 390.0);
     // Every fact stays reachable: each is on the page with its name.
@@ -2522,8 +2571,8 @@ pub(super) fn hex_engine_recording() -> sidenote::hex_engine::EngineState {
 }
 
 #[test]
-fn the_phone_menu_shares_the_switch_row_with_short_and_long_facts() {
-    if in_parent("the_phone_menu_shares_the_switch_row_with_short_and_long_facts") {
+fn the_phone_header_keeps_short_and_long_facts_inside_the_page() {
+    if in_parent("the_phone_header_keeps_short_and_long_facts_inside_the_page") {
         return;
     }
     use chrono::TimeZone;
@@ -2561,26 +2610,65 @@ fn the_phone_menu_shares_the_switch_row_with_short_and_long_facts() {
                 rt.frame(0.2);
                 rt.settle_all();
             }
+            if long {
+                rt.update(|s, _| {
+                    let meeting = s.meetings.iter_mut().find(|m| m.id == MEETING).unwrap();
+                    meeting.title = format!("{}\nSync", "W".repeat(32));
+                });
+                rt.frame(0.0);
+            }
             let page = window - if rail { 57.0 } else { 0.0 };
-            let (view, menu) = (rect_of(&rt, "meeting-view"), rect_of(&rt, &more));
+            let (title, facts_row, view, menu) = (
+                rect_of(&rt, "meeting-title"),
+                rect_of(&rt, "meeting-facts-row"),
+                rect_of(&rt, "meeting-view"),
+                rect_of(&rt, &more),
+            );
             assert_eq!(
-                menu[1], view[1],
-                "page {page}, long facts {long}: the menu is on a line by itself"
+                menu[1], title[1],
+                "page {page}, long facts {long}: More stays on the title row"
+            );
+            assert!(
+                facts_row[1] >= title[1] + title[3] && view[1] >= facts_row[1] + facts_row[3],
+                "page {page}, long facts {long}: title/facts/view order"
             );
             if long {
                 let facts = element(&rt, "meeting-facts");
-                let people = element(&rt, "meeting-people");
                 let project_chip = element(&rt, &project_key);
-                assert_eq!(
-                    facts.label.as_deref(),
-                    Some("Date: 28 Nov. Duration: 105 min")
-                );
-                assert_eq!(people.label.as_deref(), Some("12 people"));
+                let date = chrono::DateTime::from_timestamp_millis(start)
+                    .unwrap()
+                    .with_timezone(&chrono::Local)
+                    .format("%a %-d %b, %H:%M");
+                let facts_label = format!("Date: {date}. Duration: 105 min");
+                assert_eq!(facts.label.as_deref(), Some(facts_label.as_str()));
+                // S4 people presentation change: was a count ("12 people"), now the joined names.
+                let people_label = format!("People: {}", people.join(", "));
+                let people = element(&rt, "meeting-people");
+                assert_eq!(people.label.as_deref(), Some(people_label.as_str()));
                 assert!(project_chip.label.as_deref().unwrap().contains(project));
+                let title_right = title[0] + title[2];
+                let glyphs: Vec<_> = rt
+                    .instances
+                    .iter()
+                    // Glyphs that start in the title box; others on the same band are not the title's.
+                    .filter(|i| {
+                        i.params[1] == rune::render::KIND_GLYPH
+                            && i.rect[1] < title[1] + title[3]
+                            && i.rect[1] + i.rect[3] > title[1]
+                            && i.rect[0] >= title[0] - 0.5
+                            && i.rect[0] < title_right
+                    })
+                    // Ink right edge: Rune pads each glyph mask by one clear pixel a side (text/area.rs).
+                    .map(|i| i.rect[0] + i.rect[2] - 1.0)
+                    .collect();
+                assert!(
+                    !glyphs.is_empty() && glyphs.iter().all(|&right| right <= title_right + 0.5),
+                    "page {page}: title glyph ink is missing or crosses the title box {title:?}: {glyphs:?}"
+                );
                 let pane = rect_of(&rt, "meeting-pane");
                 for fact in [&facts, &people, &project_chip] {
                     let [x, y, w, h] = fact.rect;
-                    assert!(y >= view[1] + view[3], "page {page}: {:?}", fact.label);
+                    assert!(y + h <= view[1], "page {page}: {:?}", fact.label);
                     assert!(
                         w > 0.0
                             && h > 0.0
@@ -2747,13 +2835,10 @@ fn stamped_summary(folder: &std::path::Path, made_by: Option<serde_json::Value>)
 
 /// Whether the saved meeting's Notes view says the transcript was English-only.
 fn shows_english_only_note(made_by: Option<serde_json::Value>, stored: impl FnOnce()) -> bool {
-    let mut rt = page_with(DEFAULT_SIZE, || {
+    let rt = page_with(DEFAULT_SIZE, || {
         stamped_summary(&core::meetings_dir().join(MEETING), made_by);
         stored();
     });
-    if rt.find("meeting-status").is_some() {
-        tap(&mut rt, "meeting-status");
-    }
     rt.find("meeting-english-only").is_some()
 }
 
@@ -2779,23 +2864,17 @@ fn page_with_language_fallback() -> Runtime<State> {
 }
 
 #[test]
-fn meeting_status_keeps_language_facts_and_the_settings_link_inside_the_popover() {
-    if in_parent("meeting_status_keeps_language_facts_and_the_settings_link_inside_the_popover") {
+fn meeting_status_shows_language_facts_and_the_settings_link() {
+    if in_parent("meeting_status_shows_language_facts_and_the_settings_link") {
         return;
     }
     let mut rt = page_with_language_fallback();
-    let check = |rt: &Runtime<State>, open| {
-        let elements = rt.elements();
-        let texts: Vec<_> = elements.iter().filter_map(|e| e.text.as_deref()).collect();
-        assert_eq!(
-            texts.contains(&"English-only transcript. Hindi or Telugu parts may be missing."),
-            open
-        );
-        assert_eq!(texts.contains(&"Hindi and Telugu models are not installed yet; download them once in Settings, Models (about 567 MB). 2 of 4 ready. Notes use the captured Hex transcript."), open);
-    };
-    check(&rt, false);
+    let elements = rt.elements();
+    let texts: Vec<_> = elements.iter().filter_map(|e| e.text.as_deref()).collect();
+    // S4 status change: these facts were only inside the popover; now they are visible in the status control.
+    assert!(texts.contains(&"English-only transcript. Hindi or Telugu parts may be missing."));
+    assert!(texts.contains(&"Hindi and Telugu models are not installed yet; download them once in Settings, Models (about 567 MB). 2 of 4 ready. Notes use the captured Hex transcript."));
     tap(&mut rt, "meeting-status");
-    check(&rt, true);
     tap(&mut rt, "meeting-status-settings");
     assert!(rt.state.hex_open);
     assert!(matches!(rt.state.hex.section, hex::Section::MeetingModels));
