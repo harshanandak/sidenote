@@ -968,6 +968,18 @@ fn transcript_min_height() -> f32 {
     chrome + 56.0
 }
 
+fn pane_room(s: &State) -> f32 {
+    rune::memo::layout_with("meeting-pane", |rect| rect[3]).unwrap_or(s.pane_h.get())
+        - measured_height("meeting-reading-notice")
+}
+
+pub(in crate::ui) fn transcript_needs_thread_room(s: &State) -> bool {
+    // The thread stays measurable when its slot no longer takes up room.
+    let full_dock = measured_height("meeting-bottom-bar") - measured_height("ask-thread-slot")
+        + measured_height("ask-thread");
+    pane_room(s) - full_dock < transcript_min_height()
+}
+
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let Some(m) = s.current() else {
         return col();
@@ -983,11 +995,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let (transcript_only, surface_height) = if s.transcript_open {
         let minimum = transcript_min_height();
         let desired = transcript_height(s).max(minimum);
-        let pane_height =
-            rune::memo::layout_with("meeting-pane", |rect| rect[3]).unwrap_or(s.pane_h.get());
-        let available = pane_height
-            - measured_height("meeting-reading-notice")
-            - measured_height("meeting-bottom-bar");
+        let available = pane_room(s) - measured_height("meeting-bottom-bar");
         let shared = available
             - measured_height("meeting-header")
             - DOCK_MARGIN
@@ -1573,7 +1581,7 @@ mod tests {
         rt.frame(0.0);
     }
 
-    fn citation_on_reading_page(size: (f32, f32), from_ask: bool, suffix: u32) {
+    fn citation_on_reading_page(size: (f32, f32), from_ask: bool, with_thread: bool, suffix: u32) {
         use std::fmt::Write;
 
         let (width, height) = size;
@@ -1622,10 +1630,37 @@ mod tests {
         )
         .unwrap();
 
+        let meeting_thread = core::Saved {
+            messages: (0..12)
+                .map(|i| core::Message {
+                    role: "assistant".into(),
+                    text: format!("Workshop answer {i}."),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let store = if from_ask {
+            core::StateStore::new(routed.join("ask"))
+        } else {
+            core::StateStore::default()
+        };
+        if with_thread {
+            store.save(&id, &meeting_thread).unwrap();
+        }
         let mut rt = reading_page_at((!from_ask).then_some(id.as_str()), size, None);
+        let thread_offset = |rt: &Runtime<State>| element(rt, "msg-0").scrolled[1];
+        let offset_before = (with_thread && !from_ask).then(|| {
+            rt.update(|_, tx| tx.scroll_to_y("thread-scroll", 80.0));
+            rt.settle_all();
+            rt.frame(0.0);
+            let offset = thread_offset(&rt);
+            assert!(offset > 0.0, "Meeting Ask thread must overflow");
+            offset
+        });
         if from_ask {
             rt.update(|s, _| {
-                s.store = core::StateStore::new(routed.join("ask"));
+                s.store = store;
                 s.saved.messages.push(core::Message {
                     role: "assistant".into(),
                     text: format!("[[{id}@00:27]]"),
@@ -1690,9 +1725,20 @@ mod tests {
         };
         assert_eq!(header_visible(&rt), height == 900.0);
         assert_eq!(rt.find("meeting-scroll").is_some(), height == 900.0);
-        press_visible(&mut rt, "back-to-summary");
+        if with_thread {
+            assert_eq!(element(&rt, "ask-thread").opacity > 0.0, height == 900.0);
+        }
+        let hide = with_thread && width == 1334.0 && height == 480.0;
+        press_visible(
+            &mut rt,
+            if hide {
+                "meeting-hide-transcript"
+            } else {
+                "back-to-summary"
+            },
+        );
         assert!(!rt.state.transcript_open);
-        if from_ask {
+        if from_ask && !hide {
             assert!(rt.state.selected.is_none());
             assert!(rt.find(&format!("cite:{id}@00:27")).is_some());
             rt.update(|s, tx| s.select(&id, tx));
@@ -1700,31 +1746,64 @@ mod tests {
             rt.frame(0.0);
         }
         assert!(header_visible(&rt));
+        if with_thread {
+            let thread = element(&rt, "thread-scroll");
+            assert!(thread.visible[3] >= 96.0, "Restored thread: {thread:?}");
+            assert!(
+                rt.elements().into_iter().any(|e| {
+                    e.text.as_deref() == Some("Workshop answer 4.") && e.visible[3] > 0.0
+                }),
+                "Missing restored thread text"
+            );
+            if let Some(before) = offset_before {
+                assert_eq!(thread_offset(&rt), before, "Restored thread offset");
+            }
+        }
     }
 
     #[test]
     fn summary_source_keeps_transcript_room_on_short_phone() {
-        citation_on_reading_page((360.0, 480.0), false, 1);
+        citation_on_reading_page((360.0, 480.0), false, false, 1);
     }
 
     #[test]
     fn summary_source_keeps_transcript_room_on_short_desktop() {
-        citation_on_reading_page((1334.0, 480.0), false, 2);
+        citation_on_reading_page((1334.0, 480.0), false, false, 2);
     }
 
     #[test]
     fn ask_citation_keeps_transcript_room_on_short_phone() {
-        citation_on_reading_page((360.0, 480.0), true, 3);
+        citation_on_reading_page((360.0, 480.0), true, false, 3);
     }
 
     #[test]
     fn ask_citation_keeps_transcript_room_on_short_desktop() {
-        citation_on_reading_page((1334.0, 480.0), true, 4);
+        citation_on_reading_page((1334.0, 480.0), true, false, 4);
+    }
+
+    #[test]
+    fn expanded_thread_yields_to_summary_source_on_short_phone() {
+        citation_on_reading_page((360.0, 480.0), false, true, 6);
+    }
+
+    #[test]
+    fn expanded_thread_yields_to_summary_source_on_short_desktop() {
+        citation_on_reading_page((1334.0, 480.0), false, true, 7);
+    }
+
+    #[test]
+    fn expanded_thread_yields_to_ask_citation_on_short_phone() {
+        citation_on_reading_page((360.0, 480.0), true, true, 8);
+    }
+
+    #[test]
+    fn expanded_thread_yields_to_ask_citation_on_short_desktop() {
+        citation_on_reading_page((1334.0, 480.0), true, true, 9);
     }
 
     #[test]
     fn tall_reading_page_keeps_header_alongside_transcript() {
-        citation_on_reading_page((1334.0, 900.0), false, 5);
+        citation_on_reading_page((1334.0, 900.0), false, true, 5);
     }
 
     #[test]

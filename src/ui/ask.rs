@@ -912,8 +912,22 @@ pub fn overlay_with(
     if let Some(panel) = above {
         stack = stack.child(panel);
     }
-    let thread = thread(s, k, &id, p);
-    if let Some(panel) = thread {
+    if let Some(mut panel) = thread(s, k, &id, p) {
+        if s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live() {
+            let mut slot = col().key("ask-thread-slot").w_full();
+            if s.transcript_open
+                && (!s.thread_hidden || pending)
+                && super::meeting::reading::transcript_needs_thread_room(s)
+            {
+                // Keep the scroll node mounted so closing the transcript restores its offset.
+                slot = slot.h(0.0);
+                panel = panel
+                    .pin(Some(0.0), Some(0.0), Some(0.0), None)
+                    .opacity(0.0)
+                    .inert();
+            }
+            panel = slot.child(panel);
+        }
         stack = stack.child(panel);
     }
     if let Some(notice) = &s.ask_settings.fallback_notice {
