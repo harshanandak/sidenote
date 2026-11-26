@@ -34,17 +34,31 @@ ICONS = (
     ("PRIVACY", "lock-keyhole-minimalistic"),
     ("UPDATES", "download-minimalistic"),
     ("DIAGNOSTICS", "pulse"),
-    ("ADD", "add"), ("CHECK", "check"),
-    ("ALT_ARROW_DOWN", "alt-arrow-down"), ("ALT_ARROW_UP", "alt-arrow-up"),
-    ("ALT_ARROW_RIGHT", "alt-arrow-right"), ("ALT_ARROW_LEFT", "alt-arrow-left"),
-    ("SORT_VERTICAL", "sort-vertical"), ("CLOSE", "close"),
-    ("CLOSE_CIRCLE", "close-circle"), ("COPY", "copy"),
-    ("MAGNIFER", "magnifer"), ("EYE", "eye"), ("EYE_CLOSED", "eye-closed"),
-    ("MINUS", "minus"), ("MENU_DOTS", "menu-dots"), ("REFRESH", "refresh"),
-    ("PLAY", "play"), ("STOP", "stop"), ("STOP_CIRCLE", "stop-circle"),
-    ("CIRCLE", "circle"), ("PAUSE_CIRCLE", "pause-circle"),
-    ("RECORD_CIRCLE", "record-circle"), ("QUESTION_CIRCLE", "question-circle"),
-    ("HOURGLASS", "hourglass"), ("TRASH_BIN_TRASH", "trash-bin-trash"),
+    ("ADD", "add"),
+    ("CHECK", "check"),
+    ("ALT_ARROW_DOWN", "alt-arrow-down"),
+    ("ALT_ARROW_UP", "alt-arrow-up"),
+    ("ALT_ARROW_RIGHT", "alt-arrow-right"),
+    ("ALT_ARROW_LEFT", "alt-arrow-left"),
+    ("SORT_VERTICAL", "sort-vertical"),
+    ("CLOSE", "close"),
+    ("CLOSE_CIRCLE", "close-circle"),
+    ("COPY", "copy"),
+    ("MAGNIFIER", "magnifier"),
+    ("EYE", "eye"),
+    ("EYE_OFF", "eye-off"),
+    ("MINUS", "minus"),
+    ("MENU_DOTS", "menu-dots"),
+    ("REFRESH", "refresh"),
+    ("PLAY", "play"),
+    ("STOP", "stop"),
+    ("STOP_CIRCLE", "stop-circle"),
+    ("CIRCLE", "circle"),
+    ("PAUSE_CIRCLE", "pause-circle"),
+    ("CIRCLE_DOT", "circle-dot"),
+    ("QUESTION_CIRCLE", "question-circle"),
+    ("HOURGLASS", "hourglass"),
+    ("TRASH_BIN_TRASH", "trash-bin-trash"),
 )
 PAINT = {
     "fill": "none",
@@ -81,8 +95,12 @@ def outline_shapes(body):
         keys = GEOMETRY.get(element.tag)
         attrs = dict(element.attrib)
         shape_join = attrs.pop("stroke-linejoin", join)
-        if not grouped and {key: attrs.pop(key, None) for key in PAINT} != PAINT:
-            raise ValueError("expected a Solar Linear outline shape")
+        if not grouped:
+            paint = {key: attrs.pop(key, None) for key in PAINT}
+            if paint["stroke-linecap"] not in (None, PAINT["stroke-linecap"]) or {
+                key: value for key, value in paint.items() if key != "stroke-linecap"
+            } != {key: value for key, value in PAINT.items() if key != "stroke-linecap"}:
+                raise ValueError("expected a Solar Linear outline shape")
         if (keys is None or attrs.keys() != set(keys) or shape_join not in (None, "round")
                 or len(element) or any(s and s.strip() for s in (element.text, element.tail))):
             raise ValueError("unsupported SVG shape")
@@ -115,8 +133,14 @@ def generate(data):
         icon = data["icons"][f"{name}-linear"]
         if icon.get("width", 24) != 24 or icon.get("height", 24) != 24:
             raise ValueError(f"unexpected view box for {name}")
+        shapes = outline_shapes(icon["body"])
+        if len(shapes) == 1:
+            compact = f'solar_icon!({entry}, "{name}", r#"{shapes[0]}"#,);'
+            if len(compact) <= 60:
+                lines.append(compact)
+                continue
         lines.extend(("solar_icon!(", f"    {entry},", f'    "{name}",'))
-        lines.extend(f'    r#"{shape}"#,' for shape in outline_shapes(icon["body"]))
+        lines.extend(f'    r#"{shape}"#,' for shape in shapes)
         lines.append(");")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -131,6 +155,8 @@ def self_test():
     body = wrap(circle + path)
     assert outline_shapes(body) == [circle, '<path d="M4 8L12 16" stroke-linejoin="round"/>']
     assert outline_shapes('<path fill="none" stroke="currentColor" stroke-linecap="round"'
+                          ' stroke-width="1.5" d="M0 0L1 1"/>') == ['<path d="M0 0L1 1"/>']
+    assert outline_shapes('<path fill="none" stroke="currentColor"'
                           ' stroke-width="1.5" d="M0 0L1 1"/>') == ['<path d="M0 0L1 1"/>']
     ellipse = '<ellipse cx="9" cy="17" rx="7" ry="4"/>'
     assert outline_shapes(wrap(ellipse)) == [ellipse]
