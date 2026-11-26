@@ -65,6 +65,54 @@ function New-ProofFixture([string]$Root, [string]$Source) {
     }
 }
 
+function Write-PipelineInstallerDiagnostic($Fixture, [string]$Source, [string]$Version) {
+    $files = @{}; $hashes = @{}
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    $updater = [IO.File]::ReadAllText((Join-Path $Source 'src/updates_windows.rs'))
+    foreach ($member in [regex]::Matches($updater, 'include_str!\("\.\./scripts/meeting-pipeline/([^"/]+)"\)')) {
+        $name = $member.Groups[1].Value
+        $path = Join-Path $Source "scripts/meeting-pipeline/$name"
+        $files[$name] = $utf8.GetString([IO.File]::ReadAllBytes($path))
+        $hashes[$name] = (Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant()
+    }
+    $entryPath = Join-Path $Source 'src/pipeline_entry.ps1'
+    $payload = @{version = $Version; files = $files; hashes = $hashes
+        entry = $utf8.GetString([IO.File]::ReadAllBytes($entryPath)); entry_hash = (Get-FileHash -LiteralPath $entryPath).Hash.ToLowerInvariant()}
+    $installer = [IO.File]::ReadAllText((Join-Path $Source 'src/pipeline_install.ps1'))
+    $catch = '} catch { if ($_.Exception.Message'
+    if (-not $installer.Contains($catch)) { throw 'Cannot locate the installer error handler.' }
+    $trace = '} catch { [Console]::Error.WriteLine(("Installer check at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.GetType().Name)); if ($_.Exception.Message'
+    $start = [Diagnostics.ProcessStartInfo]::new('powershell.exe')
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.StandardInputEncoding = $utf8
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in @('-NoProfile', '-NonInteractive', '-Command', $installer.Replace($catch, $trace))) {
+        $start.ArgumentList.Add($argument)
+    }
+    foreach ($setting in $Fixture.Env.GetEnumerator()) { $start.Environment[$setting.Key] = $setting.Value }
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
+        $stderr = $process.StandardError.ReadToEndAsync()
+        try {
+            $process.StandardInput.Write((ConvertTo-Json $payload -Depth 3 -Compress))
+            $process.StandardInput.Close()
+        } catch [IO.IOException] { Write-Host 'Installer diagnostic input pipe closed early.' }
+        if (-not $process.WaitForExit(30000)) { $process.Kill($true); throw 'Installer diagnostic timed out.' }
+        $stdout.GetAwaiter().GetResult()
+        $result = [regex]::Match($stderr.GetAwaiter().GetResult(), '(?m)^Installer check at line [0-9]+: [A-Za-z0-9]+\b')
+        if ($result.Success) { Write-Host $result.Value }
+        elseif ($process.ExitCode) {
+            $id = [regex]::Match($stderr.GetAwaiter().GetResult(), '(?m)^\s*\+ FullyQualifiedErrorId\s*:\s*[A-Za-z0-9]+\b')
+            Write-Host "Installer exited before its error handler. $($id.Value.Trim())"
+        }
+        Write-Host "Configured installer diagnostic exited with code $($process.ExitCode)."
+    } finally { $process.Dispose() }
+}
+
 function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture) {
     $start = [Diagnostics.ProcessStartInfo]::new($Exe)
     $start.UseShellExecute = $false
@@ -201,6 +249,11 @@ try {
     & tar.exe -xf $archive -C $source
     if ($LASTEXITCODE) { throw 'Could not extract the source for the proof builds.' }
     $fixture = New-ProofFixture $root.FullName $source
+    # Reproduce installer checks against an untouched copy before the two package builds.
+    try {
+        $diagnostic = New-ProofFixture (Join-Path $root.FullName 'diagnostic') $source
+        Write-PipelineInstallerDiagnostic $diagnostic $source $n
+    } catch { Write-Host "Installer diagnostic failed ($($_.Exception.GetType().Name))." }
     $setup = Join-Path $root.FullName 'sidenote-stable-Setup.exe'
     $feedSetup = Join-Path $fixture.Feed 'sidenote-stable-Setup.exe'
     $env:GITHUB_ACTIONS = $null # Disable ANSI in the pinned vpk help captured by the packer.
