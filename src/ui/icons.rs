@@ -805,10 +805,11 @@ lucide!(
 );
 
 lucide!(
-    CIRCLE_PAUSE,
+    LUCIDE_CIRCLE_PAUSE,
     "lucide-circle-pause",
     r#"<circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 9v6M14 9v6" fill="none" stroke="currentColor" stroke-width="STROKE_WIDTH" stroke-linecap="round" stroke-linejoin="round"/>"#
 );
+pub static CIRCLE_PAUSE: &Icon = &solar::PAUSE_CIRCLE[REGULAR];
 lucide!(
     HEX_MARK,
     "hex-ownership",
@@ -918,6 +919,7 @@ mod tests {
             (CIRCLE, "solar-circle"),
             (DONE, "solar-check-circle"),
             (WAITING, "solar-pause-circle"),
+            (CIRCLE_PAUSE, "solar-pause-circle"),
             (CIRCLE_DOT, "solar-record-circle"),
             (CIRCLE_DASHED, "solar-question-circle"),
             (LOADER_CIRCLE, "solar-refresh"),
@@ -965,7 +967,7 @@ mod tests {
 
     #[test]
     fn shell_lucide_icons_use_the_shared_stroke_and_requested_glyphs() {
-        let manual = [&BUILDING_2, &CIRCLE_PAUSE, &SLIDERS];
+        let manual = [&BUILDING_2, &LUCIDE_CIRCLE_PAUSE, &SLIDERS];
         for icon in GENERATED_LUCIDE_ICONS.iter().copied().chain(manual) {
             let mut widths = icon.body.split("stroke-width=\"").skip(1).peekable();
             assert!(
