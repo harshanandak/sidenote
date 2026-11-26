@@ -520,13 +520,6 @@ fn filter_button(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let trigger = menu_trigger(button, open, p, |s| {
         let same = s.more_menu.as_deref() == Some(FILTER_MENU);
         s.more_menu = (!same).then(|| FILTER_MENU.to_string());
-    })
-    .on_key(|s: &mut State, e: &rune::KeyEvent, tx: &mut rune::Tx| {
-        if e.key != Key::Enter || e.mods != rune::Mods::default() || s.row_count() == 0 {
-            return false;
-        }
-        s.open_cursor(tx);
-        true
     });
     if open {
         let on = s.config.features.projects;
@@ -938,6 +931,15 @@ mod tests {
         assert_eq!(rt.state.cursor, 1);
         key(&mut rt, Key::Enter);
         assert_eq!(rt.state.selected.as_deref(), Some("1793955600000-2"));
+    }
+
+    #[test]
+    fn focused_filter_keeps_enter_for_its_menu() {
+        let mut rt = render_home(home_state(trio_meetings()), 1334.0);
+        rt.update(|_, tx| tx.focus("meetings-filter", true));
+        key(&mut rt, Key::Enter);
+        assert_eq!(rt.state.more_menu.as_deref(), Some(FILTER_MENU));
+        assert!(rt.state.selected.is_none());
     }
 
     #[test]

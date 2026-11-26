@@ -2295,6 +2295,10 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         // On the home list the arrows move a cursor and Enter opens; beside a meeting they
         // step through meetings, as before.
         Key::Up | Key::Down => {
+            // Leave a focused toolbar button so the next Enter opens the row, not the button.
+            if tx.focused().is_some_and(list::toolbar_button) {
+                tx.blur();
+            }
             s.move_cursor(if e.key == Key::Up { -1 } else { 1 }, tx);
             if home {
                 s.keyboard = true;
