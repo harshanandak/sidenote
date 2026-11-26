@@ -3235,7 +3235,6 @@ fn generated_notes_page() -> Runtime<State> {
         session.pause(&root).unwrap();
     })
 }
-
 fn start_generated_notes(rt: &mut Runtime<State>) -> (std::path::PathBuf, serde_json::Value) {
     rt.update(|s, _| s.meeting_generate());
     assert_eq!(rt.state.live.as_ref().unwrap().phase, live::Phase::Making);
@@ -3255,7 +3254,6 @@ fn start_generated_notes(rt: &mut Runtime<State>) -> (std::path::PathBuf, serde_
     assert!(core::notes::status(OTHER_MEETING).is_none());
     (status, job)
 }
-
 fn finish_generated_notes(
     folder: &std::path::Path,
     status: &std::path::Path,
@@ -3268,7 +3266,6 @@ fn finish_generated_notes(
     job["tasks_failed"] = false.into();
     std::fs::write(status, job.to_string()).unwrap();
 }
-
 #[test]
 fn generated_notes_finish_after_navigation() {
     let Some(destination) = navigation_case("generated_notes_finish_after_navigation") else {
@@ -3336,7 +3333,6 @@ fn pending_summary_page(status: &str) -> Runtime<State> {
         std::fs::write(folder.join("manifest.json"), manifest.to_string()).unwrap();
     })
 }
-
 fn show_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
     rt.update(|s, _| {
         s.go_home();
@@ -3345,12 +3341,10 @@ fn show_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
     rt.frame(0.0);
     assert!(rt.state.on_live());
 }
-
 fn begin_summary_wait(rt: &mut Runtime<State>, id: Option<&str>) {
     show_summary_wait(rt, id);
     navigate(rt, "settings");
 }
-
 #[test]
 fn a_no_id_summary_never_claims_a_meeting() {
     if in_parent("a_no_id_summary_never_claims_a_meeting") {
@@ -3376,7 +3370,6 @@ fn a_no_id_summary_never_claims_a_meeting() {
     assert_destination(&rt, "settings");
     assert_rendered(&rt, RESULT, false);
 }
-
 #[test]
 fn a_no_id_wait_has_a_bounded_end() {
     if in_parent("a_no_id_wait_has_a_bounded_end") {
@@ -3387,12 +3380,11 @@ fn a_no_id_wait_has_a_bounded_end() {
     show_summary_wait(&mut rt, None);
     assert_rendered(&rt, live::NO_ID_COPY, true);
     assert_rendered(&rt, "Writing the summary", false);
-    assert!(rt.find("live-go-meetings").is_some());
-    assert!(rt.find("live-back").is_none());
-
+    assert!(rt.find("live-go-meetings").is_some() && rt.find("live-back").is_none());
     rt.update(|s, _| s.live_notes = TextEdit::new(NOTES));
     let recovery = core::state_dir().join("unsaved-notes");
     std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
+    rt.settle_all();
     rt.frame(0.0);
     tap(&mut rt, "live-go-meetings");
     assert!(rt.state.on_live() && rt.state.live.as_ref().unwrap().close_failed);
@@ -3404,15 +3396,31 @@ fn a_no_id_wait_has_a_bounded_end() {
     tap(&mut rt, "live-go-meetings");
     assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert_destination(&rt, "home");
-    let copy = std::fs::read_dir(&recovery)
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
+    let mut copies = std::fs::read_dir(&recovery).unwrap();
+    let copy = copies.next().unwrap().unwrap().path();
     assert_eq!(std::fs::read_to_string(copy).unwrap(), NOTES);
 }
-
+#[test]
+fn unreadable_deletion_metadata_keeps_the_pending_wait() {
+    if in_parent("unreadable_deletion_metadata_keeps_the_pending_wait") {
+        return;
+    }
+    const RESULT: &str = "Summary owned after deletion metadata recovers.";
+    let mut rt = pending_summary_page("complete");
+    begin_summary_wait(&mut rt, Some(MEETING));
+    let source = core::meetings_dir().join(MEETING);
+    write_result(&source, RESULT);
+    let deleted = core::state_dir().join("local/deleted-meeting-ids.json");
+    std::fs::create_dir_all(deleted.parent().unwrap()).unwrap();
+    std::fs::write(&deleted, "not json").unwrap();
+    refresh_navigation(&mut rt);
+    assert!(rt.state.live.is_some());
+    std::fs::write(&deleted, "{}").unwrap();
+    refresh_navigation(&mut rt);
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
+    return_to_source(&mut rt);
+    assert_rendered(&rt, RESULT, true);
+}
 fn delete_navigation_source() {
     use sidenote::core::meeting_delete::{Eligibility, Storage};
     let store = Storage::new(&core::meetings_dir(), &core::state_dir()).unwrap();
@@ -3426,7 +3434,6 @@ fn delete_navigation_source() {
         )
         .unwrap();
 }
-
 #[test]
 fn a_deleted_meeting_drops_late_notes_status_and_summary() {
     if in_parent("a_deleted_meeting_drops_late_notes_status_and_summary") {
@@ -3452,11 +3459,9 @@ fn a_deleted_meeting_drops_late_notes_status_and_summary() {
     assert_destination(&rt, "meeting");
     assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
     assert!(!rt.state.ai_notes.jobs.contains_key(MEETING));
-    assert!(rt.state.live.is_none());
-    assert!(rt.state.live_ready.is_none());
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert_rendered(&rt, RESULT, false);
 }
-
 #[test]
 fn a_missing_meeting_drops_its_pending_summary() {
     if in_parent("a_missing_meeting_drops_its_pending_summary") {
@@ -3469,18 +3474,15 @@ fn a_missing_meeting_drops_its_pending_summary() {
     std::fs::rename(&folder, &detached).unwrap();
     refresh_navigation(&mut rt);
     assert!(rt.state.live.is_none());
-
     const RESULT: &str = "Late summary from a detached meeting.";
     write_result(&detached, RESULT);
     refresh_navigation(&mut rt);
     assert!(!folder.exists());
     assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
-    assert!(rt.state.live.is_none());
-    assert!(rt.state.live_ready.is_none());
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert_destination(&rt, "settings");
     assert_rendered(&rt, RESULT, false);
 }
-
 #[test]
 fn generated_notes_drop_late_completion_after_source_loss() {
     const LOSS: &str = "SIDENOTE_TEST_NOTES_SOURCE_LOSS";
@@ -3507,23 +3509,19 @@ fn generated_notes_drop_late_completion_after_source_loss() {
         std::fs::remove_file(folder.join("manifest.json")).unwrap();
     }
     refresh_navigation(&mut rt);
-    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
-    assert!(rt.state.live.is_none());
-
+    assert!(rt.state.meetings.iter().all(|m| m.id != MEETING) && rt.state.live.is_none());
     const RESULT: &str = "Late notes from an unavailable source.";
     finish_generated_notes(&folder, &status, job, RESULT);
     refresh_navigation(&mut rt);
     assert_destination(&rt, "meeting");
     assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
-    assert!(rt.state.live.is_none());
-    assert!(rt.state.live_ready.is_none());
+    assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert!(!rt.state.ai_notes.jobs.contains_key(MEETING));
     assert_rendered(&rt, RESULT, false);
     let saved = core::meeting_parts::read(&root, MEETING).unwrap();
     let notes_parts = saved.map(|session| session.notes_parts);
     assert_eq!(notes_parts, (!deleted).then_some(0));
 }
-
 #[test]
 fn source_loss_retries_close_and_drops_late_generated_notes() {
     if in_parent("source_loss_retries_close_and_drops_late_generated_notes") {
@@ -3543,12 +3541,10 @@ fn source_loss_retries_close_and_drops_late_generated_notes() {
     let recovery = root.join("unsaved-notes");
     std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
     std::fs::remove_file(&manifest).unwrap();
-
     refresh_navigation(&mut rt);
     assert!(rt.state.meetings.iter().all(|m| m.id != MEETING));
     assert_eq!(rt.state.live_notes.text, NOTES);
     assert!(rt.state.live.as_ref().unwrap().close_failed);
-
     std::fs::remove_dir(&notes).unwrap();
     std::fs::remove_file(&recovery).unwrap();
     const RESULT: &str = "Late notes after a refused source-loss close.";

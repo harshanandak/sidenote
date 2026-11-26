@@ -472,7 +472,6 @@ impl Live {
             Some(folder.file_name()?.to_string_lossy().into_owned())
         })
     }
-
     fn matches_meeting(&self, meeting: &sidenote::core::Meeting) -> bool {
         meeting.device.is_none() && self.meeting_id().is_some_and(|id| meeting.id == id)
     }
@@ -930,9 +929,10 @@ impl State {
         // The normal refresh keeps calling live_scanned, even when notes take hours.
     }
 
-    pub(super) fn cancel_missing_summary(&mut self, incoming: &[sidenote::core::Meeting]) {
+    pub(super) fn cancel_missing_summary(&mut self, known: bool, incoming: &[CatalogMeeting]) {
         let missing = self.live.as_ref().is_some_and(|live| {
-            live.phase == Phase::Making
+            known
+                && live.phase == Phase::Making
                 && (live.source_lost
                     || live.meeting_id().is_some_and(|id| {
                         let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
@@ -951,7 +951,6 @@ impl State {
             self.live_open = false;
         }
     }
-
     /// Accept a result only when Hex supplied this recording's source identity.
     pub fn live_scanned(&mut self) {
         let Some(live) = self.live.as_mut() else {

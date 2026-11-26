@@ -1683,12 +1683,11 @@ impl State {
                     recent_meeting,
                     ..
                 } = *data;
-                if !refresh::retain_catalog(&self.meetings, &mut meetings, &retained)
-                    && let Some(handle) = &self.scan_tx
-                {
+                let known = refresh::retain_catalog(&self.meetings, &mut meetings, &retained);
+                if !known && let Some(handle) = &self.scan_tx {
                     handle.invalidate();
                 }
-                self.cancel_missing_summary(&meetings);
+                self.cancel_missing_summary(known, &meetings);
                 for meeting in &meetings {
                     if meeting.has_summary()
                         && meeting
