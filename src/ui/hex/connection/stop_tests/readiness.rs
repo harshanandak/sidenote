@@ -87,7 +87,7 @@ pub(super) fn run() {
     assert_eq!(api.data.lock().unwrap().starts, 0);
     assert_eq!(
         control.label.as_deref(),
-        Some("New meeting (Checking the meeting listener)")
+        Some("Record a meeting (Checking the meeting listener)")
     );
     assert!(!control.focusable);
     std::fs::write(root.join("validation-release"), []).unwrap();
@@ -111,7 +111,7 @@ pub(super) fn run() {
         .into_iter()
         .find(|e| e.key.as_deref() == Some("new-meeting"))
         .unwrap();
-    assert_eq!(control.label.as_deref(), Some("New meeting"));
+    assert_eq!(control.label.as_deref(), Some("Record a meeting"));
     assert!(control.focusable);
     assert_eq!(api.data.lock().unwrap().starts, 0);
     std::fs::write(root.join("mismatch"), []).unwrap();

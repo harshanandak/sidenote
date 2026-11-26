@@ -14,7 +14,7 @@ pub struct Updates {
     channel: Channel,
     listener: updates::ListenerStatus,
     listener_busy: bool,
-    listener_open: bool,
+    pub(super) listener_open: bool,
     listener_probe_busy: bool,
     listener_probed: Option<std::time::Instant>,
     recorder_gap: Option<heartbeat::Gap>,
@@ -687,7 +687,7 @@ pub fn listener_popover(
     use super::widgets;
     let trigger = trigger
         .child(widgets::dot(6.0, p.warn).key("listener-error-dot"))
-        .label("New meeting. Recording is unavailable")
+        .label("Record a meeting. Recording is unavailable")
         .on_press(|s: &mut State| s.updates.listener_open = !s.updates.listener_open);
     let retry = widgets::retry_action(
         widgets::notice_action(
