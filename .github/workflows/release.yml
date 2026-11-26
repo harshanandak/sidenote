@@ -91,13 +91,15 @@ jobs:
           # Spectre injects ANSI into vpk help on Actions, including when the packer captures it.
           $env:GITHUB_ACTIONS = $null
           ./tools/release_ci.ps1 -OutputDirectory $env:RELEASE_ASSETS
-      # Preparation builds distribute unsigned packages through Actions only.
+      # One name per run: "Re-run failed jobs" keeps this artifact for the publish jobs,
+      # and a full re-run replaces it.
       - name: Upload validated packages
         if: matrix.task == 'package' && steps.package.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: sidenote-windows-${{ github.event_name }}-${{ steps.package.outputs.tag }}-${{ github.run_attempt }}
+          name: sidenote-windows-${{ github.event_name }}-${{ steps.package.outputs.tag }}
           path: ${{ runner.temp }}/sidenote-release
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -121,7 +123,7 @@ jobs:
       contents: read
     env:
       RELEASE_TAG: ${{ needs.package.outputs.tag }}
-      ARTIFACT_NAME: sidenote-windows-${{ github.event_name }}-${{ needs.package.outputs.tag }}-${{ github.run_attempt }}
+      ARTIFACT_NAME: sidenote-windows-${{ github.event_name }}-${{ needs.package.outputs.tag }}
     steps:
       - name: Download validated packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -153,7 +155,7 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.package.outputs.tag }}
-      ARTIFACT_NAME: sidenote-windows-${{ github.event_name }}-${{ needs.package.outputs.tag }}-${{ github.run_attempt }}
+      ARTIFACT_NAME: sidenote-windows-${{ github.event_name }}-${{ needs.package.outputs.tag }}
     steps:
       - name: Download validated packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
