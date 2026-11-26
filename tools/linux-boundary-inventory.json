@@ -419,11 +419,11 @@
 
   "src/ui/hex.rs": "544fbafe7c8c022812c166e853c249e8c0c4feaf7379a00c19169c865de3326c",
 
-  "src/ui/hex/connection/stop.rs": "f112f16689bb6d990e20800005e50e735012541545d36ae189b0da611cffb1ea",
+  "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
-  "src/ui/hex/connection/stop_tests.rs": "d1670dcd90b062dcb3041a3dff77590dc3fbe41a8b0e3bd7e2c4532db31e8418",
+  "src/ui/hex/connection/stop_tests.rs": "f5cddef3a9d27da3571e1332c230eafc5ec33a2fff8e0ec489705e91b059c283",
 
-  "src/ui/hex/connection/stop_tests/api.rs": "95bdf13bde99c05d3f7c33e692d98a3a866daa3e22e58e4ebeb2d20dad853673",
+  "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
