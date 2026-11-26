@@ -5,9 +5,12 @@ use super::{
     nav::Filter,
     project, roles,
     theme::{Palette, display},
-    widgets::{highlighted, link, notice_bar, pressable, scroll},
+    widgets::{
+        highlighted, icon_button, link, menu_row, menu_surface, menu_trigger, notice_bar,
+        pressable, scroll,
+    },
 };
-use rune::{El, Key, TextEdit, col, row};
+use rune::{Align, El, Key, Side, TextEdit, col, el, row};
 use rune_kit::{Kit, TextInput};
 use sidenote::core::{self, Meeting, SearchHit, SearchSource};
 
@@ -237,9 +240,6 @@ fn home_row(
         r = r.fill(p.chip);
     }
     let mut out = col().w_full().child(r);
-    if let Some(chip) = project::chip(s, k, &m.id, p, layer) {
-        out = out.child(row().w_full().px(10.0).mb(6.0).child(chip.shrink()));
-    }
     if let Some(form) = project::form(s, k, &m.id, p) {
         out = out.child(form.mx(10.0).mb(6.0));
     }
@@ -253,19 +253,15 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         return short_recordings(s, p, narrow);
     }
     let side = if narrow { 16.0 } else { 40.0 };
-    let (title, count) = match &s.filter {
-        Filter::All => (
-            "Meetings".to_string(),
-            plural(s.meetings.len(), "meeting", "meetings"),
-        ),
-        f => {
-            let n = s.meetings.iter().filter(|m| s.matches_filter(m)).count();
-            let name = match f {
-                Filter::Project(name) => name.clone(),
-                _ => "From other devices".into(),
-            };
-            (name, plural(n, "meeting", "meetings"))
-        }
+    // The title row carries the bare count: `24`, or `shown of total` when a filter or
+    // search narrows the list (old: a second-line "24 meetings", or the project name).
+    let total = s.meetings.len();
+    let shown = s.row_count();
+    let filtered = s.filter != Filter::All || !s.search.text.trim().is_empty();
+    let count = if filtered {
+        format!("{shown} of {total}")
+    } else {
+        format!("{total}")
     };
     let mut doc = col()
         .key("home")
@@ -275,18 +271,17 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .pt(if narrow { 8.0 } else { 20.0 })
         .pb(32.0)
         .child(
-            col()
+            row()
+                .key("meetings-title-row")
                 .w_full()
-                .gap(4.0)
+                .items_center()
+                .gap(8.0)
                 .mb(10.0)
-                .child(
-                    text_title(&title, if narrow { 28.0 } else { 34.0 }, p)
-                        .grow(1.0)
-                        .min_w(0.0),
-                )
-                .child(roles::meta(count, p).pb(6.0)),
+                .child(text_title("Meetings", if narrow { 28.0 } else { 34.0 }, p))
+                .child(roles::meta(count, p))
+                .child(el().grow(1.0))
+                .child(title_more(s, k, p, layer)),
         )
-        .child(meeting_views(s, p))
         .children((s.filter != Filter::All).then(|| {
             link("Show all meetings", p)
                 .key("filter-clear")
@@ -341,18 +336,53 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     .child(ask::overlay(s, k, p, narrow, layer))
 }
 
-fn meeting_views(s: &State, p: Palette) -> El {
-    let short = super::widgets::quiet_button("Short recordings", "filter-short-recordings", p)
-        .fill(if s.filter == Filter::Short {
-            p.sel
-        } else {
-            rune::Color::TRANSPARENT
-        })
-        .on_press(|s: &mut State| s.set_filter(Filter::Short));
-    row().gap(4.0).child(short).children(
-        (super::nav::meetings_home(s) && s.delete_available())
-            .then(|| super::meeting_delete::list_button(p)),
-    )
+/// The key of the open title menu, so only one menu is ever open.
+const TITLE_MENU: &str = "meetings-title-menu";
+
+/// The title row's More button. Its menu holds `Deleted meetings`, which opens the same
+/// deleted list as the old quiet button did; there is no meetings-root folder action, so
+/// no "Open meeting folder" row.
+fn title_more(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
+    let open = s.more_menu.as_deref() == Some(TITLE_MENU);
+    let trigger = menu_trigger(
+        icon_button(
+            &super::icons::MORE,
+            "More actions",
+            "meetings-title-more",
+            super::widgets::ButtonRole::Ghost,
+            p,
+        ),
+        open,
+        p,
+        |s| {
+            let same = s.more_menu.as_deref() == Some(TITLE_MENU);
+            s.more_menu = (!same).then(|| TITLE_MENU.to_string());
+        },
+    );
+    if open {
+        menu_surface(
+            k,
+            p,
+            layer,
+            col().child(
+                menu_row("Deleted meetings", p, None, None, None)
+                    .key("meetings-open-deleted")
+                    .on_press(|s: &mut State| {
+                        s.more_menu = None;
+                        s.open_deleted();
+                    }),
+            ),
+            (
+                TITLE_MENU,
+                "meetings-title-more",
+                Side::Bottom,
+                Align::End,
+                240.0,
+            ),
+            |s| s.more_menu = None,
+        );
+    }
+    trigger
 }
 
 pub fn text_title(s: &str, size: f32, p: Palette) -> El {
@@ -375,7 +405,6 @@ fn short_recordings(s: &State, p: Palette, narrow: bool) -> El {
             p,
         ))
         .child(roles::SMALL.wrap(core::recording_guard::EXPLANATION, p.soft))
-        .child(meeting_views(s, p))
         .child(
             link("Show all meetings", p)
                 .key("filter-clear")
@@ -466,6 +495,179 @@ mod tests {
         assert!(elements.iter().any(|e| {
             e.key.as_deref() == Some(action_key.as_str()) && e.label.as_deref() == Some("Try again")
         }));
+    }
+
+    fn synthetic_meeting(id: &str, title: &str) -> Meeting {
+        Meeting {
+            folder: std::path::PathBuf::from(format!("synthetic/{id}")),
+            device: None,
+            id: id.into(),
+            title: title.into(),
+            diary_title: String::new(),
+            summary: core::Summary {
+                title: title.into(),
+                ..Default::default()
+            },
+            summary_raw: String::new(),
+            draft_raw: String::new(),
+            transcript_raw: String::new(),
+            routed: None,
+            routed_revision: String::new(),
+            summary_language: None,
+            notes: String::new(),
+            lines: Vec::new(),
+            started: None,
+            minutes: None,
+            export_path: None,
+            search: title.to_lowercase(),
+        }
+    }
+
+    fn home_state(meetings: Vec<Meeting>) -> State {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.meetings = meetings;
+        state.refresh_list();
+        state
+    }
+
+    fn render_home(state: State, width: f32) -> rune::Runtime<State> {
+        let mut rt = rune::Runtime::new(
+            state,
+            super::super::view,
+            (width, 900.0),
+            rune::Env::default(),
+        );
+        rt.frame(0.0);
+        rt
+    }
+
+    fn tap(rt: &mut rune::Runtime<State>, key: &str) {
+        let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    #[test]
+    fn title_row_shows_the_inline_count_and_no_short_tab() {
+        let state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+            synthetic_meeting("1793955600000-3", "Invented juniper retro"),
+        ]);
+        let elements = render_home(state, 1334.0).elements();
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meetings-title-row"))
+            .expect("title row");
+        let prefix = format!("{}/", row.path);
+        let under: Vec<_> = elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .collect();
+        // The count sits beside the title in the same row (new), not as a second-line
+        // "3 meetings" count (old).
+        assert!(under.iter().any(|e| e.text.as_deref() == Some("Meetings")));
+        assert!(under.iter().any(|e| e.text.as_deref() == Some("3")));
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.text.as_deref() != Some("Short recordings"))
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some("filter-short-recordings"))
+        );
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.key.as_deref() == Some("meetings-title-more"))
+        );
+    }
+
+    #[test]
+    fn title_count_shows_shown_of_total_when_searched() {
+        let mut state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+            synthetic_meeting("1793955600000-3", "Invented juniper retro"),
+        ]);
+        state.search = rune::TextEdit::new("blueberry");
+        state.refresh_list();
+        let elements = render_home(state, 1334.0).elements();
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meetings-title-row"))
+            .expect("title row");
+        let prefix = format!("{}/", row.path);
+        assert!(
+            elements
+                .iter()
+                .filter(|e| e.path.starts_with(&prefix))
+                .any(|e| e.text.as_deref() == Some("1 of 3"))
+        );
+    }
+
+    #[test]
+    fn title_menu_opens_the_deleted_list() {
+        let mut rt = render_home(
+            home_state(vec![synthetic_meeting(
+                "1793955600000-1",
+                "Invented blueberry standup",
+            )]),
+            1334.0,
+        );
+        rt.update(|s, _| s.more_menu = Some("meetings-title-menu".into()));
+        rt.frame(0.0);
+        assert!(
+            rt.find("meetings-open-deleted").is_some(),
+            "the title menu holds Deleted meetings"
+        );
+        tap(&mut rt, "meetings-open-deleted");
+        assert!(
+            rt.find("deleted-close").is_some(),
+            "selecting it opens the same deleted list the old quiet button did"
+        );
+    }
+
+    #[test]
+    fn rows_keep_their_more_menu_and_lose_the_project_chip() {
+        let mut state = home_state(vec![synthetic_meeting(
+            "1793955600000-1",
+            "Invented blueberry standup",
+        )]);
+        state.config.features.projects = true;
+        state.areas.meeting_projects.insert(
+            "1793955600000-1".into(),
+            super::super::project::MeetingProject {
+                name: Some("Invented Atlas".into()),
+                confirmed: true,
+            },
+        );
+        let elements = render_home(state, 1334.0).elements();
+        // The row More menu stays (old and new key).
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.key.as_deref() == Some("more-row-1793955600000-1-button"))
+        );
+        // The passive row chip is gone (old visible "Invented Atlas" pill); the meeting
+        // page keeps project::reading_chip.
+        assert!(elements.iter().all(|e| {
+            !e.text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Invented Atlas")
+        }));
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.text.as_deref() != Some("Add to project"))
+        );
     }
 
     #[test]

@@ -359,7 +359,7 @@ impl State {
         self.request_refresh();
     }
 
-    fn open_deleted(&mut self) {
+    pub(super) fn open_deleted(&mut self) {
         if self.delete_ui.pending.is_some() {
             return;
         }
@@ -427,11 +427,6 @@ pub(super) fn menu_row(m: &Meeting, trigger: &str, p: Palette) -> El {
     widgets::menu_row("Delete meeting", p, None, None, None)
         .key("delete-meeting")
         .on_press(move |s: &mut State| s.ask_to_delete(&id, &trigger))
-}
-
-pub(super) fn list_button(p: Palette) -> El {
-    widgets::quiet_button("Deleted meetings", OPEN_DELETED, p)
-        .on_press(|s: &mut State| s.open_deleted())
 }
 
 pub(super) fn undo_button(s: &State, id: &str, p: Palette) -> El {
