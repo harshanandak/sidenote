@@ -3392,13 +3392,13 @@ fn a_no_id_wait_has_a_bounded_end() {
 
     rt.update(|s, _| s.live_notes = TextEdit::new(NOTES));
     let recovery = core::state_dir().join("unsaved-notes");
-    let copy = recovery.join(format!("{MEETING_START}-close-{}-0.md", std::process::id()));
-    std::fs::create_dir_all(&copy).unwrap();
+    std::fs::write(&recovery, "synthetic recovery blocker").unwrap();
+    rt.frame(0.0);
     tap(&mut rt, "live-go-meetings");
     assert!(rt.state.on_live() && rt.state.live.as_ref().unwrap().close_failed);
     assert_eq!(rt.state.live_notes.text, NOTES);
     assert!(rt.find("live-save-warning").is_some());
-    std::fs::remove_dir(&copy).unwrap();
+    std::fs::remove_file(&recovery).unwrap();
     rt.update(|s, _| assert!(s.live_close()));
     rt.frame(0.0);
     tap(&mut rt, "live-go-meetings");
@@ -3554,6 +3554,8 @@ fn source_loss_retries_close_and_drops_late_generated_notes() {
     const RESULT: &str = "Late notes after a refused source-loss close.";
     std::fs::write(&manifest, manifest_bytes).unwrap();
     finish_generated_notes(&folder, &status, job, RESULT);
+    rt.state.live_tick();
+    rt.state.live_sync();
     refresh_navigation(&mut rt);
     assert!(rt.state.live.is_none() && rt.state.live_ready.is_none());
     assert_rendered(&rt, RESULT, false);

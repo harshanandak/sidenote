@@ -14,6 +14,7 @@ use chrono::{DateTime, Local, TimeZone};
 use rune::{El, ScrollSpec, TextEdit, col, el, row};
 use rune_kit::Kit;
 use sidenote::core::live::{self as feed_io, LiveLine, Read};
+use sidenote::core::{Meeting as CatalogMeeting, meeting_delete};
 use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -463,16 +464,12 @@ impl Live {
 
     fn meeting_id(&self) -> Option<String> {
         if let Some(folder) = &self.folder {
-            return folder
-                .file_name()
-                .map(|id| id.to_string_lossy().into_owned());
+            return Some(folder.file_name()?.to_string_lossy().into_owned());
         }
         let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
         feed.hint.clone().or_else(|| {
-            feed.folder
-                .as_deref()?
-                .file_name()
-                .map(|id| id.to_string_lossy().into_owned())
+            let folder = feed.folder.as_deref()?;
+            Some(folder.file_name()?.to_string_lossy().into_owned())
         })
     }
 
@@ -824,10 +821,12 @@ impl State {
             self.go_meetings();
         }
     }
-
     /// Called after each Hex sample and each scan: moves the page along its three phases.
     pub fn live_sync(&mut self) {
         if self.hex_stop_pending() {
+            return;
+        }
+        if matches!(self.live.as_ref(), Some(live) if live.close_failed || live.source_lost) {
             return;
         }
         self.parts_sync();
@@ -934,18 +933,14 @@ impl State {
     pub(super) fn cancel_missing_summary(&mut self, incoming: &[sidenote::core::Meeting]) {
         let missing = self.live.as_ref().is_some_and(|live| {
             live.phase == Phase::Making
-                && (live.source_lost || {
-                    let Some(id) = live.meeting_id() else {
-                        return false;
-                    };
-                    let in_catalog = |meeting: &sidenote::core::Meeting| {
-                        meeting.device.is_none() && meeting.id == id
-                    };
-                    let was_visible = self.meetings.iter().any(in_catalog)
-                        || sidenote::core::meeting_delete::suppressed_ids(&self.store.root)
-                            .is_ok_and(|ids| ids.contains(&id));
-                    !incoming.iter().any(in_catalog) && was_visible
-                })
+                && (live.source_lost
+                    || live.meeting_id().is_some_and(|id| {
+                        let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
+                        let deleted = meeting_delete::suppressed_ids(&self.store.root);
+                        let suppressed = deleted.is_ok_and(|ids| ids.contains(&id));
+                        (self.meetings.iter().any(in_catalog) || suppressed)
+                            && !incoming.iter().any(in_catalog)
+                    }))
         });
         if !missing {
             return;
@@ -1148,6 +1143,7 @@ impl State {
     pub fn live_tick(&mut self) -> bool {
         if self.live.as_ref().is_some_and(|l| {
             !l.scene
+                && !(l.close_failed || l.source_lost)
                 && l.session.is_some()
                 && l.parts_checked.is_none_or(|at| at.elapsed() >= FEED_EVERY)
         }) {
@@ -1712,7 +1708,6 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
                     .key("live-go-meetings"),
             );
     }
-
     if let Some(skipped) = summary_skip(s) {
         return col()
             .key("live-summary-skipped")
