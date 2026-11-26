@@ -1268,8 +1268,7 @@ fn stamp(seconds: u64) -> String {
 /// they are back at the bottom.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PanelLimits {
-    #[cfg(test)]
-    space: f32,
+    pub space: f32,
     pub thread: f32,
     pub transcript: f32,
 }
@@ -1313,7 +1312,6 @@ fn panel_limits(
         0.0
     };
     PanelLimits {
-        #[cfg(test)]
         space,
         thread: thread_limit,
         transcript,
@@ -1461,7 +1459,8 @@ fn bar(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El 
         .as_ref()
         .filter(|l| l.panel_open && cap >= 44.0)
         .map(|_| transcript_panel(s, p, cap));
-    ask::overlay_with(s, k, p, narrow, layer, parts_control(s, p), panel)
+    let control = parts_control(s, k, p, layer);
+    ask::overlay_with(s, k, p, narrow, layer, Some(control), panel)
 }
 
 /// The notes editor: plain text, several lines, under the "Meeting at HH:MM" heading.
