@@ -998,11 +998,18 @@ impl State {
             center: true,
             left: 3,
         });
-        tx.scroll_key_to(format!("line-{line}"), self.panel_offset());
+        self.scroll_to_centered_target(format!("line-{line}"), tx);
     }
 
-    /// Where a transcript line sits below the top of the panel's scroll area when a jump lands:
-    /// about the middle of what the panel's search row and footer leave visible.
+    fn scroll_to_centered_target(&self, key: String, tx: &mut Tx) {
+        if !self.meeting_ui.tabs && key.starts_with("line-") {
+            tx.scroll_center_in_instant("transcript-scroll", format!("{key}/transcript-words"));
+        } else {
+            tx.scroll_key_to(key, self.panel_offset());
+        }
+    }
+
+    /// Where to place a target when its scroll area has no scoped centering.
     fn panel_offset(&self) -> f32 {
         if !self.meeting_ui.tabs {
             return ((meeting::reading::transcript_height(self) - 100.0) / 2.0).max(24.0);
@@ -2131,7 +2138,7 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
     }
     if let Some(mut pending) = s.pending_scroll.take() {
         if pending.center {
-            tx.scroll_key_to(pending.key.clone(), s.panel_offset());
+            s.scroll_to_centered_target(pending.key.clone(), tx);
         } else {
             tx.scroll_key_to(pending.key.clone(), 12.0);
         }
@@ -4886,7 +4893,9 @@ mod citation_tests {
             ),
         )
         .unwrap();
+        let detect = hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        hex::SKIP_INSTALL_DETECT.set(detect);
         state.meetings.push(Meeting::load(&folder).unwrap());
 
         for (stamp, expected) in [

@@ -948,6 +948,26 @@ pub fn transcript_height(s: &State) -> f32 {
     (s.pane_h.get() * 0.34).clamp(minimum, 320.0)
 }
 
+fn measured_height(key: &str) -> f32 {
+    rune::memo::layout_with(key, |rect| rect[3]).unwrap_or_default()
+}
+
+fn transcript_min_height() -> f32 {
+    // Measure the chrome after flex wrapping so the viewport keeps room at any toolbar width.
+    let chrome: f32 = [
+        "transcript-header",
+        "transcript-toolbar",
+        "transcript-top-rule",
+        "transcript-bottom-rule",
+        "transcript-footer",
+        "meeting-hide-transcript",
+    ]
+    .into_iter()
+    .map(measured_height)
+    .sum();
+    chrome + 56.0
+}
+
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let Some(m) = s.current() else {
         return col();
@@ -957,8 +977,29 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // The wide grid already sets the notes 44 points in from its edge, so its column has no
     // gutter of its own; below the grid's width the notes keep the page gutter.
     let side = super::gutter(s);
+    let phone = super::phone(s);
+    const DOCK_MARGIN: f32 = 6.0;
+    const DIVIDER_MARGIN: f32 = 8.0;
+    let (transcript_only, surface_height) = if s.transcript_open {
+        let minimum = transcript_min_height();
+        let desired = transcript_height(s).max(minimum);
+        let pane_height =
+            rune::memo::layout_with("meeting-pane", |rect| rect[3]).unwrap_or(s.pane_h.get());
+        let available = pane_height
+            - measured_height("meeting-reading-notice")
+            - measured_height("meeting-bottom-bar");
+        let shared = available
+            - measured_height("meeting-header")
+            - DOCK_MARGIN
+            - if phone { 1.0 + DIVIDER_MARGIN } else { 0.0 };
+        let transcript_only = shared < minimum;
+        let room = if transcript_only { available } else { shared };
+        (transcript_only, desired.min(room.max(0.0)))
+    } else {
+        (false, 0.0)
+    };
     let overlay_thread =
-        super::phone(s) && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
+        phone && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
     let bottom_pad = 16.0
         + if overlay_thread {
             s.overlay_h.get()
@@ -973,10 +1014,23 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut sections = Vec::new();
     let mut doc = narrative(s, m, p, &visit, &mut sections);
     visit.retain(&sections);
-    let marks = (strip && sections.len() >= 3).then(|| visit.marks(&sections, p));
-    let chip = (!strip && sections.len() >= 3).then(|| visit.chip(&sections, k, p, layer));
+    let marks =
+        (!transcript_only && strip && sections.len() >= 3).then(|| visit.marks(&sections, p));
+    let mut header_layer = Vec::new();
+    let chip = (!strip && sections.len() >= 3).then(|| {
+        visit.chip(
+            &sections,
+            k,
+            p,
+            if transcript_only {
+                &mut header_layer
+            } else {
+                layer
+            },
+        )
+    });
     drop(visit);
-    if !wide {
+    if !wide && !transcript_only {
         let inset = if s.app_w.get() < super::PHONE {
             0.0
         } else {
@@ -1001,25 +1055,29 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     } else {
         main.grow(1.0).min_w(0.0)
     };
-    let mut frame = col().key("meeting-scroll-frame");
-    frame = if hang > 0.0 {
-        let w = COLUMN + 2.0 * hang;
-        frame.w(w).min_w(w).max_w(w).ml(-hang).mr(-hang)
+    main = if transcript_only {
+        main.justify_between()
     } else {
-        frame.w_full()
+        let frame = col().key("meeting-scroll-frame");
+        let frame = if hang > 0.0 {
+            let w = COLUMN + 2.0 * hang;
+            frame.w(w).min_w(w).max_w(w).ml(-hang).mr(-hang)
+        } else {
+            frame.w_full()
+        };
+        main.child(
+            frame.grow(1.0).min_w(0.0).min_h(0.0).child(
+                scroll(
+                    doc.max_w(COLUMN + 2.0 * (side + hang))
+                        .px(side + hang)
+                        .pt(6.0)
+                        .pb(bottom_pad),
+                    "meeting-scroll",
+                )
+                .grow(1.0),
+            ),
+        )
     };
-    main = main.child(
-        frame.grow(1.0).min_w(0.0).min_h(0.0).child(
-            scroll(
-                doc.max_w(COLUMN + 2.0 * (side + hang))
-                    .px(side + hang)
-                    .pt(6.0)
-                    .pb(bottom_pad),
-                "meeting-scroll",
-            )
-            .grow(1.0),
-        ),
-    );
     if s.transcript_open {
         let panel = col()
             .key("meeting-transcript-view")
@@ -1033,19 +1091,17 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 .key("meeting-transcript-dock")
                 .w_full()
                 .px(side)
-                .mb(6.0)
-                .shrink()
-                .min_h(0.0)
-                .children(
-                    super::phone(s).then(|| hairline(p).key("meeting-transcript-divider").mb(8.0)),
-                )
+                .mb(if transcript_only { 0.0 } else { DOCK_MARGIN })
+                .children((phone && !transcript_only).then(|| {
+                    hairline(p)
+                        .key("meeting-transcript-divider")
+                        .mb(DIVIDER_MARGIN)
+                }))
                 .child(
                     col()
                         .key("meeting-transcript-surface")
                         .w_full()
-                        .h(transcript_height(s))
-                        .min_h(0.0)
-                        .shrink()
+                        .h(surface_height)
                         .radius(14.0)
                         .clip_rounded(14.0)
                         .fill(p.card)
@@ -1113,7 +1169,19 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     } else {
         columns = columns.child(main);
     }
-    let mut head = header(s, k, m, side, p, layer, chip);
+    let mut head = header(
+        s,
+        k,
+        m,
+        side,
+        p,
+        if transcript_only {
+            &mut header_layer
+        } else {
+            layer
+        },
+        chip,
+    );
     if strip {
         head = row()
             .w_full()
@@ -1134,7 +1202,15 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .min_h(0.0)
         .fill(p.bg);
     if let Some(note) = &s.notice {
-        pane = pane.child(notice_bar(note, p));
+        pane = pane.child(notice_bar(note, p).key("meeting-reading-notice"));
+    }
+    if transcript_only {
+        // Keep the header width and intrinsic height measurable while it is out of flow.
+        head = head
+            .w_full()
+            .pin(Some(0.0), Some(0.0), Some(0.0), None)
+            .opacity(0.0)
+            .inert();
     }
     pane.child(head).child(columns)
 }
@@ -1205,16 +1281,26 @@ mod tests {
     }
 
     fn reading_page(id: &str, width: f32, session: Option<live::Live>) -> Runtime<State> {
+        reading_page_at(Some(id), (width, 600.0), session)
+    }
+
+    fn reading_page_at(
+        id: Option<&str>,
+        size: (f32, f32),
+        session: Option<live::Live>,
+    ) -> Runtime<State> {
+        let detect = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
         let mut state = State::new();
+        crate::ui::hex::SKIP_INSTALL_DETECT.set(detect);
         state.meeting_ui.tabs = false;
         crate::ui::scene_agents(&mut state, &["codex"]);
-        state.selected = Some(id.into());
+        state.selected = id.map(str::to_owned);
         state.live = session;
         state.load_saved();
         let mut rt = Runtime::with_text(
             state,
             view,
-            (width, 600.0),
+            size,
             Env::default(),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
         );
@@ -1476,6 +1562,169 @@ mod tests {
         let [_, y, _, h] = element(&rt, "transcript-copy").rect;
         let hide = element(&rt, "meeting-hide-transcript").rect;
         assert!(scroll[1] + scroll[3] <= y && y + h <= hide[1]);
+    }
+
+    fn press_visible(rt: &mut Runtime<State>, key: &str) {
+        let [x, y, w, h] = element(rt, key).visible;
+        assert!(w > 0.0 && h > 0.0, "{key} must be visible");
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    fn citation_on_reading_page(size: (f32, f32), from_ask: bool, suffix: u32) {
+        use std::fmt::Write;
+
+        let (width, height) = size;
+        let id = format!("1800000000147-{suffix}");
+        crate::test_paths::isolate();
+        let folder = core::meetings_dir().join(&id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("english-summary.json"),
+            r#"{"title":"Workshop","topics":[{"title":"Venue","points":[{"type":"decided","text":"Book the hall.","at":["00:27"]}]}]}"#,
+        )
+        .unwrap();
+        let mut transcript = String::new();
+        for second in 0..55 {
+            let words = if second == 27 {
+                "Book the hall."
+            } else {
+                "Discuss the workshop."
+            };
+            writeln!(
+                transcript,
+                "[00:00:{second:02}.000] Maya (English): {words}"
+            )
+            .unwrap();
+        }
+        std::fs::write(folder.join("english-transcript.md"), transcript).unwrap();
+        let routed = core::state_dir().join("local/transcripts").join(&id);
+        std::fs::create_dir_all(&routed).unwrap();
+        std::fs::write(
+            routed.join("transcript.segments.v1.json"),
+            serde_json::json!({
+                "schema": "transcript.segments.v1",
+                "experimental": false,
+                "input_checksum": "",
+                "segments": [{
+                    "start": 27.0, "end": 28.0, "route": "en", "lang": "en",
+                    "text_original": "Book the hall.", "english_reading": "Book the hall.",
+                    "provider": "fixture", "model": "fixture", "status": "ok",
+                    "sources": [], "translate": false,
+                }],
+                "english_reading": "Book the hall.",
+                "wall_seconds": 0,
+                "warnings": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut rt = reading_page_at((!from_ask).then_some(id.as_str()), size, None);
+        if from_ask {
+            rt.update(|s, _| {
+                s.store = core::StateStore::new(routed.join("ask"));
+                s.saved.messages.push(core::Message {
+                    role: "assistant".into(),
+                    text: format!("[[{id}@00:27]]"),
+                    ..Default::default()
+                });
+                s.store.save(core::ALL_KEY, &s.saved).unwrap();
+            });
+            rt.settle_all();
+            rt.frame(0.0);
+            press_visible(&mut rt, &format!("cite:{id}@00:27"));
+        } else {
+            section_focus(&mut rt, "meeting-source-pt-0-0");
+            section_key(&mut rt, Key::Text(" ".into()));
+        }
+
+        assert!(rt.state.transcript_open);
+        assert!(!rt.state.meeting_ui.time_open);
+        assert_eq!(rt.state.highlight, Some(27));
+        let search = element(&rt, "transcript-filter").rect;
+        let language = element(&rt, "transcript-language-view").rect;
+        let time = element(&rt, "transcript-time-toggle").rect;
+        assert_eq!(language[1].max(time[1]) > search[1], width == 360.0);
+        let scroll = element(&rt, "transcript-scroll").rect;
+        assert!(scroll[3] >= 56.0, "Transcript viewport: {scroll:?}");
+        let words = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.key.as_deref() == Some("transcript-words")
+                    && e.text.as_deref() == Some("Book the hall.")
+            })
+            .expect("cited transcript text");
+        assert_eq!(words.visible, words.rect, "Cited text: {words:?}");
+        let [x, y, w, h] = element(&rt, "meeting-transcript-surface").rect;
+        for key in ["ask-prompt", "ask-pill"] {
+            let control = element(&rt, key);
+            let [left, top, width_used, height_used] = control.rect;
+            assert!(
+                top >= y + h
+                    && top + height_used <= height
+                    && left >= 0.0
+                    && left + width_used <= width,
+                "{key} at {:?} must fit below the surface at {:?} in {size:?}",
+                control.rect,
+                [x, y, w, h]
+            );
+            assert_eq!(control.visible, control.rect, "{key} is clipped");
+        }
+        for key in ["transcript-copy", "meeting-hide-transcript"] {
+            let control = element(&rt, key);
+            let [left, top, width, height] = control.rect;
+            assert!(
+                left >= x && top >= y && left + width <= x + w && top + height <= y + h,
+                "{key} is outside the transcript surface"
+            );
+            assert_eq!(control.visible, control.rect, "{key} is clipped");
+        }
+        let header_visible = |rt: &Runtime<State>| {
+            rt.elements().iter().any(|e| {
+                e.key.as_deref() == Some("meeting-header") && e.opacity > 0.0 && e.visible[3] > 0.0
+            })
+        };
+        assert_eq!(header_visible(&rt), height == 900.0);
+        assert_eq!(rt.find("meeting-scroll").is_some(), height == 900.0);
+        press_visible(&mut rt, "back-to-summary");
+        assert!(!rt.state.transcript_open);
+        if from_ask {
+            assert!(rt.state.selected.is_none());
+            assert!(rt.find(&format!("cite:{id}@00:27")).is_some());
+            rt.update(|s, tx| s.select(&id, tx));
+            rt.settle_all();
+            rt.frame(0.0);
+        }
+        assert!(header_visible(&rt));
+    }
+
+    #[test]
+    fn summary_source_keeps_transcript_room_on_short_phone() {
+        citation_on_reading_page((360.0, 480.0), false, 1);
+    }
+
+    #[test]
+    fn summary_source_keeps_transcript_room_on_short_desktop() {
+        citation_on_reading_page((1334.0, 480.0), false, 2);
+    }
+
+    #[test]
+    fn ask_citation_keeps_transcript_room_on_short_phone() {
+        citation_on_reading_page((360.0, 480.0), true, 3);
+    }
+
+    #[test]
+    fn ask_citation_keeps_transcript_room_on_short_desktop() {
+        citation_on_reading_page((1334.0, 480.0), true, 4);
+    }
+
+    #[test]
+    fn tall_reading_page_keeps_header_alongside_transcript() {
+        citation_on_reading_page((1334.0, 900.0), false, 5);
     }
 
     #[test]

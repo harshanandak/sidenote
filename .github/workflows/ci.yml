@@ -309,7 +309,7 @@ jobs:
             ui::recording_state_tests::recording_clock_stays_visible_on_the_live_page \
             ui::recording_state_tests::pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
-            ui::meeting::reading::tests::paused_meeting_transcript_controls_fit_a_narrow_sheet \
+            ui::meeting::reading::tests:: ui::meeting::tests:: ui::citation_tests:: \
             ui::live::recording_control::tests:: \
             ui::list::tests::meeting_row_uses_the_singular_for_one_task \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
@@ -318,15 +318,12 @@ jobs:
             ui::ask_switch_tests::suppression_failure_during_ui_apply_retries_unchanged_catalog \
             ui::ask_switch_tests::meeting_ticks_keep_the_all_meetings_chat \
             ui::list::tests::home_last_row_scrolls_clear_of_ask \
-            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
             ui::recording_state_tests::pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard \
             ui::ask_switch_tests::meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks \
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
-            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
-            ui::meeting::reading::tests::opening_go_to_time_leaves_transcript_room_on_a_short_phone \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
             ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \
             ui::ask_switch_tests::ask_retry_submits_the_failed_question_once \
