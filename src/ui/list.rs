@@ -934,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_filter_keeps_enter_for_its_menu() {
+    fn toolbar_filter_keeps_enter_for_its_menu() {
         let mut rt = render_home(home_state(trio_meetings()), 1334.0);
         rt.update(|_, tx| tx.focus("meetings-filter", true));
         key(&mut rt, Key::Enter);
