@@ -33,9 +33,17 @@ fn needs_you(task: &TaskItem, owner: &str, teams: &Teams) -> bool {
     !task.done && (task.mine == Some(true) || task.owner.as_deref().is_some_and(owned))
 }
 
+// The profile name the sidebar shows; engine_settings.owner_name is only a legacy import snapshot.
+fn your_name(s: &State) -> &str {
+    s.ai_notes
+        .settings
+        .as_ref()
+        .map_or("", |n| n.your_name.trim())
+}
+
 fn task_counts(s: &State, today: NaiveDate) -> (usize, usize) {
     let teams = &s.tasks.teams;
-    let owner = people::key(&teams.owner_name(&s.config.engine_settings.owner_name));
+    let owner = people::key(&teams.owner_name(your_name(s)));
     s.tasks
         .all
         .iter()
@@ -185,7 +193,7 @@ fn task_card(key: &str, title: &str, tasks: &[&TaskItem], today: NaiveDate, p: P
 }
 
 fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) -> El {
-    let owner = &s.config.engine_settings.owner_name;
+    let owner = your_name(s);
     let (open, late) = task_counts(s, today);
     let recent: Vec<_> = recent_meetings(&s.meetings, today).collect();
     let summary = s.check.day_summaries.get(&today).or_else(|| {
@@ -240,6 +248,13 @@ mod tests {
     use super::super::{nav::Page, theme};
     use super::*;
 
+    fn profile(name: &str) -> sidenote::core::notes::NotesSettings {
+        sidenote::core::notes::NotesSettings {
+            your_name: name.into(),
+            ..Default::default()
+        }
+    }
+
     const TODAY: NaiveDate = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
 
     fn meeting(root: &std::path::Path, date: NaiveDate, summary: &str) -> Meeting {
@@ -280,7 +295,7 @@ mod tests {
         tasks[1].mine = Some(false);
         tasks[2].done = true;
         let mut s = State::new();
-        s.config.engine_settings.owner_name = "Casey Morgan".into();
+        s.ai_notes.settings = Some(profile("Casey Morgan"));
         s.tasks.all = tasks;
         assert!(s.tasks.items.is_empty());
         assert_eq!(task_counts(&s, TODAY), (3, 1));
@@ -302,7 +317,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let today = TODAY;
         let mut state = State::new();
-        state.config.engine_settings.owner_name = "Casey Morgan".into();
+        state.ai_notes.settings = Some(profile("Casey Morgan"));
         state.meetings = vec![
             meeting(
                 root.path(),
