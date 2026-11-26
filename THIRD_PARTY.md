@@ -527,3 +527,8 @@ below are an inference from those terms and the package declarations.
 The Mozilla certificate data in webpki-roots uses [CDLA-Permissive-2.0](https://cdla.dev/permissive-2-0/). The full text is retained in [assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt](assets/licenses/webpki-roots-CDLA-Permissive-2.0.txt) and must accompany distributed certificate data. It is separate from the software licences above.
 
 Lucide 1.61.0 icons: ISC, with Feather-derived icons under MIT. Both notices are in `assets/licenses/lucide-LICENSE.txt`, included in the app package.
+
+Solar Linear icons by 480 Design and Damir Tuarshe use CC BY 4.0. The shape data
+comes from [Iconify’s pinned Solar snapshot](https://github.com/iconify/icon-sets/blob/d1fdcf54272b299075b4fbf21851147e8c3846f9/json/solar.json).
+Sidenote normalizes the shape attributes and adds two stroke widths.
+See [the Solar notice](assets/licenses/solar-LICENSE.txt) for attribution and licence terms.
