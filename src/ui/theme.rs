@@ -1,7 +1,7 @@
 //! Colours, fonts and the type scale. Named base colours feed meaning tokens, which the
 //! component palette maps to the fields used by today's renderers. The caller supplies the
-//! light/dark setting. Classic uses coral for the main action and focus, and green for status
-//! and enabled switches. docs/design/typography.md lists the text contrast ratios.
+//! light/dark setting. The default palette is Olive, built on a shared base.
+//! docs/design/typography.md lists the text contrast ratios.
 use rune::{Color, Family, TextStyle};
 use rune_kit::{Kit, PaletteSeed};
 
@@ -219,12 +219,8 @@ mod classic {
 type PresetConstructor = fn(bool) -> MeaningTokens;
 
 // `palette` uses the first constructor for existing renderers.
-const PRESETS: [(&str, PresetConstructor); 4] = [
-    ("Classic", classic::meaning),
-    ("Olive", olive),
-    ("Lime", lime),
-    ("Rose Clay", rose_clay),
-];
+const PRESETS: [(&str, PresetConstructor); 3] =
+    [("Olive", olive), ("Lime", lime), ("Rose Clay", rose_clay)];
 
 fn olive(dark: bool) -> MeaningTokens {
     let pick = |light, night| hex(if dark { night } else { light });
@@ -382,8 +378,8 @@ fn rose_clay(dark: bool) -> MeaningTokens {
 }
 
 pub fn palette(dark: bool) -> Palette {
-    let [(_, classic), ..] = PRESETS;
-    component_palette(&classic(dark))
+    let [(_, default), ..] = PRESETS;
+    component_palette(&default(dark))
 }
 
 fn component_palette(tokens: &MeaningTokens) -> Palette {
@@ -530,9 +526,9 @@ mod token_tests {
     use super::*;
 
     #[test]
-    fn classic_palette_matches_shipped_light_and_dark_colours() {
+    fn classic_base_keeps_its_light_and_dark_colours() {
         for dark in [false, true] {
-            let p = palette(dark);
+            let p = component_palette(&classic::meaning(dark));
             for (name, actual, light, night) in [
                 ("bg", p.bg, "#fcfbf8", "#1a1a18"),
                 ("card", p.card, "#ffffff", "#242422"),
@@ -582,6 +578,63 @@ mod token_tests {
                     hex(if dark { night } else { light }),
                     "{name}, dark={dark}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn default_palette_is_olive() {
+        assert_eq!(
+            PRESETS.map(|(name, _)| name),
+            ["Olive", "Lime", "Rose Clay"]
+        );
+        for dark in [false, true] {
+            let p = palette(dark);
+            let olive = component_palette(&olive(dark));
+            assert_eq!(p.link, olive.link, "link, dark={dark}");
+            for (name, actual, expected) in [
+                ("bg", p.bg, olive.bg),
+                ("card", p.card, olive.card),
+                ("raised", p.raised, olive.raised),
+                ("side", p.side, olive.side),
+                ("ink", p.ink, olive.ink),
+                ("body", p.body, olive.body),
+                ("soft", p.soft, olive.soft),
+                ("faint", p.faint, olive.faint),
+                ("line", p.line, olive.line),
+                ("mark", p.mark, olive.mark),
+                ("accent", p.accent, olive.accent),
+                ("ok", p.ok, olive.ok),
+                ("okbg", p.okbg, olive.okbg),
+                ("warn", p.warn, olive.warn),
+                ("warnbg", p.warnbg, olive.warnbg),
+                ("open", p.open, olive.open),
+                ("chip", p.chip, olive.chip),
+                ("sel", p.sel, olive.sel),
+                ("hit", p.hit, olive.hit),
+                ("shadow", p.shadow, olive.shadow),
+                ("scrim", p.scrim, olive.scrim),
+                ("button_fill", p.button_fill, olive.button_fill),
+                ("button_ink", p.button_ink, olive.button_ink),
+                ("switch_on", p.switch_on, olive.switch_on),
+                ("switch_knob", p.switch_knob, olive.switch_knob),
+                ("button_border", p.button_border, olive.button_border),
+                ("danger", p.danger, olive.danger),
+                ("danger_border", p.danger_border, olive.danger_border),
+                ("button_hover", p.button_hover, olive.button_hover),
+                ("button_pressed", p.button_pressed, olive.button_pressed),
+                (
+                    "button_primary_hover",
+                    p.button_primary_hover,
+                    olive.button_primary_hover,
+                ),
+                (
+                    "button_primary_pressed",
+                    p.button_primary_pressed,
+                    olive.button_primary_pressed,
+                ),
+            ] {
+                assert_eq!(actual, expected, "{name}, dark={dark}");
             }
         }
     }
