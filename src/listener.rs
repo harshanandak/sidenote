@@ -955,12 +955,15 @@ mod pipeline_tests {
             })
             .unwrap();
         assert!(!filtered);
-        assert_eq!(command.get_envs().count(), 8);
-        assert!(
-            command.get_envs().all(
-                |(_, value)| value == Some(std::ffi::OsStr::new("synthetic environment value"))
-            )
-        );
+        // Eight synthetic settings plus the removed PSModulePath.
+        assert_eq!(command.get_envs().count(), 9);
+        assert!(command.get_envs().all(|(key, value)| {
+            if key == std::ffi::OsStr::new("PSModulePath") {
+                value.is_none()
+            } else {
+                value == Some(std::ffi::OsStr::new("synthetic environment value"))
+            }
+        }));
         assert_eq!(
             command
                 .get_args()
