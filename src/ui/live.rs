@@ -14,6 +14,7 @@ use chrono::{DateTime, Local, TimeZone};
 use rune::{El, ScrollSpec, TextEdit, col, el, row};
 use rune_kit::Kit;
 use sidenote::core::live::{self as feed_io, LiveLine, Read};
+use sidenote::core::{Meeting as CatalogMeeting, meeting_delete};
 use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -27,6 +28,7 @@ use std::{
 };
 
 type Work = Box<dyn FnOnce() + Send>;
+pub(super) const NO_ID_COPY: &str = "Recording saved. Its summary will appear in Meetings.";
 pub(super) struct NoteWriter {
     tx: mpsc::Sender<Work>,
     stopped: Arc<AtomicBool>,
@@ -208,6 +210,7 @@ pub(super) fn summary_skip(s: &State) -> Option<sidenote::core::notes::SummarySk
 pub(super) fn scene_making(s: &mut State, status: &str) {
     hex::scene(s, false);
     let mut live = Live::scene(Phase::Making, Some("Weekly planning"));
+    live.feed.lock().unwrap_or_else(|e| e.into_inner()).hint = Some("1800000000000-1".into());
     live.feed
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -291,6 +294,7 @@ pub struct Live {
     pub phase: Phase,
     /// The meetings that existed when this one began, so the new one can be told apart.
     known: HashSet<String>,
+    source_lost: bool,
     began: Instant,
     stopped: Option<Instant>,
     /// When the meeting began, for the heading. `exact` is false until Hex gives the real start.
@@ -410,6 +414,7 @@ impl Live {
             notes_response_time: 0,
             phase,
             known,
+            source_lost: false,
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
@@ -457,31 +462,18 @@ impl Live {
         live
     }
 
-    fn matches_meeting(&self, meeting: &sidenote::core::Meeting) -> bool {
-        if meeting.device.is_some() {
-            return false;
-        }
+    fn meeting_id(&self) -> Option<String> {
         if let Some(folder) = &self.folder {
-            return folder
-                .file_name()
-                .is_some_and(|id| id == meeting.id.as_str());
+            return Some(folder.file_name()?.to_string_lossy().into_owned());
         }
-        {
-            let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(id) = &feed.hint {
-                return meeting.id == *id;
-            }
-            if let Some(folder) = &feed.folder {
-                return folder
-                    .file_name()
-                    .is_some_and(|id| id == meeting.id.as_str());
-            }
-        }
-        meeting
-            .started
-            .map(|t| t.timestamp_millis())
-            .or_else(|| meeting.id.split_once('-')?.0.parse::<i64>().ok())
-            .is_some_and(|made| made >= self.wall_start.timestamp_millis().saturating_sub(120_000))
+        let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+        feed.hint.clone().or_else(|| {
+            let folder = feed.folder.as_deref()?;
+            Some(folder.file_name()?.to_string_lossy().into_owned())
+        })
+    }
+    fn matches_meeting(&self, meeting: &sidenote::core::Meeting) -> bool {
+        meeting.device.is_none() && self.meeting_id().is_some_and(|id| meeting.id == id)
     }
 
     pub fn scene_pending(mut self, id: &str) -> Self {
@@ -820,9 +812,20 @@ impl State {
         }
     }
 
+    /// Ends a wait that has no source identity without claiming any meeting.
+    pub fn finish_no_id_wait(&mut self) {
+        if self.live_close() {
+            self.live = None;
+            self.live_open = false;
+            self.go_meetings();
+        }
+    }
     /// Called after each Hex sample and each scan: moves the page along its three phases.
     pub fn live_sync(&mut self) {
         if self.hex_stop_pending() {
+            return;
+        }
+        if matches!(self.live.as_ref(), Some(live) if live.close_failed || live.source_lost) {
             return;
         }
         self.parts_sync();
@@ -926,19 +929,45 @@ impl State {
         // The normal refresh keeps calling live_scanned, even when notes take hours.
     }
 
-    /// After a scan: the first new local meeting while notes are being made is the one.
-    pub fn live_scanned(&mut self) {
-        let Some(live) = self.live.as_ref() else {
-            return;
-        };
-        if live.phase != Phase::Making || live.close_failed {
+    pub(super) fn cancel_missing_summary(&mut self, known: bool, incoming: &[CatalogMeeting]) {
+        let missing = self.live.as_ref().is_some_and(|live| {
+            known
+                && live.phase == Phase::Making
+                && (live.source_lost
+                    || live.meeting_id().is_some_and(|id| {
+                        let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
+                        let deleted = meeting_delete::suppressed_ids(&self.store.root);
+                        let suppressed = deleted.is_ok_and(|ids| ids.contains(&id));
+                        (self.meetings.iter().any(in_catalog) || suppressed)
+                            && !incoming.iter().any(in_catalog)
+                    }))
+        });
+        if !missing {
             return;
         }
+        self.live.as_mut().unwrap().source_lost = true;
+        if self.live_close() {
+            self.live = None;
+            self.live_open = false;
+        }
+    }
+    /// Accept a result only when Hex supplied this recording's source identity.
+    pub fn live_scanned(&mut self) {
+        let Some(live) = self.live.as_mut() else {
+            return;
+        };
+        if live.phase != Phase::Making || live.close_failed || live.source_lost {
+            return;
+        }
+        let Some(id) = live.meeting_id() else {
+            return;
+        };
         let found = self
             .meetings
             .iter()
             .find(|m| {
-                live.matches_meeting(m)
+                m.device.is_none()
+                    && id == m.id
                     && m.has_summary()
                     && if let Some(session) = &live.session {
                         session
@@ -1113,6 +1142,7 @@ impl State {
     pub fn live_tick(&mut self) -> bool {
         if self.live.as_ref().is_some_and(|l| {
             !l.scene
+                && !(l.close_failed || l.source_lost)
                 && l.session.is_some()
                 && l.parts_checked.is_none_or(|at| at.elapsed() >= FEED_EVERY)
         }) {
@@ -1659,6 +1689,24 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
             .children((!s.live_notes.text.is_empty()).then(|| your_notes(&s.live_notes.text, p)));
     }
 
+    if s.live
+        .as_ref()
+        .is_some_and(|live| live.session.is_none() && live.meeting_id().is_none())
+    {
+        return col()
+            .key("live-no-id")
+            .w_full()
+            .items_start()
+            .gap(16.0)
+            .child(text_title(&heading(s), if narrow { 28.0 } else { 36.0 }, p))
+            .child(roles::SECTION.wrap(NO_ID_COPY, p.ink).role("status"))
+            .children((!s.live_notes.text.is_empty()).then(|| your_notes(&s.live_notes.text, p)))
+            .child(
+                link("Go to Meetings", p)
+                    .on_press(|s: &mut State| s.finish_no_id_wait())
+                    .key("live-go-meetings"),
+            );
+    }
     if let Some(skipped) = summary_skip(s) {
         return col()
             .key("live-summary-skipped")
@@ -1954,12 +2002,15 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
 }
 
 #[cfg(test)]
-pub(super) fn scene_wait_for_summary(s: &mut State, id: &str) {
+pub(super) fn scene_wait_for_summary(s: &mut State, id: Option<&str>, start_ms: i64) {
     let mut live = Live::scene(Phase::Making, None);
     live.known = s.known_ids();
+    live.wall_start = DateTime::from_timestamp_millis(start_ms)
+        .unwrap()
+        .with_timezone(&Local);
     {
         let mut feed = live.feed.lock().unwrap();
-        feed.hint = Some(id.into());
+        feed.hint = id.map(str::to_owned);
         feed.transcript = Some(Transcript::Ready);
     }
     s.live = Some(live);
@@ -2123,6 +2174,7 @@ mod writer_tests {
         live.wall_start = DateTime::from_timestamp_millis(1794303362394 + 1000)
             .unwrap()
             .with_timezone(&Local);
+        live.feed.lock().unwrap().hint = Some("1794303362394-45464".into());
         live.folder = Some(folder.clone());
         state.live = Some(live);
         state.live_open = true;
@@ -2229,7 +2281,7 @@ mod writer_tests {
     }
 
     #[test]
-    fn folder_timestamp_matches_without_hex_id_or_manifest_start() {
+    fn no_id_never_matches_without_hex_id_or_manifest_start() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("artifacts/live-match-test")
             .join("1794303362394-45464");
@@ -2240,7 +2292,7 @@ mod writer_tests {
         live.wall_start = DateTime::from_timestamp_millis(1794303362394 + 120_000)
             .unwrap()
             .with_timezone(&Local);
-        assert!(live.matches_meeting(&meeting));
+        assert!(!live.matches_meeting(&meeting));
         live.wall_start += chrono::Duration::milliseconds(1);
         assert!(!live.matches_meeting(&meeting));
         live.wall_start -= chrono::Duration::milliseconds(1);
@@ -2293,7 +2345,7 @@ mod writer_tests {
         meeting.started = Some(live.wall_start - chrono::Duration::minutes(20));
         assert!(!live.matches_meeting(&meeting));
         meeting.started = Some(live.wall_start);
-        assert!(live.matches_meeting(&meeting));
+        assert!(!live.matches_meeting(&meeting));
         live.folder = Some(PathBuf::from("1234-1"));
         assert!(!live.matches_meeting(&meeting));
         meeting.id = "1234-1".into();
