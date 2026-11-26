@@ -485,7 +485,7 @@ fn meeting_model_hint_reveals_on_hover_and_keyboard_focus() {
         s.ask_open = true;
     });
     rt.frame(0.0);
-    let hint = "ask-model";
+    let hint = "ask-options";
     let tip = "help-hint-model-tip";
     assert_eq!(rt.presented(tip).unwrap().1, 0.0);
     let (x, y) = rt.find(hint).unwrap();
@@ -1342,27 +1342,55 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     if in_parent("the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat") {
         return;
     }
-    let mut rt = page();
-    rt.update(|s, _| scene_agents(s, ALL_AGENTS));
-    rt.frame(0.0);
-    assert!(rt.find("ask-model").is_none());
-    assert!(rt.find("ask-options-menu").is_none());
-    rt.update(|s, _| s.ask_open = true);
-    rt.frame(0.0);
-    assert!(rt.find("ask-options").is_some());
-    assert!(
-        rt.state.selected.is_some() && rt.find("ask-model").is_some(),
-        "meeting"
-    );
-    rt.update(|s, _| s.selected = None);
-    rt.frame(0.0);
-    assert!(rt.find("ask-model").is_some(), "new chat");
-    rt.update(|s, _| scene_live(s, "", &[], false));
-    rt.frame(0.0);
-    assert!(
-        rt.state.on_live() && rt.find("ask-model").is_some(),
-        "live screen"
-    );
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with(DEFAULT_SIZE, || {
+        let mut runner = core::list_runners()
+            .unwrap()
+            .into_iter()
+            .find(|runner| runner.name == "Codex")
+            .unwrap();
+        let executable = core::state_dir().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        runner.program = executable.to_str().unwrap().into();
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&[runner]).unwrap(),
+        )
+        .unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
+    for context in ["meeting", "new chat", "live screen"] {
+        rt.update(|s, _| {
+            if context == "new chat" {
+                s.go_meetings();
+            } else if context == "live screen" {
+                scene_live(s, "", &[], false);
+                s.reload_runners();
+            }
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.find("ask-options-menu").is_none(), "{context}");
+        tap(&mut rt, "ask-options");
+        rt.settle_all();
+        rt.frame(0.0);
+        let model = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("ask-options-item"))
+                    && e.label
+                        .as_deref()
+                        .is_some_and(|label| label.starts_with("Model"))
+            })
+            .expect(context);
+        tap(&mut rt, model.key.as_deref().unwrap());
+        assert!(rt.state.runner_open, "{context}");
+        assert!(rt.find("runner-menu").is_some(), "{context}");
+        rt.update(|s, _| s.runner_open = false);
+    }
 }
 
 #[test]
@@ -1606,7 +1634,7 @@ fn tab_from_the_ask_editor_focuses_the_model_picker() {
     rt.update_if(|s, tx| poll(s, 0.0, tx));
     rt.frame(0.0);
     rt.update_if(|s, tx| {
-        assert_eq!(tx.focused(), Some("ask-model"));
+        assert_eq!(tx.focused(), Some("ask-options"));
         assert!(s.ask_open);
         false
     });

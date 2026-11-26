@@ -1494,7 +1494,7 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
         .w_full()
         .min_h(2.0 * roles::READ.lh)
         .color(p.ink)
-        .placeholder("Write notes\u{2026}", p.faint)
+        .placeholder("\u{2009}Write notes\u{2026}", p.faint)
         .caret(p.ink, k.selection())
         .label("Your notes")
         .on_edit(|s: &mut State| &mut s.live_notes)

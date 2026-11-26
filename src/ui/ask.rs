@@ -436,6 +436,7 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
 
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
     let (prompt, more) = prompts(s);
+    let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let trigger = pressable(
         row()
             .center()
@@ -443,15 +444,28 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     )
     .key("ask-options")
     .label("Ask options")
+    .description("Choose the question scope, model or a suggested prompt.")
     .size(32.0, 44.0)
     .radius(16.0)
     .hover(p.button_hover)
     .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
+    .hover_group_shared("help-hint-model")
+    .child(
+        hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .dim(0.0)
+            .inert(),
+    )
     .on_press(|s: &mut State| {
-        s.ask_settings.scope_open = !s.ask_settings.scope_open;
-        s.runner_open = false;
+        if s.runner_open {
+            s.runner_open = false;
+        } else {
+            s.ask_settings.scope_open = !s.ask_settings.scope_open;
+        }
     });
+    if s.runner_open && !s.ask_settings.connection.settings.enabled {
+        return runner_choice(s, k, p, trigger, layer);
+    }
     let mut menu = Menu::new("ask-options")
         .trigger(trigger)
         .open(s.ask_settings.scope_open)
@@ -490,7 +504,22 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
                     .on_select(|s: &mut State| s.set_ask_scope(true)),
             );
     }
-    if !s.ask_settings.connection.settings.enabled && s.runner_error.is_none() {
+    let connection = &s.ask_settings.connection.settings;
+    if connection.enabled {
+        let model = connection.model.trim();
+        menu = menu.item(
+            MenuItem::new(if model.is_empty() {
+                "Set up a model"
+            } else {
+                model
+            })
+            .description("Open connection settings")
+            .on_select(|s: &mut State| {
+                s.ask_settings.scope_open = false;
+                s.open_connection_settings();
+            }),
+        );
+    } else if s.runner_error.is_none() {
         menu = menu.item(
             MenuItem::new("Model")
                 .description(picker_label(s))
@@ -553,55 +582,21 @@ fn choice_label(s: &State, name: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
-/// The model picker: one button showing the helper and model, and one popover list. Default
-/// first (it follows Settings and shows what it resolves to), then each installed helper's
-/// models in a group, then a Thinking switch. It is on the meeting page, the live screen and
-/// before the first question of a new chat.
-fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    let shown = picker_label(s);
-
-    let hint = super::widgets::HelpHint::Model.build(k, p, layer);
-    let trigger = super::widgets::pressable(row().items_center())
-        .key("ask-model")
-        .min_h(28.0)
-        .px(8.0)
-        .radius(14.0)
-        .gap(4.0)
-        .hover(p.button_hover)
-        .press(p.button_pressed)
-        .children((!narrow).then(|| roles::CONTROL.line(&shown, p.soft)))
-        .child(rune::icon(k.glyph.chevron_down, 14.0).color(p.faint))
-        .role("combobox")
-        .label(format!("Model: {shown}"))
-        .description("Choose the model for your next question.")
-        .preserve_focus_on_press(true)
-        .focus_ring(1.0, 1.0, p.faint)
-        .min_w(0.0)
-        .max_w(if narrow { 160.0 } else { 200.0 })
-        .hover_group_shared("help-hint-model")
-        .child(
-            hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .dim(0.0)
-                .inert(),
-        )
-        .on_press(|s: &mut State| {
-            s.runner_open = !s.runner_open;
-            s.ask_settings.thinking_open = false;
-            if s.runner_open {
-                s.reload_runners();
-            }
-        });
+fn runner_choice(s: &State, k: &Kit, p: Palette, trigger: El, layer: &mut Vec<El>) -> El {
     let overridden = if s.ask_live_meeting() {
         s.ask_settings.meeting_override.is_some()
     } else {
         s.ask_settings.pick.is_some()
     };
     let (default_runner, default_model) = super::ask_settings::default_choice(s);
+    let mut kit = k.clone();
+    kit.c.text_weak = p.soft;
     let mut menu = Menu::new("runner")
+        .standard()
         .trigger(trigger)
         .open(s.runner_open)
         .placement(Placement::TopEnd)
-        .min_width(280.0)
+        .min_width(240.0)
         .on_close(|s: &mut State| s.runner_open = false)
         .item(
             MenuItem::new("Default")
@@ -632,7 +627,9 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
         .find(|r| Some(r.name.as_str()) == s.ask_runner_name())
         .is_some_and(core::ask_options::supports_thinking);
     if thinks && !s.ask_settings.connection.settings.enabled {
-        menu = menu.group_label("Thinking");
+        menu = menu
+            .separator()
+            .group_label("Thinking effort for the selected model");
         let value = s.ask_thinking();
         for level in core::ask_options::Thinking::ALL {
             menu = menu.item(
@@ -666,7 +663,7 @@ fn runner_choice(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<E
                 .disabled(true),
         );
     }
-    menu.build(k, layer).min_w(0.0).shrink()
+    menu.build(&kit, layer).min_w(0.0)
 }
 
 const ACTION: f32 = 28.0;
@@ -911,7 +908,6 @@ pub fn overlay_with(
         return place(s, stack.children(lead).child(dock));
     }
     let empty = s.question.text.trim().is_empty();
-    let focused = s.ask_open || s.runner_open;
     let input = TextInput::new(&s.question)
         .plain()
         .placeholder(if s.companies.open {
@@ -922,7 +918,7 @@ pub fn overlay_with(
                 .map(|c| format!("Ask about {}", c.name))
                 .unwrap_or_else(|| "Ask about this company".into())
         } else {
-            "Ask anything".into()
+            "\u{2009}Ask anything".into()
         })
         .label(if s.companies.open {
             "Ask about this company"
@@ -939,12 +935,8 @@ pub fn overlay_with(
             submit(s, &q, tx);
         })
         .on_key(|s: &mut State, e: &KeyEvent, tx: &mut Tx| {
-            if e.key == Key::Tab
-                && e.mods == rune::Mods::default()
-                && !s.ask_settings.connection.settings.enabled
-                && s.runner_error.is_none()
-            {
-                tx.focus_when_shown("ask-model", true);
+            if e.key == Key::Tab && e.mods == rune::Mods::default() {
+                tx.focus("ask-options", true);
                 return true;
             }
             if e.key != Key::Escape {
@@ -961,6 +953,7 @@ pub fn overlay_with(
                 live.panel_open = false;
             } else if s.selected.is_some() && !s.meeting_ui.tabs && s.transcript_open {
                 s.close_transcript_sheet();
+                tx.focus("meeting-transcript", true);
             } else {
                 tx.blur();
             }
@@ -970,33 +963,11 @@ pub fn overlay_with(
         .key("ask-input")
         .grow(1.0)
         .min_w(0.0);
-    let model = (focused || pending).then(|| {
-        if s.ask_settings.connection.settings.enabled {
-            let caption = if compact { "Setup" } else { "Connection" };
-            quiet_button(caption, "ask-endpoint-settings", p)
-                .label("Connection")
-                .button_disabled(pending)
-                .help(if pending {
-                    "Available after this answer finishes"
-                } else {
-                    "Open Ask connection settings"
-                })
-                .on_press(|s: &mut State| {
-                    if !s.asks.contains_key(&s.ask_key()) {
-                        s.open_connection_settings();
-                    }
-                })
-        } else {
-            match &s.runner_error {
-                Some(e) => roles::META
-                    .medium()
-                    .wrap(format!("Runners are not set up. {e}"), p.warn)
-                    .px(8.0)
-                    .max_w(260.0),
-                None => runner_choice(s, k, p, compact, layer),
-            }
-        }
-    });
+    let stack = stack.children(s.runner_error.as_ref().map(|error| {
+        roles::META
+            .wrap(format!("Could not load Ask models. {error}"), p.warn)
+            .role("alert")
+    }));
     let show_prompt = empty && !pending;
     let dock = col()
         .key("ask-controls")
@@ -1034,7 +1005,6 @@ pub fn overlay_with(
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
         .children(lead)
         .child(input)
-        .children(model)
         .child(ask_options(s, k, p, show_prompt, layer))
         .child(action(s, p, pending, empty));
     place(s, stack.child(dock.child(pill)))
