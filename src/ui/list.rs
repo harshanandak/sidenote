@@ -504,7 +504,8 @@ fn filter_button(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         s.more_menu = (!same).then(|| FILTER_MENU.to_string());
     });
     if open {
-        let mut names: Vec<&String> = s.nav.project_counts.keys().collect();
+        let on = s.config.features.projects;
+        let mut names: Vec<&String> = s.nav.project_counts.keys().filter(|_| on).collect();
         names.sort();
         let mut menu = col().child(
             menu_row("All meetings", p, None, None, None)
@@ -923,7 +924,6 @@ mod tests {
                 text: "Invented chatter".into(),
                 ..Default::default()
             }],
-            ..Default::default()
         });
         state.meetings[1].summary.topics.push(core::Topic {
             title: "Invented topic".into(),
@@ -932,7 +932,6 @@ mod tests {
                 text: "Invented decision".into(),
                 ..Default::default()
             }],
-            ..Default::default()
         });
         state.set_meetings_view(MeetingsView::WithDecisions);
         let elements = render_home(state, 1334.0).elements();
@@ -970,6 +969,13 @@ mod tests {
             rt.state.filter == Filter::Project("Invented Atlas".into()),
             "selecting it narrows the list to that project"
         );
+        // With Projects off, set_filter rejects project filters, so none are offered.
+        rt.update(|s, _| {
+            s.config.features.projects = false;
+            s.more_menu = Some("meetings-filter".into());
+        });
+        rt.frame(0.0);
+        assert!(rt.find("meetings-filter-project-0").is_none());
     }
 
     #[test]
