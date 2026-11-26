@@ -1422,13 +1422,13 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         assert!(rect_of(&rt, "ask-input")[2] >= 90.0);
         let chip = |rt: &Runtime<State>| element(rt, "ask-prompt").label.unwrap();
         assert_eq!(rt.state.ask_key(), MEETING);
-        assert_eq!(chip(&rt), "Ask options, What did we decide?");
+        assert_eq!(chip(&rt), "Ask: What did we decide?");
         rt.update(|s, _| s.set_ask_scope(true));
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
-        assert_eq!(chip(&rt), "Ask options, List my tasks");
+        assert_eq!(chip(&rt), "Ask: List my tasks");
         rt.update(|s, _| s.question = TextEdit::new("A draft"));
         rt.frame(0.0);
         assert!(rt.find("ask-prompt").is_none());
@@ -1442,7 +1442,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         });
         rt.frame(0.0);
         assert!(rt.state.ask_current_live());
-        assert_eq!(chip(&rt), "Ask options, What did I miss");
+        assert_eq!(chip(&rt), "Ask: What did I miss");
         assert_eq!(
             element(&rt, "hex-stop").label.as_deref(),
             Some("Stop recording")
@@ -1462,7 +1462,7 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         rt.update(|s, _| s.go_home());
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
-        assert_eq!(chip(&rt), "Ask options, List my tasks");
+        assert_eq!(chip(&rt), "Ask: List my tasks");
     }
 }
 
@@ -2998,6 +2998,78 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
                     assert_eq!(closed, pill);
                 }
             }
+        }
+    }
+
+    // Exercise endpoint recovery through the live page, with a document and answer that scroll.
+    use sidenote::core::provider::{Metrics, Settings};
+    use sidenote::hex_engine::{Feature, Support};
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_at((390.0, 600.0));
+    hex::SKIP_INSTALL_DETECT.set(detect);
+    for (remote, slow) in [(false, false), (false, true), (true, false), (true, true)] {
+        rt.update(|s, _| {
+            s.selected = None;
+            super::live::parts_scene(s, "transcript");
+            scene_agents(s, &["codex"]);
+            s.live_notes = TextEdit::new("An invented note.\n".repeat(80));
+            s.hex.status = Some(Ok(hex_engine_recording()));
+            s.hex_apply(hex::Msg::Caps(
+                "test".into(),
+                Ok([(Feature::RecordStop, Support::Supported)].into()),
+            ));
+            s.saved.messages = vec![Message {
+                role: "assistant".into(),
+                text: "An earlier answer.\n\n".repeat(40),
+                ..Default::default()
+            }];
+            let id = s.ask_key();
+            s.asks.clear();
+            s.ask_errors.clear();
+            if slow {
+                s.asks.insert(id.clone(), AskRun::stand_in("Codex", &[], 0));
+            } else {
+                s.ask_errors.insert(id.clone(), "Endpoint failed".into());
+            }
+            let connection = &mut s.ask_settings.connection;
+            connection.settings = Settings {
+                enabled: true,
+                ..Settings::local()
+            };
+            if remote {
+                connection.settings.base_url = "https://meeting-answers.example.invalid/v1".into();
+            }
+            connection
+                .labels
+                .insert(id.clone(), connection.settings.label());
+            connection.slow.insert(id.clone());
+            connection.metrics.insert(
+                id,
+                Metrics {
+                    total_ms: 15_100,
+                    ..Metrics::default()
+                },
+            );
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        let panel = rect_of(&rt, "live-panel");
+        assert!(panel[1] + panel[3] <= rect_of(&rt, "ask-controls")[1] + 0.5);
+        let retry = rect_of(&rt, "ask-connection-recovery-0");
+        if remote {
+            assert!(rect_of(&rt, "ask-connection-recovery-2")[1] > retry[1]);
+        }
+        assert!(rt.find("ask-endpoint-timing").is_some());
+        rt.update(|_, tx| tx.scroll_to_bottom_instant("live-ask-scroll"));
+        rt.settle_all();
+        rt.frame(0.0);
+        for key in ["ask-pill", "ask-input", "meeting-pause", "hex-stop"] {
+            let [_, y, _, h] = rect_of(&rt, key);
+            let [_, top, _, viewport] = rect_of(&rt, "ask-overlay");
+            assert!(
+                h > 0.0 && y >= top && y + h <= (top + viewport).min(600.0),
+                "{key} is out of reach: {y}+{h}, viewport {top}+{viewport}, remote={remote}, slow={slow}"
+            );
         }
     }
 }

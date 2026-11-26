@@ -1005,7 +1005,7 @@ pub fn overlay_with(
         .children(show_prompt.then(|| {
             let prompt = prompts(s).0;
             quiet_button(prompt, "ask-prompt", p)
-                .label(format!("Ask options, {prompt}"))
+                .label(format!("Ask: {prompt}"))
                 .h(44.0)
                 .radius(22.0)
                 .border(1.0, p.line)
@@ -1051,7 +1051,27 @@ fn with_note(stack: El, p: Palette) -> El {
 }
 
 fn place(s: &State, stack: El) -> El {
-    if s.on_live() || (s.selected.is_some() && !s.meeting_ui.tabs && !s.companies.open) {
+    if s.on_live() {
+        let space = super::live::limits(s).space;
+        col()
+            .key("ask-overlay")
+            .w_full()
+            .max_h(space)
+            .min_h(0.0)
+            .shrink()
+            .items_center()
+            .pb(8.0)
+            .child(
+                stack
+                    .key("live-ask-scroll")
+                    .max_h((space - 8.0).max(0.0))
+                    .min_h(0.0)
+                    .shrink()
+                    .scroll(rune::ScrollSpec {
+                        stick_bottom: false,
+                    }),
+            )
+    } else if s.selected.is_some() && !s.meeting_ui.tabs && !s.companies.open {
         col()
             .key("ask-overlay")
             .w_full()
