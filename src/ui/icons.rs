@@ -30,7 +30,57 @@ macro_rules! lucide {
 }
 
 pub fn draw(icon: &'static Icon, size: f32, ink: Color) -> El {
-    rune::icon(icon, size).color(ink)
+    rune::icon(weighted(icon, IconWeight::default()), size).color(ink)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum IconWeight {
+    Light,
+    #[default]
+    Regular,
+    Bold,
+}
+
+impl From<f32> for IconWeight {
+    fn from(width: f32) -> Self {
+        match width {
+            1.5 => Self::Light,
+            2.1 => Self::Bold,
+            _ => Self::Regular,
+        }
+    }
+}
+
+macro_rules! solar_icon {
+    ($entry:ident, $name:literal, $($shape:literal),+ $(,)?) => {
+        pub(super) static $entry: [rune::Icon; 3] = [
+            solar_icon!(@variant $name, "1.5", $($shape),+),
+            solar_icon!(@variant $name, "1.8", $($shape),+),
+            solar_icon!(@variant $name, "2.1", $($shape),+),
+        ];
+    };
+    (@variant $name:literal, $width:literal, $($shape:literal),+) => {
+        rune::Icon {
+            name: concat!("solar-", $name),
+            view: 24.0,
+            body: concat!(
+                r#"<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width=""#,
+                $width, r#"">"#, $($shape,)+ "</g>"
+            ),
+        }
+    };
+}
+
+mod solar;
+
+/// Static addresses let Rune reuse the raster atlas entry for each weight and size.
+pub(super) fn weighted(icon: &'static Icon, weight: IconWeight) -> &'static Icon {
+    let variants = match icon.name {
+        "lucide-clock" => &solar::CLOCK,
+        "lucide-folder" => &solar::FOLDER,
+        _ => return icon,
+    };
+    &variants[weight as usize]
 }
 
 // Kit selects paint into a 16-point icon box. Scale the glyph around its centre.
@@ -710,6 +760,48 @@ pub static PLAY: Icon = Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solar_weights_reuse_three_distinct_icons_and_default_to_regular() {
+        for (source, name) in [(&*CLOCK, "solar-clock-circle"), (&*FOLDER, "solar-folder")] {
+            let light = weighted(source, IconWeight::Light);
+            let regular = weighted(source, IconWeight::Regular);
+            let bold = weighted(source, IconWeight::Bold);
+            assert!(std::ptr::eq(
+                weighted(source, IconWeight::default()),
+                regular
+            ));
+            assert!(!std::ptr::eq(light, regular));
+            assert!(!std::ptr::eq(regular, bold));
+            assert!(!std::ptr::eq(light, bold));
+
+            let mut coverage = 0;
+            for (width, icon) in [(1.5, light), (1.8, regular), (2.1, bold)] {
+                assert_eq!(icon.name, name);
+                assert!(icon.body.contains(&format!("stroke-width=\"{width}\"")));
+                let ink: u32 = rune::text::icon_coverage(icon, 24)
+                    .into_iter()
+                    .map(u32::from)
+                    .sum();
+                assert!(ink > coverage);
+                coverage = ink;
+                assert!(std::ptr::eq(
+                    weighted(source, IconWeight::from(width)),
+                    icon
+                ));
+            }
+            for invalid in [0.0, -1.0, 1.7, f32::INFINITY, f32::NAN] {
+                assert!(std::ptr::eq(
+                    weighted(source, IconWeight::from(invalid)),
+                    regular
+                ));
+            }
+        }
+        assert!(std::ptr::eq(
+            weighted(&MEETINGS, IconWeight::Bold),
+            &*MEETINGS
+        ));
+    }
 
     #[test]
     fn shell_lucide_icons_use_the_shared_stroke_and_requested_glyphs() {
