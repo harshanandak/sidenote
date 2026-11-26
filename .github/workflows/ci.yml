@@ -162,6 +162,8 @@ jobs:
           -k test_fixed_patterns -k test_timeout_and_missing
       - shell: pwsh
         run: ./tools/dependency_notices_proof.ps1
+      - shell: pwsh
+        run: ./tools/idle_soak_proof.ps1
 
   windows:
     needs: changes
