@@ -138,7 +138,8 @@ pub fn menu_row(
         .focus_highlight(p.chip)
         .children(icon.map(|glyph| icons::draw(glyph, 16.0, p.soft).a11y_hidden()));
     if let Some(detail) = detail {
-        text = text.child(roles::META.line(detail, p.faint).key("description"));
+        let description = roles::META.wrap(detail, p.faint).min_w(0.0);
+        text = text.child(description.key("description"));
         entry = entry.description(detail).min_h(40.0).py(5.0);
     } else {
         entry = entry.h(30.0);

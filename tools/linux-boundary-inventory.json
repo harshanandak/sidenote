@@ -421,11 +421,11 @@
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
-  "src/ui/hex/connection/stop_tests.rs": "a0e315bcdd14785a5306ff06bfa193ebc0958e4a60175492a47054a381fef697",
+  "src/ui/hex/connection/stop_tests.rs": "c8b215009135fc1867fc002722cf51fc8232f2ec2cce0bdf7c271ec99c450be6",
 
   "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
-  "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
+  "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
   "src/ui/hex/settings.rs": "003e10a30569824e2daff7d12248c19c35a6514bb6be1ea883ffb2f96891f753",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "92995cf65e549867cc233d21ea052c3c973b35c6b72075c83e87cd6f3989ef1a",
+  "src/ui/mod.rs": "203a0f25f068f26a6aa9bc2c23779ff5f405db03c990d66850eb8c5cc31bf455",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -455,7 +455,7 @@
 
   "src/ui/project_merge.rs": "90932e67967138d3a7ab461d059a8c6fd0009ce728af4fb92cc381f170fafcd6",
 
-  "src/ui/recording_state_tests.rs": "05c36ec0069ea4fc50d235ed54cbc71ed3ea3be4c3e40ce40b67829276f59a67",
+  "src/ui/recording_state_tests.rs": "a81698a309d39320766c53513eaa0277e0ee2e0f715d446afdefa9cd485167e4",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 
@@ -465,7 +465,7 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "27541fef2da079140847c8b77684c5aa2a5c54e9f91d80df9e2fb7a0915f275f",
+  "src/ui/updates.rs": "dde35242e666cf9eca7bd00d1fa06cd2bd80cb5475cf1c73bb12269bdd6a26c9",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 

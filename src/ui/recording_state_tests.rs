@@ -263,10 +263,27 @@ fn recording_clock_stays_visible_on_the_live_page() {
         return;
     }
     let mut rt = page(SavedPhase::Recording, DEFAULT_SIZE);
+    tap(&mut rt, "nav-new-menu");
     assert!(rt.find("new-meeting").is_some());
+    tap(&mut rt, "nav-new-menu");
+    rt.update(|s, _| {
+        updates::settings_fixture(s);
+        s.listener_finished(Ok(()));
+    });
     hex_records(&mut rt);
     assert_eq!(element(&rt, "top-bar").rect[3], 48.0);
-    assert!(rt.find("new-meeting").is_none());
+    tap(&mut rt, "nav-new-menu");
+    let record = element(&rt, "new-meeting");
+    let reason = if cfg!(target_os = "linux") {
+        "Recording is not available on Linux yet."
+    } else {
+        "Already recording"
+    };
+    assert_eq!(
+        (record.focusable, record.help.as_deref()),
+        (false, Some(reason))
+    );
+    tap(&mut rt, "nav-new-menu");
     assert!(rt.find("ask-pill").is_some());
     assert!(rt.find("meeting-pause").is_some());
     assert!(
@@ -322,6 +339,7 @@ fn recording_clock_stays_visible_on_the_live_page() {
     tap(&mut rt, "sidebar-toggle");
     rt.update(|s, _| s.hex.status = Some(Err(sidenote::hex_engine::HexError::Timeout)));
     rt.frame(0.2);
+    tap(&mut rt, "nav-new-menu");
     assert!(rt.find("new-meeting").is_some());
     assert!(rt.find("search").is_none());
     for place in [
@@ -334,7 +352,8 @@ fn recording_clock_stays_visible_on_the_live_page() {
     ] {
         assert!(rt.find(place).is_some(), "missing {place}");
     }
-    tap(&mut rt, "sidebar-toggle");
+    tap(&mut rt, "nav-new-menu");
+    tap(&mut rt, "nav-collapse");
     assert!(rt.find("nav-meetings").is_none());
 }
 

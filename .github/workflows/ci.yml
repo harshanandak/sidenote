@@ -307,8 +307,9 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --bin sidenote -- \
             install_hooks_tests:: ui::models::dev40_ ui::models::provisioning_review_ \
             ui::window::close_tests:: \
-            ui::nav::tests::blocked_new_meeting_keeps_status_below_native_titlebar \
-            ui::nav::tests::narrow_new_meeting_ \
+            ui::nav::tests::blocked_record_meeting_row_shows_reason_in_sidebar_menu \
+            ui::nav::tests::new_menu_trigger_opens_the_record_row \
+            ui::nav::tests::new_menu_listener_retry_receives_pointer_and_escape_dismisses_it \
             ui::recording_state_tests::recording_clock_stays_visible_on_the_live_page \
             ui::recording_state_tests::pause_icon_is_distinct_from_stop_and_works_by_mouse_and_keyboard \
             ui::hex::connection::stop_tests:: ui::hex::connection::tests:: ui::hex::settings:: \
