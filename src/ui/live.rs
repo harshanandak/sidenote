@@ -8,7 +8,7 @@ use super::{
     list::text_title,
     roles,
     theme::Palette,
-    widgets::{dot, hairline, label, link, pressable, quiet_button, scroll, spaced_caps},
+    widgets::{dot, hairline, label, link, pressable, quiet_button, scroll},
 };
 use chrono::{DateTime, Local, TimeZone};
 use rune::{El, ScrollSpec, TextEdit, col, el, row};
@@ -1283,7 +1283,6 @@ fn document_height(pane: f32, measured: f32) -> f32 {
 fn panel_limits(
     pane: f32,
     document: f32,
-    thread: f32,
     has_ask: bool,
     has_transcript: bool,
     notice: bool,
@@ -1291,29 +1290,29 @@ fn panel_limits(
     let space = pane - document_height(pane, document);
     // Pill, prompt row, gaps and bottom inset. Both panels spend only the space left over.
     let available = (space - 140.0 - if notice { 64.0 } else { 0.0 }).max(0.0);
-    let transcript_min = if has_transcript && available >= 64.0 {
-        64.0
+    let gaps = if has_ask && has_transcript {
+        20.0
     } else {
-        0.0
+        10.0
     };
-    let thread_limit = if has_ask {
-        (available - transcript_min - if has_transcript { 20.0 } else { 10.0 }).clamp(0.0, 300.0)
-    } else {
-        0.0
-    };
-    let thread_height = if has_ask {
-        thread.max(44.0).min(thread_limit)
+    let panels = (available - gaps).max(0.0);
+    let thread = if has_ask {
+        if has_transcript {
+            (panels * 0.54).min(300.0)
+        } else {
+            panels.min(300.0)
+        }
     } else {
         0.0
     };
     let transcript = if has_transcript {
-        (available - thread_height - if has_ask { 20.0 } else { 10.0 }).clamp(0.0, 384.0)
+        (panels - thread).min(384.0)
     } else {
         0.0
     };
     PanelLimits {
         space,
-        thread: thread_limit,
+        thread,
         transcript,
     }
 }
@@ -1322,7 +1321,6 @@ pub(super) fn limits(s: &State) -> PanelLimits {
     panel_limits(
         s.pane_h.get(),
         s.live_document_h.get(),
-        s.live_thread_h.get(),
         !s.saved.messages.is_empty() || s.asks.contains_key(&id) || s.ask_errors.contains_key(&id),
         s.live.as_ref().is_some_and(|live| live.panel_open),
         s.ask_settings.fallback_notice.is_some(),
@@ -1386,6 +1384,11 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
         }
         c
     } else {
+        let time_width = if feed.lines.iter().any(|line| line.seconds >= 3600) {
+            62.0
+        } else {
+            44.0
+        };
         let mut rows = col().w_full().px(16.0).py(6.0);
         for (i, line) in feed.lines.iter().enumerate() {
             if line.text == "Recording resumed" {
@@ -1407,7 +1410,7 @@ fn transcript_panel(s: &State, p: Palette, cap: f32) -> El {
                     .gap(10.0)
                     .items_start()
                     .py(3.0)
-                    .child(roles::META.line(elapsed, p.soft).w(44.0))
+                    .child(roles::META.line(elapsed, p.soft).w(time_width))
                     .child(
                         roles::META
                             .bold()
@@ -1840,7 +1843,7 @@ pub fn your_notes(notes: &str, p: Palette) -> El {
         .radius(16.0)
         .fill(p.card)
         .border(1.0, p.line)
-        .child(spaced_caps("Your notes", p))
+        .child(roles::SECTION.wrap("Your notes", p.ink))
         .child(body)
 }
 
@@ -1855,8 +1858,8 @@ fn stopping_view(s: &State, p: Palette, narrow: bool, timed_out: bool) -> El {
         .w_full()
         .gap(16.0)
         .child(text_title(&heading(s), if narrow { 28.0 } else { 36.0 }, p))
-        .child(roles::SECTION.wrap("You can leave this page", p.ink))
-        .child(roles::READ.wrap(status, p.soft).role("status"))
+        .child(roles::SECTION.wrap(status, p.ink).role("status"))
+        .child(roles::SMALL.wrap("You can leave this page", p.soft))
         .children(timed_out.then(|| {
             quiet_button("Check again", "live-stop-recheck", p)
                 .self_start()
@@ -2005,10 +2008,10 @@ mod writer_tests {
     #[test]
     fn panel_budget_preserves_the_document_and_shrinks_transcript_first() {
         for (pane, document) in [(748.0, 340.0), (748.0, 410.0)] {
-            let idle = panel_limits(pane, document, 0.0, false, true, false);
-            let answer = panel_limits(pane, document, 150.0, true, true, false);
+            let idle = panel_limits(pane, document, false, true, false);
+            let answer = panel_limits(pane, document, true, true, false);
             assert!(answer.transcript < idle.transcript);
-            assert!(answer.transcript + answer.thread.min(150.0) + 128.0 <= answer.space + 0.1);
+            assert!(answer.transcript + answer.thread + 160.0 <= answer.space + 0.1);
             assert!(answer.space + document_height(pane, document) <= pane + 0.1);
         }
     }

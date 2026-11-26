@@ -1440,7 +1440,7 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
         assert!(rt.state.runner_open, "{context}");
-        assert!(rt.find("runner-menu").is_some(), "{context}");
+        assert!(rt.find("ask-options-menu").is_some(), "{context}");
         rt.update(|s, _| s.runner_open = false);
     }
 }
@@ -1543,6 +1543,12 @@ fn ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor() {
         rt.frame(0.0);
         assert_eq!(rt.state.ask_key(), core::ALL_KEY);
         assert_eq!(chip(&rt), "Ask: List my tasks");
+        rt.update(|s, _| super::live::parts_scene(s, "paused"));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), MEETING);
+        rt.update(|s, _| s.set_ask_scope(true));
+        rt.frame(0.0);
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY);
     }
 }
 
@@ -2150,6 +2156,50 @@ fn meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks() {
 }
 
 /// Long notes: the last row ends below where the old 150 fade began, and is still clear of it.
+#[test]
+fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
+    if in_parent("the_dock_leaves_the_last_notes_row_clear_on_a_phone") {
+        return;
+    }
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with((390.0, 844.0), || {
+        let path = core::meetings_dir()
+            .join(MEETING)
+            .join("english-summary.json");
+        let summary = serde_json::json!({
+            "title": "Beta launch plan",
+            "context": ["The group reviewed the launch plan. ".repeat(45)],
+            "verify": ["Confirm the launch date."],
+        });
+        std::fs::write(path, summary.to_string()).unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
+    rt.update(|s, _| {
+        s.meeting_ui.tabs = false;
+        scene_agents(s, &["codex"]);
+        s.saved.messages.push(Message {
+            role: "assistant".into(),
+            text: "An earlier answer about the launch. ".repeat(8),
+            ..Default::default()
+        });
+    });
+    rt.frame(0.0);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(meeting::phone(&rt.state));
+    assert!(rect_of(&rt, "ask-thread")[3] > 78.0);
+    rt.update(|_, tx| tx.scroll_key_to("verify-0", 0.0));
+    rt.settle_all();
+    rt.frame(0.0);
+    let last = rect_of(&rt, "verify-0");
+    let dock = rect_of(&rt, "ask-overlay");
+    let viewport = rect_of(&rt, "meeting-scroll");
+    assert!(
+        last[1] >= viewport[1] && last[1] + last[3] <= dock[1].min(viewport[1] + viewport[3]),
+        "the last summary row {last:?} is not clear of the dock {dock:?} in {viewport:?}"
+    );
+}
+
 #[test]
 fn the_dock_leaves_the_last_notes_row_clear() {
     if in_parent("the_dock_leaves_the_last_notes_row_clear") {

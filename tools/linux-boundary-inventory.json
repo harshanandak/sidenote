@@ -391,7 +391,7 @@
 
   "src/sync_owner/mcp.rs": "0f59d5b4431ac3b617b0621351e09005116e2d09492693abc47da3fbf614e724",
 
-  "src/ui/ai_notes.rs": "3bef66267f56d436c8348d33915eb599740707e19e2c252386ad0d7355997839",
+  "src/ui/ai_notes.rs": "3202445a5cf349915eb7ce8fb5083e8849dca594f24ad26d1e61ca1a21f80eeb",
 
   "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
 
@@ -403,9 +403,9 @@
 
   "src/ui/area_scene.rs": "ed9d0a3291369f5ab6a8a3e2c0da8a04bb05ba7155a065cd2604c9da7b1bf160",
 
-  "src/ui/ask_settings.rs": "e3d7d15685324eaabcac74df1fde82aa44c6a6d7dab6fd86839422f434bc23d3",
+  "src/ui/ask_settings.rs": "f8e21b67c997f2184192ccc3897d23639eed1044598e51f1f653b963ecbd20f5",
 
-  "src/ui/ask_switch_tests.rs": "cd26daec41b9e7371baeaf783c713ce318c2128fa26caed0c095aa2c78003b56",
+  "src/ui/ask_switch_tests.rs": "873d8014e033c917efbf790f4a64315002dee800dc97d9d62175f1c9fa883191",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -435,7 +435,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "8568b6a8e0859ad6ae596ba9227ac8a3c7db699e4f4daa45dbf76c23e0773754",
+  "src/ui/live.rs": "986853836b03e6d96ef17f33922ded5ba95058fb104d8cbe16e4d36e78add730",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
@@ -445,11 +445,11 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "8ead02f61d41bb50636fffd4f48ee321c8e5f30982b5704ce04b7c946943b227",
+  "src/ui/mod.rs": "21050afdd21ba22ba1fbf82c4611d65dca01d2cb7329ef0beddbb7fb4b4f0f09",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
-  "src/ui/notes_status.rs": "4480ef7baf910c462a4ec3031f7d83b08bea61c01f43900176cb7a0753fb1692",
+  "src/ui/notes_status.rs": "8ec8eafd29ce72054c45c842f8d967a68954d34866c8a561b2817a5da7709469",
 
   "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
 

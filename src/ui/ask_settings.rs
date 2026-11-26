@@ -94,16 +94,37 @@ impl AskSettings {
     }
 }
 impl State {
+    fn tracked_ask_id(&self) -> Option<&str> {
+        self.live
+            .as_ref()
+            .filter(|live| {
+                self.on_live()
+                    && (live.phase == super::live::Phase::Paused
+                        || (live.phase == super::live::Phase::Recording
+                            && !self.ask_live_meeting()))
+            })?
+            .session
+            .as_ref()
+            .map(|session| session.id.as_str())
+    }
     pub fn live_scope_available(&self) -> bool {
-        self.on_live() && self.ask_live_meeting()
+        self.on_live() && (self.ask_live_meeting() || self.tracked_ask_id().is_some())
     }
     pub fn ask_current_live(&self) -> bool {
-        self.live_scope_available() && !self.ask_settings.live_all
+        self.on_live()
+            && self.ask_live_meeting()
+            && self.tracked_ask_id().is_none()
+            && !self.ask_settings.live_all
     }
     pub fn ask_meeting_id(&self) -> Option<&str> {
-        self.selected
-            .as_deref()
-            .filter(|_| !self.ask_settings.saved_all)
+        if self.selected.is_some() {
+            self.selected
+                .as_deref()
+                .filter(|_| !self.ask_settings.saved_all)
+        } else {
+            self.tracked_ask_id()
+                .filter(|_| !self.ask_settings.live_all)
+        }
     }
     pub fn set_ask_scope(&mut self, all: bool) {
         if self.selected.is_some() {
