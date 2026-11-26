@@ -178,7 +178,8 @@ if [[ $channel == dev ]]; then
     rolling_create=(gh release create dev "${assets[@]}" --repo "$repo" --target "$sha" --title "Sidenote dev $tag" --notes-file "$notes_file" --prerelease --latest=false)
     rolling_delete=(gh release delete dev --repo "$repo" --cleanup-tag --yes)
     rolling_lookup_status=0
-    rolling_name=$(lookup_or_missing 'release not found' 'Failed to look up release dev.' gh release view dev --repo "$repo" --json name --jq .name) || rolling_lookup_status=$?
+    rolling_info=$(lookup_or_missing 'release not found' 'Failed to look up release dev.' gh release view dev --repo "$repo" --json isDraft,name --jq '(.isDraft | tostring) + " " + .name') || rolling_lookup_status=$?
+    read -r rolling_draft rolling_name <<<"${rolling_info:-}"
     case $rolling_lookup_status in
         0) rolling_state=exists ;;
         1) rolling_state=missing ;;
@@ -186,7 +187,10 @@ if [[ $channel == dev ]]; then
     esac
     echo "Rolling dev release branch: $rolling_state"
     rolling_replace=1
-    if [[ $rolling_state == exists ]]; then
+    # A draft is an interrupted create: replace it even at the same version, or the feed stays down.
+    if [[ $rolling_state == exists && $rolling_draft != false ]]; then
+        echo "Rolling dev release is a draft (isDraft=$rolling_draft); replacing it."
+    elif [[ $rolling_state == exists ]]; then
         rolling_prefix='Sidenote dev '
         rolling_version=
         if [[ $rolling_name == "$rolling_prefix"* ]]; then rolling_version=${rolling_name#$rolling_prefix}; fi
