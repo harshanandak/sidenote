@@ -175,7 +175,7 @@ def dryrun(profile):
     root.mkdir(parents=True)
     with user_settings(env, {}) as isolated:
         fresh = powershell(['-File', str(REPO / 'src/pipeline_install.ps1')], isolated, bundle())
-    require(fresh.returncode != 0, 'fresh profile silently claimed scripts were installed')
+    require(fresh.returncode == 3, 'fresh profile silently claimed scripts were installed')
     require(not list(root.iterdir()), 'fresh failure published incomplete scripts')
     print('PASS fresh profile: missing script setup fails visibly without publishing files')
     for name, text in legacy_files().items():
@@ -187,7 +187,7 @@ def dryrun(profile):
     missing = environment(profile, configured=False)
     with user_settings(missing, {}) as isolated:
         result = powershell(['-File', str(install)], isolated, payload)
-    require(result.returncode != 0, 'missing settings accepted')
+    require(result.returncode == 1, 'missing settings accepted')
     require(snapshot(root) == before, 'missing settings changed legacy bytes')
     with user_settings(missing, {}) as isolated:
         result = powershell(['-File', str(root / 'hex-meeting-watch.ps1')], isolated)

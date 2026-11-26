@@ -141,7 +141,7 @@ try {
         # The only commit point: all generation files are sealed and immutable.
         Publish-Pointer $next $current
     }
-} catch { exit 1 } finally {
+} catch { if ($_.Exception.Message -eq 'Meeting scripts are not configured') { exit 3 }; exit 1 } finally {
     if ($held) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
 }
