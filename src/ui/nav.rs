@@ -1079,13 +1079,6 @@ fn profile_item(
         .on_press(action)
 }
 
-pub fn meetings_home(s: &State) -> bool {
-    s.page() == Page::Meetings
-        && s.selected.is_none()
-        && !s.on_live()
-        && !matches!(s.filter, Filter::Area(_) | Filter::Areas)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

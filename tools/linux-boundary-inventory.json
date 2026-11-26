@@ -441,7 +441,7 @@
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
-  "src/ui/meeting_delete.rs": "03329ea06154edc06fad7e4f80811e789763ddff0dc8901da4c3f9a1748d4e04",
+  "src/ui/meeting_delete.rs": "aa3faf8126e34c84cf23910356a56f1b9475e17a7c6034e7dca0934823e6578b",
 
   "src/ui/memory.rs": "ed9bab3d8209a346c5f72dff814611cfaeee7c26200c4c3cdb90b6fba00a6c55",
 
@@ -455,7 +455,7 @@
 
   "src/ui/project_merge.rs": "90932e67967138d3a7ab461d059a8c6fd0009ce728af4fb92cc381f170fafcd6",
 
-  "src/ui/recording_state_tests.rs": "a81698a309d39320766c53513eaa0277e0ee2e0f715d446afdefa9cd485167e4",
+  "src/ui/recording_state_tests.rs": "29b70617cf86ebe94dc39f036cd191a378e0e140d4382ba3aae7034776ff30f5",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 
