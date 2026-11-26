@@ -329,7 +329,7 @@
 
   "src/hex_probe.rs": "0c50a06725535b61c042aa2a6c13a2c42e046bc88ee3354b7aaa0bf004a88757",
 
-  "src/listener.rs": "f72c703b6d1361a66a92cf69c4088ef4090fc92729857590c995242f8a7813b2",
+  "src/listener.rs": "000ce154288492a2c7311e9a061456d00322ce9682d5a769c1717b563e9dc25f",
 
   "src/listener/completion.rs": "ed9ba2b329051ded8dc962dc150c7643fbf3f75723ee6faa6eebf95a1bf1e3a2",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "2a6d927fd9d9837e9133758d1b4efc30af5fdd663d6eb3dbce0098220943f1e1",
+  "src/ui/mod.rs": "29ad3baf3d0b840d5d4690cdfaf0df5cffba7a5e6f7b3f75f3c0745c54f321a8",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -453,7 +453,7 @@
 
   "src/ui/project_merge.rs": "c60d92454a03684ea21f474a5ae92bce32831d830501883fa0af9e66c24d0051",
 
-  "src/ui/recording_state_tests.rs": "b440c091455a3d8bd88ef41b91dcb111b657dd5b8cdfe50570c04ee686ec08a8",
+  "src/ui/recording_state_tests.rs": "c27e375bef6b71cc79dbf5b996d05904f9a219a806f31968db145c000b3047db",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 
@@ -461,11 +461,11 @@
 
   "src/ui/tasks_board.rs": "dca72526692a8be625cc11b229ea12aee8e00c20993dd942c799e5c99484765c",
 
-  "src/ui/theme.rs": "a04ac902e2467699ab39961e81642811767ae706da7f345bbf0b30f5134f1d31",
+  "src/ui/theme.rs": "2e887406b7948ce0cbdffeed222c31233af6adde1765834a8fb5ea7b99dbf917",
 
   "src/ui/updates.rs": "27541fef2da079140847c8b77684c5aa2a5c54e9f91d80df9e2fb7a0915f275f",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "45902467319d456b1fb157834418525e19c535c6b556fe725cc44a5b9e317d38"
+  "src/updates_windows.rs": "20007287228fddb224194a2d48fb552bfdf76ced40aa0a31674c1eb19e402f75"
 }

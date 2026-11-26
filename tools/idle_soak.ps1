@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([int]$RootProcessId=0,[string]$SyntheticDataRoot='',[string]$CandidateExePath='',[switch]$ApproveSyntheticDataRoot,[double]$DurationHours=24,[double]$WarmupMinutes=30,[double]$CpuSampleSeconds=60,[double]$ResourceSampleSeconds=3600,[double]$TimeoutMinutes=0,[string]$FixtureSamplesPath='')
+param([int]$RootProcessId=0,[string]$SyntheticDataRoot='',[string]$CandidateExePath='',[switch]$ApproveSyntheticDataRoot,[double]$DurationHours=24,[double]$WarmupMinutes=30,[double]$CpuSampleSeconds=60,[double]$ResourceSampleSeconds=3600,[double]$TimeoutMinutes=0,[string]$FixtureSamplesPath='',[switch]$LaunchCandidate)
 $ErrorActionPreference='Stop'
 $script:IdleSoakThresholds=[ordered]@{
     average_cpu_percent_of_one_core=1.0; missing_sample_percent=5.0; consecutive_missing_samples=2
@@ -37,19 +37,148 @@ function Assert-IdleSoakSyntheticRoot([string]$Path,[bool]$Approved) {
     } else { New-Item -ItemType Directory -Force -Path $full | Out-Null }
     $full
 }
-function Get-IdleSoakCandidate([string]$Path,[string[]]$InstallRoots=@()) {
+function Get-IdleSoakCandidate([string]$Path,[string[]]$InstallRoots=@(),[switch]$RejectLinks) {
     if ([string]::IsNullOrWhiteSpace($Path)) { throw 'a candidate executable path is required' }
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'the candidate executable does not exist' }
-    $full=(Get-Item -LiteralPath $Path).FullName
+    $full=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not $InstallRoots.Count) {
         $InstallRoots=@($env:ProgramFiles,[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) | Where-Object { $_ }
         if ($env:LOCALAPPDATA) { $InstallRoots+=@((Join-Path $env:LOCALAPPDATA 'Programs'),(Join-Path $env:LOCALAPPDATA 'Sidenote')) }
+        if ($IsLinux) {
+            if ($env:HOME) { $InstallRoots+=Join-Path $env:HOME '.local/bin/sidenote' }
+            $InstallRoots+='/usr/local/libexec/sidenote'
+        }
     }
     foreach ($root in $InstallRoots) { if ($root -and (Test-IdleSoakPathInside $full $root)) { throw 'the candidate executable is in a real installation location' } }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw 'the candidate executable does not exist' }
+    if ($RejectLinks) {
+        for ($item=Get-Item -LiteralPath $full -Force; $item; $item=if ($item.PSIsContainer) {$item.Parent} else {$item.Directory}) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'the candidate executable path must not traverse a link' }
+        }
+    }
     [pscustomobject]@{path=$full;sha256=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
 function Assert-IdleSoakNoLiveHex([object[]]$Processes) {
     if (@($Processes|Where-Object {$_.Name -in @('hex.exe','hex.com')}).Count) { throw 'a live Hex process is present; the idle soak requires a synthetic environment without live Hex' }
+}
+# The proof substitutes the Win32 boundary while native qualification is suspended.
+function Get-IdleSoakWin32Imports {
+    @'
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr CreateJobObjectW(IntPtr attributes, IntPtr name);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern bool CreateProcessW(string app, StringBuilder args, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
+        ref StartupInfo startup, out ProcessInfo process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, int size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")]
+    private static extern bool TerminateProcess(IntPtr process, uint code);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+'@
+}
+function Initialize-IdleSoakJobType {
+    if (-not ('IdleSoakJob' -as [type])) {
+        $definition=@'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public sealed class IdleSoakJob : IDisposable {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfo {
+        public int Size;
+        public IntPtr Reserved, Desktop, Title;
+        public int X, Y, Width, Height, Columns, Rows, Fill, Flags;
+        public short Show, ReservedSize;
+        public IntPtr ReservedBytes, Input, Output, Error;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInfo {
+        public IntPtr Process, Thread;
+        public int ProcessId, ThreadId;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Accounting {
+        public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+        public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimits {
+        public long ProcessTime, JobTime;
+        public uint Flags;
+        public UIntPtr MinimumWorkingSet, MaximumWorkingSet;
+        public uint ActiveProcesses;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExtendedLimits {
+        public BasicLimits Basic;
+        public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
+        public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+    }
+    /* WIN32_IMPORTS */
+
+    private IntPtr job, process;
+    public int RootProcessId { get; private set; }
+    public IdleSoakJob(string app, string args, string directory) {
+        job = CreateJobObjectW(IntPtr.Zero, IntPtr.Zero);
+        if (job == IntPtr.Zero) throw new Win32Exception();
+        ProcessInfo info = new ProcessInfo();
+        try {
+            const int extendedLimitInformation = 9;
+            const uint killOnJobClose = 0x2000;
+            var limits = new ExtendedLimits { Basic = new BasicLimits { Flags = killOnJobClose } };
+            if (!SetInformationJobObject(job, extendedLimitInformation, ref limits, Marshal.SizeOf(typeof(ExtendedLimits))))
+                throw new Win32Exception();
+            var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)) };
+            const uint createSuspended = 4;
+            if (!CreateProcessW(app, new StringBuilder(args), IntPtr.Zero, IntPtr.Zero, false,
+                createSuspended, IntPtr.Zero, directory, ref startup, out info)) throw new Win32Exception();
+            process = info.Process;
+            RootProcessId = info.ProcessId;
+            if (!AssignProcessToJobObject(job, process) || ResumeThread(info.Thread) == uint.MaxValue)
+                throw new Win32Exception();
+        } catch {
+            if (process != IntPtr.Zero) TerminateProcess(process, 1);
+            Dispose();
+            throw;
+        } finally {
+            if (info.Thread != IntPtr.Zero) CloseHandle(info.Thread);
+        }
+    }
+    public bool HasExited() {
+        uint state = WaitForSingleObject(process, 0);
+        if (state == 0) return true;
+        if (state == 258) return false;
+        throw new Win32Exception();
+    }
+    public double GetCpuSeconds() {
+        // This accounting includes the final CPU time of processes that already exited.
+        const int basicAccounting = 1;
+        Accounting info;
+        if (!QueryInformationJobObject(job, basicAccounting, out info, Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero))
+            throw new Win32Exception();
+        return (info.UserTime + info.KernelTime) / 10000000.0;
+    }
+    public void Dispose() {
+        CloseHandle(job);
+        if (process != IntPtr.Zero) CloseHandle(process);
+    }
+}
+'@
+        Add-Type -TypeDefinition ($definition.Replace('/* WIN32_IMPORTS */',(Get-IdleSoakWin32Imports)))
+    }
 }
 function Get-IdleSoakProcessTree([int]$RootProcessId) {
     $rows=@(Get-CimInstance Win32_Process -ErrorAction Stop)
@@ -78,35 +207,25 @@ function Get-IdleSoakSkippedDeadlines([double]$Next,[double]$Elapsed,[double]$In
     while ($Next+$Interval -le $Elapsed) { $skipped+=$Next; $Next+=$Interval }
     $skipped
 }
-function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[double]$DurationSeconds,[double]$WarmupSeconds,[double]$CpuInterval,[double]$ResourceInterval,[double]$TimeoutSeconds) {
-    $firstTree=Get-IdleSoakProcessTree $RootProcessId
-    if (-not $firstTree) { throw 'the root process is not running' }
-    if (-not $firstTree[0].ExecutablePath) { throw 'the root process executable path is not readable' }
-    if ((Get-IdleSoakFullPath $firstTree[0].ExecutablePath) -ine (Get-IdleSoakFullPath $CandidatePath)) { throw 'the root process executable does not match the candidate executable' }
-    $cpuByKey=@{}; $cpuSamples=@(); $resourceSamples=@(); $nextCpu=0.0; $nextResource=$WarmupSeconds
+function Get-IdleSoakElapsedSeconds($Clock) { $Clock.Elapsed.TotalSeconds }
+function Invoke-IdleSoakSampler($Job,[double]$DurationSeconds,[double]$WarmupSeconds,[double]$CpuInterval,[double]$ResourceInterval,[double]$TimeoutSeconds) {
+    $cpuSamples=@(); $resourceSamples=@(); $nextCpu=0.0; $nextResource=$WarmupSeconds
     $clock=[Diagnostics.Stopwatch]::StartNew(); $endState='timeout'
     while ($true) {
-        $elapsed=$clock.Elapsed.TotalSeconds; $finishing=$elapsed -ge $DurationSeconds
+        $elapsed=Get-IdleSoakElapsedSeconds $clock; $finishing=$elapsed -ge $DurationSeconds
         if ($elapsed -gt $TimeoutSeconds) { break }
-        $queryFailed=$false
-        try { $tree=Get-IdleSoakProcessTree $RootProcessId } catch { $queryFailed=$true; $tree=$null }
-        if (-not $tree -and -not $queryFailed) { $endState='crash'; break }
+        if ($Job.HasExited()) { $endState='crash'; break }
         if ($elapsed -ge $nextCpu -or $finishing) {
             $skipped=@(Get-IdleSoakSkippedDeadlines $nextCpu $elapsed $CpuInterval)
             foreach ($deadline in $skipped) { $cpuSamples+=[pscustomobject]@{elapsed_seconds=$deadline;total_cpu_seconds=$null;missing=$true} }
-            if ($tree) {
-                foreach ($row in $tree) {
-                    $key='{0}:{1}' -f $row.ProcessId,$row.CreationDate
-                    $cpuByKey[$key]=([double]$row.KernelModeTime+[double]$row.UserModeTime)/10000000.0
-                }
-                $totalCpu=0.0; foreach ($value in $cpuByKey.Values) { $totalCpu+=$value }
-                $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$totalCpu;missing=$false}
-            } else { $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$null;missing=$true} }
+            try { $totalCpu=$Job.GetCpuSeconds() } catch { $totalCpu=$null }
+            $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$totalCpu;missing=($null -eq $totalCpu)}
             $nextCpu+=($skipped.Count+1)*$CpuInterval
         }
         if ($elapsed -ge $nextResource -or $finishing) {
             $skipped=@(Get-IdleSoakSkippedDeadlines $nextResource $elapsed $ResourceInterval)
             foreach ($deadline in $skipped) { $resourceSamples+=[pscustomobject]@{elapsed_seconds=$deadline;working_set_bytes=$null;private_bytes=$null;handle_count=$null;missing=$true} }
+            try { $tree=Get-IdleSoakProcessTree $Job.RootProcessId } catch { $tree=$null }
             if ($tree) {
                 $sample=Read-IdleSoakResourceSample $tree
                 $sample|Add-Member -NotePropertyName elapsed_seconds -NotePropertyValue $elapsed -Force
@@ -114,7 +233,7 @@ function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[doub
             } else { $resourceSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;working_set_bytes=$null;private_bytes=$null;handle_count=$null;missing=$true} }
             $nextResource+=($skipped.Count+1)*$ResourceInterval
         }
-        if ($finishing) { $endState='completed'; break }
+        if ($finishing) { $endState=if ($Job.HasExited()) {'crash'} else {'completed'}; break }
         $nextWake=[math]::Min([math]::Min($nextCpu,$nextResource),$DurationSeconds)
         Start-Sleep -Milliseconds ([math]::Min(1000,[math]::Ceiling([math]::Max(0.05,$nextWake-$elapsed)*1000)))
     }
@@ -128,7 +247,6 @@ function Read-IdleSoakFixture([string]$Path) {
     [pscustomobject]@{end_state=$fixture.end_state;cpu_samples=@($fixture.cpu_samples);resource_samples=@($fixture.resource_samples)}
 }
 function Assert-IdleSoakSamples($CpuSamples,$ResourceSamples) {
-    if (-not @($CpuSamples).Count -or -not @($ResourceSamples).Count) { throw 'cpu and resource sample series must both be nonempty' }
     $lastElapsed=-1.0; $lastCpu=$null
     foreach ($sample in @($CpuSamples)) {
         if ($null -eq $sample.elapsed_seconds) { throw 'every cpu sample needs elapsed_seconds' }
@@ -192,19 +310,23 @@ function Measure-IdleSoakTrend($Samples,[string]$Property,[double]$SlopeLimit,[d
     $positiveFraction=$positive/($points.Count-1)
     [pscustomobject]@{samples=$points.Count;slope_per_hour=$slope;final_delta=$last-$first;positive_step_fraction=$positiveFraction;insufficient=$false;trend_detected=($slope -gt $SlopeLimit -and $positiveFraction -ge 0.6);final_growth_exceeded=(($last-$first) -gt $FinalLimit)}
 }
-function Measure-IdleSoakSeries($CpuSamples,$ResourceSamples,[string]$EndState,[double]$DurationSeconds,[double]$WarmupSeconds,[double]$CpuSampleSeconds) {
+function Measure-IdleSoakSeries($CpuSamples,$ResourceSamples,[string]$EndState,[double]$DurationSeconds,[double]$WarmupSeconds,[string]$CollectionError) {
     Assert-IdleSoakSamples $CpuSamples $ResourceSamples
     $failures=@()
     if ($EndState -ceq 'crash') { $failures+='the root process tree ended before the requested duration (crash)' }
     elseif ($EndState -ceq 'timeout') { $failures+='the sampler reached its timeout before the requested duration' }
+    elseif ($EndState -ceq 'unobservable') { $failures+="process-tree cpu is unobservable: $CollectionError" }
     elseif ($EndState -cne 'completed') { throw "unsupported end state: $EndState" }
-    $lastCpuElapsed=[double](@($CpuSamples)[-1].elapsed_seconds)
-    if ($lastCpuElapsed -lt ($DurationSeconds-[math]::Max(1.5*$CpuSampleSeconds,1.0))) { $failures+='final cpu samples do not cover the requested duration' }
     $cpuMissing=Get-IdleSoakMissingSummary $CpuSamples; $resourceMissing=Get-IdleSoakMissingSummary $ResourceSamples
     foreach ($entry in @(@('cpu',$cpuMissing),@('resource',$resourceMissing))) {
         if ($entry[1].percent -gt $script:IdleSoakThresholds.missing_sample_percent -or $entry[1].max_consecutive -gt $script:IdleSoakThresholds.consecutive_missing_samples) { $failures+="$($entry[0]) missing samples exceed the pass bar" }
     }
     $cpuPoints=@(Select-IdleSoakPresentThroughEnd $CpuSamples $WarmupSeconds $DurationSeconds)
+    $resourcePoints=@(Select-IdleSoakPresentThroughEnd $ResourceSamples $WarmupSeconds $DurationSeconds)
+    if ($EndState -ceq 'completed') {
+        if (-not $cpuPoints.Count -or [double]$cpuPoints[-1].elapsed_seconds -lt $DurationSeconds) { $failures+='final cpu samples do not cover the requested duration' }
+        if (-not $resourcePoints.Count -or [double]$resourcePoints[-1].elapsed_seconds -lt $DurationSeconds) { $failures+='final resource samples do not cover the requested duration' }
+    }
     $averageCpu=$null
     if ($cpuPoints.Count -lt 2 -or [double]$cpuPoints[-1].elapsed_seconds -le [double]$cpuPoints[0].elapsed_seconds) { $failures+='post-warm-up cpu samples are insufficient' }
     else {
@@ -243,6 +365,14 @@ function Write-IdleSoakReport($Result,[string]$Root) {
     if ($Result.failure_reasons.Count) { foreach ($reason in $Result.failure_reasons) { $lines+="- $reason" } } else { $lines+='- none' }
     [IO.File]::WriteAllText($markdownPath,($lines -join "`n")+"`n")
 }
+function Complete-IdleSoakReport($samples,$candidate,$root,$source,[double]$runSeconds,[double]$warmupSeconds,[double]$timeoutSeconds,[string]$collectionError) {
+    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $runSeconds $warmupSeconds $collectionError
+    $result|Add-Member -NotePropertyMembers @{generated_at_utc=([DateTimeOffset]::UtcNow.ToString('o'));sample_source=$source;candidate=$candidate;thresholds=([pscustomobject]$script:IdleSoakThresholds);
+        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;total_elapsed_seconds=$runSeconds;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
+        cpu_samples=@($samples.cpu_samples);resource_samples=@($samples.resource_samples)}
+    Write-IdleSoakReport $result $root
+    $result
+}
 function Invoke-IdleSoak {
     if ($DurationHours -le 0 -or $CpuSampleSeconds -le 0 -or $ResourceSampleSeconds -le 0) { throw 'duration and sample intervals must be positive' }
     $measurementSeconds=$DurationHours*3600.0; $warmupSeconds=$WarmupMinutes*60.0; $runSeconds=$warmupSeconds+$measurementSeconds
@@ -250,21 +380,21 @@ function Invoke-IdleSoak {
     $timeoutSeconds=if ($TimeoutMinutes -gt 0) {$TimeoutMinutes*60.0} else {$runSeconds+900.0}
     if ($timeoutSeconds -lt $runSeconds) { throw 'the timeout must not be shorter than warm-up plus measurement' }
     $root=Assert-IdleSoakSyntheticRoot $SyntheticDataRoot ([bool]$ApproveSyntheticDataRoot)
-    $candidate=Get-IdleSoakCandidate $CandidateExePath
+    $candidate=Get-IdleSoakCandidate $CandidateExePath -RejectLinks:$LaunchCandidate
+    $collectionError=''
     if ($FixtureSamplesPath) {
         $samples=Read-IdleSoakFixture $FixtureSamplesPath; $source='fixture'
     } else {
-        if ($RootProcessId -le 0) { throw 'a running root process id is required unless fixture samples are used' }
-        Assert-IdleSoakNoLiveHex @(Get-CimInstance Win32_Process -ErrorAction Stop)
-        $samples=Invoke-IdleSoakSampler $RootProcessId $candidate.path $runSeconds $warmupSeconds $CpuSampleSeconds $ResourceSampleSeconds $timeoutSeconds
+        if ($RootProcessId -gt 0 -and $LaunchCandidate) { throw 'use either a root process id or -LaunchCandidate' }
+        if ($RootProcessId -le 0 -and -not $LaunchCandidate) { throw 'use -LaunchCandidate or supply fixture samples' }
+        $processes=try { @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { @() }
+        Assert-IdleSoakNoLiveHex $processes
+        $collectionError='broker-created work outside the Job Object cannot be accounted for; native qualification is suspended'
+        if ($RootProcessId -gt 0) { $collectionError='an existing process may already have untracked descendants' }
+        $samples=[pscustomobject]@{end_state='unobservable';cpu_samples=@();resource_samples=@()}
         $source='process-tree'
     }
-    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $runSeconds $warmupSeconds $CpuSampleSeconds
-    $result|Add-Member -NotePropertyMembers @{generated_at_utc=([DateTimeOffset]::UtcNow.ToString('o'));sample_source=$source;candidate=$candidate;thresholds=([pscustomobject]$script:IdleSoakThresholds);
-        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;total_elapsed_seconds=$runSeconds;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
-        cpu_samples=@($samples.cpu_samples);resource_samples=@($samples.resource_samples)}
-    Write-IdleSoakReport $result $root
-    $result
+    Complete-IdleSoakReport $samples $candidate $root $source $runSeconds $warmupSeconds $timeoutSeconds $collectionError
 }
 if ($MyInvocation.InvocationName -ne '.') {
     try {

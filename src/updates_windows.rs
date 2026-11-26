@@ -349,6 +349,15 @@ fn recorder_ready_root() -> Option<PathBuf> {
 fn local(name: &str) -> PathBuf {
     directory().join(name)
 }
+/// Windows PowerShell must use its own module path; a PSModulePath inherited from
+/// PowerShell 7 hides built-in script-module commands such as Get-FileHash.
+fn windows_powershell() -> Command {
+    let mut command = Command::new("powershell.exe");
+    command
+        .env_remove("PSModulePath")
+        .creation_flags(0x08000000);
+    command
+}
 pub fn load() -> Status {
     if !installed() {
         return Status {
@@ -757,7 +766,7 @@ fn listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
     );
     #[cfg(not(feature = "recorder-ready-proof"))]
     let script = LISTENER_TASK_SCRIPT.to_owned();
-    let mut child = Command::new("powershell.exe")
+    let mut child = windows_powershell()
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .env("SIDENOTE_TASK_NAME", name)
         .env("SIDENOTE_TASK_EXE", exe)
@@ -767,7 +776,6 @@ fn listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
             "SIDENOTE_TASK_REGISTER",
             if register { "yes" } else { "no" },
         )
-        .creation_flags(0x08000000)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -1191,7 +1199,7 @@ fn install_pipeline_scripts() -> Result<(), String> {
         "entry": entry, "entry_hash": sha256(entry),
     });
     let error = PIPELINE_INSTALL_ERROR;
-    let mut child = Command::new("powershell.exe")
+    let mut child = windows_powershell()
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -1201,7 +1209,6 @@ fn install_pipeline_scripts() -> Result<(), String> {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .creation_flags(0x08000000)
         .spawn()
         .map_err(|_| error)?;
     let written = child.stdin.take().ok_or(error).and_then(|mut stdin| {
@@ -2228,5 +2235,14 @@ if ($script:started) { exit 0 }; exit 3
                 "The update package is invalid."
             );
         }
+    }
+
+    #[test]
+    fn powershell_children_drop_the_inherited_module_path() {
+        let command = windows_powershell();
+        assert_eq!(command.get_program(), "powershell.exe");
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
+        }));
     }
 }
