@@ -2162,7 +2162,7 @@ fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
         return;
     }
     let detect = hex::SKIP_INSTALL_DETECT.replace(true);
-    let mut rt = page_with((390.0, 600.0), || {
+    let mut rt = page_with((390.0, 844.0), || {
         let path = core::meetings_dir()
             .join(MEETING)
             .join("english-summary.json");
