@@ -4,7 +4,7 @@ use crate::ui::{
     icons, notes_status, rows, tasks,
     widgets::{self, HelpHint},
 };
-use rune::{Color, KeyEvent};
+use rune::KeyEvent;
 use rune_kit::{Placement, Popover};
 use sidenote::core::{self, TaskItem, TaskStatus, Urgency, people::Side};
 use std::{collections::BTreeSet, rc::Rc};
@@ -367,22 +367,14 @@ pub(super) fn status_chip(
             .w_full()
             .px(8.0)
             .py(4.0)
-            .radius(8.0)
             .gap(2.0)
-            .fill(if s.meeting_ui.status_open {
-                p.chip
-            } else {
-                Color::TRANSPARENT
-            })
             .children(english.then(|| {
                 roles::SMALL
                     .wrap(ENGLISH_ONLY, p.ink)
                     .key("meeting-english-only")
             }))
             .children(
-                engine
-                    .clone()
-                    .map(|copy| roles::SMALL.wrap(copy, p.ink).key("meeting-engine-status")),
+                engine.map(|copy| roles::SMALL.wrap(copy, p.ink).key("meeting-engine-status")),
             ),
     )
     .key("meeting-status")
@@ -402,8 +394,6 @@ pub(super) fn status_chip(
         .px(2.0)
         .gap(8.0)
         .on_key(close_on_escape)
-        .children(english.then(|| roles::SMALL.wrap(ENGLISH_ONLY, p.ink)))
-        .children(engine.map(|copy| roles::SMALL.wrap(copy, p.ink)))
         .child(
             quiet_button("Open language settings", "meeting-status-settings", p)
                 .self_start()
@@ -503,7 +493,6 @@ fn header(
         .gaps(6.0, 6.0)
         .items_center()
         .child(view_switch(s, k, p))
-        .children(status_chip(s, k, m, p, layer))
         .child(row().key("meeting-sections-slot").children(sections));
     let mut controls = col().key("meeting-controls").w_full();
     if let Some(facts) = facts {
@@ -516,7 +505,11 @@ fn header(
         .pt(18.0)
         .pb(22.0)
         .child(title)
-        .child(controls.child(views.mt(16.0)))
+        .child(
+            controls
+                .child(views.mt(16.0))
+                .children(status_chip(s, k, m, p, layer)),
+        )
         .children(crate::ui::live::parts_status(s, p))
         .children(project::form(s, k, &m.id, p))
 }
