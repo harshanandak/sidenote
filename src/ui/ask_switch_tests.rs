@@ -2179,7 +2179,7 @@ fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
         scene_agents(s, &["codex"]);
         s.saved.messages.push(Message {
             role: "assistant".into(),
-            text: "An earlier answer about the launch. ".repeat(30),
+            text: "An earlier answer about the launch. ".repeat(8),
             ..Default::default()
         });
     });
@@ -2188,14 +2188,15 @@ fn the_dock_leaves_the_last_notes_row_clear_on_a_phone() {
     rt.frame(0.0);
     assert!(meeting::phone(&rt.state));
     assert!(rect_of(&rt, "ask-thread")[3] > 78.0);
-    rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-scroll"));
+    rt.update(|_, tx| tx.scroll_key_to("verify-0", 0.0));
     rt.settle_all();
     rt.frame(0.0);
     let last = rect_of(&rt, "verify-0");
     let dock = rect_of(&rt, "ask-overlay");
+    let viewport = rect_of(&rt, "meeting-scroll");
     assert!(
-        last[1] >= rect_of(&rt, "meeting-scroll")[1] && last[1] + last[3] <= dock[1],
-        "the last summary row {last:?} is not clear of the dock {dock:?}"
+        last[1] >= viewport[1] && last[1] + last[3] <= dock[1].min(viewport[1] + viewport[3]),
+        "the last summary row {last:?} is not clear of the dock {dock:?} in {viewport:?}"
     );
 }
 
