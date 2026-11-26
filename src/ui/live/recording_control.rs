@@ -82,7 +82,9 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
     let mut control = row()
         .key("meeting-recording-control")
         .items_center()
-        .gap(2.0);
+        .gap(2.0)
+        .radius(22.0)
+        .fill(if recording { p.chip } else { p.card });
     let button = |name, key, glyph| {
         if compact {
             icon_button(glyph, name, key, ButtonRole::Ghost, p).size(DOCK_BUTTON, DOCK_BUTTON)
@@ -129,6 +131,7 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             .label("Pause recording")
             .size(DOCK_BUTTON, DOCK_BUTTON)
             .radius(DOCK_BUTTON / 2.0)
+            .fill(p.bg)
             .hover(p.button_hover)
             .center()
             .button_disabled(s.hex_record_busy())
@@ -163,15 +166,10 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
             .on_press(|s: &mut State| s.meeting_generate()),
         );
     }
-    if recording
-        && (live
-            || s.live
-                .as_ref()
-                .and_then(|l| l.session.as_ref())
-                .is_some_and(|m| s.selected.as_deref() == Some(m.id.as_str())))
-    {
-        let expected = super::super::hex::recording_id(s);
-        let reason = super::super::hex::stop_blocked(s);
+    let owner = s.live.as_ref().and_then(|l| l.session.as_ref());
+    if recording && (live || owner.is_some_and(|m| s.selected.as_ref() == Some(&m.id))) {
+        let expected = hex::recording_id(s);
+        let reason = hex::stop_blocked(s);
         let stop = button("Stop", "hex-stop", &icons::STOP);
         control = control.child(
             stop.label(

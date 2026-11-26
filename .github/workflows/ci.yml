@@ -13,6 +13,8 @@ concurrency:
 
 env:
   CARGO_PROFILE_DEV_DEBUG: '0'
+  # Bump when changing build settings outside the cache key's hashed files.
+  CARGO_CACHE_SCHEMA: v3
 
 jobs:
   changes:
@@ -57,15 +59,19 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
+        env:
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-ubuntu-24.04-${{ env.CARGO_BUILD_TARGET }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-unknown-linux-gnu
             target/debug
-          key: ci-ubuntu-24.04-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '.cargo/config.toml') }}
-          restore-keys: ci-ubuntu-24.04-${{ steps.rust.outputs.cachekey }}-
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - name: Clippy on Stable and Dev ASR test targets
         run: |
           cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
@@ -99,12 +105,24 @@ jobs:
                 --skip=service::speech::proofs::locking::job_creation_keeps_intake_ownership_until_processing_is_locked
                 --skip=tests::server_role_exposes_only_scoped_host_probe)
           cargo test --locked --workspace --no-fail-fast --features asr-runtime -- "${skip[@]}"
-          cargo test --locked --workspace --no-fail-fast --features dev,asr-runtime -- "${skip[@]}"
+          cargo test --locked -p sidenote --no-fail-fast --features dev,asr-runtime -- "${skip[@]}"
           cargo test --locked -p sidenote --no-default-features --test channel_boundary
           cargo test --locked -p sidenote --no-default-features --features asr-runtime --test channel_boundary
           cargo test --locked -p sidenote --lib --bin sidenote -- \
             core::agent_tools:: core::ask_options:: core::meeting_watch:: \
             ui::ask_switch_tests::a_fallback_answer_through_the_real_ask_names_the_helper_that_answered_and_survives_reload
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-unknown-linux-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   relay:
     needs: changes
@@ -173,15 +191,19 @@ jobs:
       - name: Add GNU tools to PATH
         shell: pwsh
         run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
+        env:
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/x86_64-pc-windows-gnu
             target/debug
-          key: ci-windows-gnu-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '.cargo/config.toml') }}
-          restore-keys: ci-windows-gnu-${{ steps.rust.outputs.cachekey }}-
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.4.4'
@@ -191,13 +213,6 @@ jobs:
       - name: Run Windows pipeline tests
         if: needs.changes.outputs.tools == 'true'
         run: python -I tools/pipeline-tests.py
-      - name: Compile Dev test targets without ASR
-        run: cargo check --workspace --locked --tests --features dev
-      - name: Clippy on Stable and Dev ASR targets
-        shell: bash
-        run: |
-          cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
-          cargo clippy --workspace --locked --all-targets --features dev,asr-runtime -- -D warnings
       - name: Build the sync worker and fault-test fixture
         run: cargo build --locked -p sidenote-sync --bin sidenote-sync-worker --example worker_fault
       - name: Test Windows routing CLI recording admission
@@ -257,6 +272,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --lib -- \
             platform::windows::tests:: updates::implementation:: hex_install:: meeting_icon:: \
             platform::windows::close_tests:: core::annotations::notebook_tests:: \
+            core::annotations::tests::hexannotation_ \
             platform::windows::window_icon::tests:: \
             approval_seals_reviewed_bytes_and_send_pins_the_same_files core::config::tests:: \
             core::daily_check::background_tests:: core::meeting_evidence::speech_host_tests:: \
@@ -300,6 +316,10 @@ jobs:
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \
             ui::ask_switch_tests::suppression_failure_during_ui_apply_retries_unchanged_catalog \
             ui::ask_switch_tests::meeting_ticks_keep_the_all_meetings_chat \
+            ui::list::tests::home_last_row_scrolls_clear_of_ask \
+            ui::meeting::reading::tests::reading_labels_its_views_and_keeps_the_transcript_dismissible \
+            ui::recording_state_tests::pause_is_two_bars_apart_from_stop_and_works_by_mouse_and_keyboard \
+            ui::ask_switch_tests::meeting_grid_is_a_44_strip_640_notes_40_gap_and_300_tasks \
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
@@ -310,15 +330,153 @@ jobs:
             ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \
             ui::ask_switch_tests::ask_retry_submits_the_failed_question_once \
             ui::ask_switch_tests::stop_keeps_the_streamed_answer_and_marks_it_in_the_thread \
-            ui::ask::meeting_agent_tests::local_endpoint_failure_shows_recovery_before_the_known_metrics \
-            ui::list::tests::home_last_row_scrolls_clear_of_ask
-          SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \
-            cargo test --locked -p sidenote-sync --lib -- worker::tests::
-          cargo test --locked --features dev,asr-runtime -p sidenote --test idle_cpu --test relay_preview --test meeting_delete_storage --test meeting_delete_visibility
+            ui::ask::meeting_agent_tests::local_endpoint_failure_shows_recovery_before_the_known_metrics
           cargo test --locked -p sidenote --no-default-features --test channel_boundary
           cargo test --locked -p sidenote --lib --bin sidenote -- \
             core::agent_tools:: core::ask_options:: listener::pipeline_tests:: \
             ui::ask_switch_tests::a_fallback_answer_through_the_real_ask_names_the_helper_that_answered_and_survives_reload
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  windows-checks:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+      CARGO_BUILD_TARGET: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        id: rust
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          targets: x86_64-pc-windows-gnu
+          components: clippy
+      - uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0
+        id: msys2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-toolchain
+          path-type: inherit
+      - name: Add GNU tools to PATH
+        shell: pwsh
+        run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
+        env:
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
+      - name: Compile Dev test targets without ASR
+        run: cargo check --workspace --locked --tests --features dev
+      - name: Clippy on Stable and Dev ASR targets
+        shell: bash
+        run: |
+          cargo clippy --workspace --locked --all-targets --features asr-runtime -- -D warnings
+          cargo clippy --workspace --locked --all-targets --features dev,asr-runtime -- -D warnings
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  windows-integration:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+      CARGO_BUILD_TARGET: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        id: rust
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          targets: x86_64-pc-windows-gnu
+          components: clippy
+      - uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0
+        id: msys2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-toolchain
+          path-type: inherit
+      - name: Add GNU tools to PATH
+        shell: pwsh
+        run: '"${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
+        env:
+          CACHE_PREFIX: ${{ env.CARGO_CACHE_SCHEMA }}-windows-latest-${{ env.CARGO_BUILD_TARGET }}-${{ github.job }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ env.CACHE_PREFIX }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}-
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - name: Install Wrangler for headless Windows integration tests
+        working-directory: relay
+        run: bun install --frozen-lockfile
+      - name: Build the sync worker and fault-test fixture
+        run: cargo build --locked -p sidenote-sync --bin sidenote-sync-worker --example worker_fault
+      - name: Test Windows sync and integration
+        shell: bash
+        run: |
+          export SIDENOTE_DATA_DIR=$(cygpath -w "$RUNNER_TEMP/sidenote-integration")
+          SIDENOTE_SYNC_TEST_ARTIFACT_DIR="$(cygpath -aw "target/$CARGO_BUILD_TARGET/debug")" \
+            cargo test --locked -p sidenote-sync --lib -- worker::tests::
+          cargo test --locked --features dev,asr-runtime -p sidenote --test idle_cpu --test relay_preview --test meeting_delete_storage --test meeting_delete_visibility
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: >-
+          success() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/x86_64-pc-windows-gnu
+            target/debug
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   docs:
     runs-on: ubuntu-24.04
@@ -335,7 +493,7 @@ jobs:
   gate:
     name: CI Gate
     if: always()
-    needs: [changes, linux, relay, tools, windows, docs]
+    needs: [changes, linux, relay, tools, windows, windows-checks, windows-integration, docs]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
@@ -344,6 +502,8 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           LINUX: ${{ needs.linux.result }}/${{ needs.changes.outputs.linux }}
           WINDOWS: ${{ needs.windows.result }}/${{ needs.changes.outputs.windows }}
+          WINDOWS_CHECKS: ${{ needs.windows-checks.result }}/${{ needs.changes.outputs.windows }}
+          WINDOWS_INTEGRATION: ${{ needs.windows-integration.result }}/${{ needs.changes.outputs.windows }}
           RELAY: ${{ needs.relay.result }}/${{ needs.changes.outputs.relay }}
           TOOLS: ${{ needs.tools.result }}/${{ needs.changes.outputs.tools }}
           DOCS: ${{ needs.docs.result }}
@@ -351,7 +511,7 @@ jobs:
         run: |
           [[ "$CHANGES" == success ]] || { echo "changes: expected success, got $CHANGES"; exit 1; }
           failed=0
-          for job in LINUX WINDOWS RELAY TOOLS; do
+          for job in LINUX WINDOWS WINDOWS_CHECKS WINDOWS_INTEGRATION RELAY TOOLS; do
             case "${!job}" in
               success/true|skipped/false) ;;
               *) echo "$job: unexpected result/required flag ${!job}"; failed=1 ;;
