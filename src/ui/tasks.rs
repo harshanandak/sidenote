@@ -37,6 +37,12 @@ pub enum View {
     People,
 }
 
+impl View {
+    pub(super) fn is_base(self) -> bool {
+        matches!(self, Self::Home | Self::Meetings)
+    }
+}
+
 /// A project name being edited in its group header.
 pub struct Rename {
     pub from: String,
@@ -689,7 +695,7 @@ impl State {
             self.rebuild_tasks();
         } else {
             self.close_panel();
-            self.go_meetings();
+            self.reset_navigation();
         }
     }
 

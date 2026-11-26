@@ -1447,9 +1447,11 @@ fn finished_refresh_view(view: &str) {
             state.config.features.memory = true;
             state.memory_open = true;
         }
-        "sidebar" | "home" | "list" => state.go_home(),
+        "list" => state.go_meetings(),
+        "sidebar" | "home" => state.go_home(),
         _ => panic!("unknown view"),
     }
+    assert!(view != "list" || state.page() == crate::ui::nav::Page::Meetings);
     let (handle, dirty) = refresh::observing_handle();
     state.scan_tx = Some(handle);
     write("100-1", "Latest workshop", now - 2 * 60_000, false);

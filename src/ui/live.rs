@@ -685,10 +685,7 @@ impl State {
     pub fn on_live(&self) -> bool {
         self.live_open
             && self.live.is_some()
-            && matches!(
-                self.view,
-                super::tasks::View::Home | super::tasks::View::Meetings
-            )
+            && self.view.is_base()
             && self.selected.is_none()
             && !self.check_open
             && !self.memory_open

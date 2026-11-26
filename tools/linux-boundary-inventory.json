@@ -391,7 +391,7 @@
 
   "src/sync_owner/mcp.rs": "0f59d5b4431ac3b617b0621351e09005116e2d09492693abc47da3fbf614e724",
 
-  "src/ui/ai_notes.rs": "395c53fc257b253ee44b676303366b2c4ee7b226e61661985822b53face8218b",
+  "src/ui/ai_notes.rs": "c726bdde5e7d473845de9bea27710e2796b947b81d6386c4e9dfaf9cfdcf030c",
 
   "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
 
@@ -409,7 +409,7 @@
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
-  "src/ui/check.rs": "378d69a2490389c88d04fe41e4c13e461aae7a806f11f278c93fb074e1f1dbee",
+  "src/ui/check.rs": "c8721a1773bf0ef5f8bdbdcbaffb97f0d4bfcbedd9dbca9ac347c9a723077fe6",
 
   "src/ui/cloud_ask.rs": "0b3cd72ff4fabf3bfdf64e0017c44851bef8113df24feede14e991364312e0ae",
 
@@ -417,17 +417,17 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "883df20e76bf83ffe7a80d8ed80dcfb32da6b02ee39201ae50f388d676fd9842",
+  "src/ui/hex.rs": "4e01b4d8fa4e080c99d136d3f44b2e2c230ab4c4e96343db8be04738d85a7207",
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
-  "src/ui/hex/connection/stop_tests.rs": "f5cddef3a9d27da3571e1332c230eafc5ec33a2fff8e0ec489705e91b059c283",
+  "src/ui/hex/connection/stop_tests.rs": "a0e315bcdd14785a5306ff06bfa193ebc0958e4a60175492a47054a381fef697",
 
   "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
-  "src/ui/hex/settings.rs": "938b309c95d2ee24587ec81454924746975810a69837d3d21cead265e182f275",
+  "src/ui/hex/settings.rs": "003e10a30569824e2daff7d12248c19c35a6514bb6be1ea883ffb2f96891f753",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -437,17 +437,17 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "732f7429664bdd1c91bb70ec2d891a32926a09636d8ce7289600bd496ad54078",
+  "src/ui/live.rs": "659bbdd2034b906de1228ddeec3482d7e95eb093c75c03d8cb0bc2fed3da57bd",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
-  "src/ui/meeting_delete.rs": "1838a14b54fcce1659866479b864a76d3a380e88dcbf5ac68079b06c04bb5562",
+  "src/ui/meeting_delete.rs": "03329ea06154edc06fad7e4f80811e789763ddff0dc8901da4c3f9a1748d4e04",
 
-  "src/ui/memory.rs": "37fa6b1897e87ad4a9d35326555fb264516721df4b6d9a3bb495a5a544bfcb01",
+  "src/ui/memory.rs": "ed9bab3d8209a346c5f72dff814611cfaeee7c26200c4c3cdb90b6fba00a6c55",
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "9d5888e24ec0b70cbadf33a53faa619fd688a304e5b601823844027db6dc6e6e",
+  "src/ui/mod.rs": "92995cf65e549867cc233d21ea052c3c973b35c6b72075c83e87cd6f3989ef1a",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

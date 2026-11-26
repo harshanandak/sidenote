@@ -275,15 +275,11 @@ pub(crate) fn navigate(s: &mut State, page: Page, tab: usize) {
 
 fn back(s: &mut State) {
     let dest = s.hex.shell.back.take();
-    if dest
-        .as_ref()
-        .is_none_or(|dest| dest.page == nav::Page::Home)
-    {
-        s.go_home();
-    } else {
-        s.reset_navigation();
-    }
+    s.go_home();
     if let Some(dest) = dest {
+        if dest.page != nav::Page::Home {
+            s.view = tasks::View::Meetings;
+        }
         s.filter = dest.filter;
         s.selected = dest.selected;
         s.live_open = dest.live;

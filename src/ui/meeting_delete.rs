@@ -339,7 +339,7 @@ impl State {
         self.tasks.items_changed();
         if self.selected.is_some() && self.current().is_none() {
             if current {
-                self.go_meetings();
+                self.reset_navigation();
             } else {
                 self.selected = None;
                 self.saved = Default::default();

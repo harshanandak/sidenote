@@ -304,9 +304,8 @@ pub struct State {
     pub finder_query: TextEdit,
     pub highlight: Option<usize>,
     pub back: Option<String>,
-    /// Set when the open meeting came from a citation in the home thread: the answer to go
-    /// back to. "Back" then returns home instead of scrolling this meeting.
-    pub cite_back: Option<String>,
+    /// The citation's answer key and whether its Ask pane was on Home.
+    pub cite_back: Option<(String, bool)>,
     pub question: TextEdit,
     pub runners: Vec<Runner>,
     pub runner: Option<String>,
@@ -798,12 +797,9 @@ impl State {
             self.hex.filter.focused = true;
             return;
         }
-        if self.check_open
-            || self.view == tasks::View::Home
-            || self.selected.is_some()
-            || self.on_live()
-        {
-            self.go_meetings();
+        let reading = self.selected.is_some() || self.on_live();
+        if self.check_open || self.view == tasks::View::Home || reading {
+            self.reset_navigation();
         }
         self.search.focused = true;
     }
@@ -1038,12 +1034,13 @@ impl State {
         if !self.meetings.iter().any(|m| m.id == id) {
             return;
         }
+        let from_home = self.page() == nav::Page::Home;
         self.select(id, tx);
         if let Some(stamp) = stamp {
             self.jump(stamp, origin.clone(), tx);
         }
         self.back = Some(origin.clone());
-        self.cite_back = Some(origin);
+        self.cite_back = Some((origin, from_home));
     }
 
     pub fn go_back(&mut self, tx: &mut Tx) {
@@ -1073,8 +1070,11 @@ impl State {
             });
             return;
         }
-        if let Some(key) = self.cite_back.take() {
-            self.go_home();
+        if let Some((key, from_home)) = self.cite_back.take() {
+            self.reset_navigation();
+            if from_home {
+                self.view = tasks::View::Home;
+            }
             self.thread_hidden = false;
             self.pending_thread = Some(PendingScroll {
                 key,
@@ -2328,7 +2328,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         }
         // Escape steps back from a meeting to the meetings list.
         Key::Escape if !home => {
-            s.go_meetings();
+            s.reset_navigation();
             true
         }
         _ => false,
@@ -2341,16 +2341,9 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
     if s.page() == nav::Page::Meetings && s.selected.is_some() {
         show = true;
         let title = s.current().map(|m| m.title.as_str()).unwrap_or_default();
-        left = left.child(
-            widgets::breadcrumb(
-                "Meetings",
-                title,
-                "meeting-breadcrumb",
-                p,
-                State::go_meetings,
-            )
-            .grow(1.0),
-        );
+        let back = State::reset_navigation;
+        let crumb = widgets::breadcrumb("Meetings", title, "meeting-breadcrumb", p, back);
+        left = left.child(crumb.grow(1.0));
     }
     if s.on_memory() && s.memory.browse {
         show = true;

@@ -619,12 +619,7 @@ impl State {
     }
 
     pub fn on_memory(&self) -> bool {
-        self.memory_open
-            && matches!(
-                self.view,
-                super::tasks::View::Home | super::tasks::View::Meetings
-            )
-            && self.selected.is_none()
+        self.memory_open && self.view.is_base() && self.selected.is_none()
     }
 
     pub fn open_memory(&mut self) {

@@ -1,7 +1,7 @@
 use super::{
     State, ask, cards, list, roles,
     theme::{PAGE_TITLE, Palette},
-    widgets::scroll,
+    widgets::{notice_bar, scroll},
 };
 use chrono::{Local, NaiveDate, Timelike};
 use rune::{El, col, row};
@@ -28,18 +28,15 @@ fn recent_meetings(meetings: &[Meeting], today: NaiveDate) -> impl Iterator<Item
 }
 
 fn needs_you(task: &TaskItem, owner: &str, teams: &Teams) -> bool {
-    !task.done
-        && (task.mine == Some(true)
-            || (!owner.is_empty()
-                && task
-                    .owner
-                    .as_deref()
-                    .is_some_and(|name| people::key(&teams.owner_name(name)) == owner)))
+    let owned = |name| !owner.is_empty() && people::key(&teams.owner_name(name)) == owner;
+    !task.done && (task.mine == Some(true) || task.owner.as_deref().is_some_and(owned))
 }
 
-fn task_counts(tasks: &[TaskItem], owner: &str, teams: &Teams, today: NaiveDate) -> (usize, usize) {
-    let owner = people::key(&teams.owner_name(owner));
-    tasks
+fn task_counts(s: &State, today: NaiveDate) -> (usize, usize) {
+    let teams = &s.tasks.teams;
+    let owner = people::key(&teams.owner_name(&s.config.engine_settings.owner_name));
+    s.tasks
+        .all
         .iter()
         .filter(|task| needs_you(task, &owner, teams))
         .fold((0, 0), |(open, late), task| {
@@ -65,50 +62,43 @@ pub(super) fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec
     let now = Local::now();
     let today = now.date_naive();
     let owner = &s.config.engine_settings.owner_name;
-    let (open, late) = task_counts(&s.tasks.items, owner, &s.tasks.teams, today);
+    let (open, late) = task_counts(s, today);
     let meetings = meetings_label(recent_meetings(&s.meetings, today).count());
     let tiles = if narrow { col() } else { row() };
+    let hello = list::text_title(&greeting(now.hour(), owner), PAGE_TITLE, p).key("home-greeting");
+    let date = roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft);
+    let tasks = tile(
+        "home-tasks-tile",
+        format!("{open} tasks need you"),
+        Some(format!("{late} late")),
+        p,
+    );
+    let meetings = tile("home-meetings-tile", meetings, None, p);
     let doc = col()
         .w_full()
         .max_w(860.0)
         .px(if narrow { 16.0 } else { 40.0 })
         .py(24.0)
         .gap(16.0)
-        .child(
-            col()
-                .gap(4.0)
-                .child(
-                    list::text_title(&greeting(now.hour(), owner), PAGE_TITLE, p)
-                        .key("home-greeting"),
-                )
-                .child(roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft)),
-        )
-        .child(
-            tiles
-                .gap(12.0)
-                .child(tile(
-                    "home-tasks-tile",
-                    format!("{open} tasks need you"),
-                    Some(format!("{late} late")),
-                    p,
-                ))
-                .child(tile("home-meetings-tile", meetings, None, p)),
-        );
+        .child(col().gap(4.0).child(hello).child(date))
+        .child(tiles.gap(12.0).child(tasks).child(meetings));
+    let body = col().w_full().items_center().child(doc);
     col()
         .key("meeting-pane")
         .grow(1.0)
         .min_h(0.0)
         .min_w(0.0)
-        .child(scroll(
-            col().w_full().items_center().child(doc),
-            "home-scroll",
-        ))
+        .children(s.notice.as_deref().map(|note| notice_bar(note, p)))
+        .child(scroll(body, "home-scroll"))
         .child(ask::overlay(s, k, p, narrow, layer))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::{nav::Page, theme};
     use super::*;
+
+    const TODAY: NaiveDate = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
 
     fn meeting(root: &std::path::Path, date: NaiveDate, summary: &str) -> Meeting {
         let dir = root.join(date.to_string());
@@ -124,7 +114,6 @@ mod tests {
     #[test]
     fn tiles_count_recent_meetings_and_open_tasks_that_need_you() {
         let root = tempfile::tempdir().unwrap();
-        let today = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
         let summary = r#"{"title":"Workshop","todo":[
             {"task":"Draft notes","due":"2026-11-24"},
             {"task":"Send agenda","owner":"CASEY MORGAN","due":"2026-11-25"},
@@ -133,9 +122,9 @@ mod tests {
             {"task":"Reserve room","owner":"Casey Morgan"}
         ]}"#;
         let meetings =
-            [0, 1, 2].map(|days| meeting(root.path(), today - chrono::Days::new(days), summary));
+            [0, 1, 2].map(|days| meeting(root.path(), TODAY - chrono::Days::new(days), summary));
         assert_eq!(
-            meetings_label(recent_meetings(&meetings, today).count()),
+            meetings_label(recent_meetings(&meetings, TODAY).count()),
             "2 meetings since yesterday"
         );
         let mut tasks = sidenote::core::build_tasks(
@@ -148,18 +137,28 @@ mod tests {
         tasks[0].mine = Some(true);
         tasks[1].mine = Some(false);
         tasks[2].done = true;
-        assert_eq!(
-            task_counts(&tasks, "Casey Morgan", &Teams::default(), today),
-            (3, 1)
-        );
+        let mut s = State::new();
+        s.config.engine_settings.owner_name = "Casey Morgan".into();
+        s.tasks.all = tasks;
+        assert!(s.tasks.items.is_empty());
+        assert_eq!(task_counts(&s, TODAY), (3, 1));
+    }
+
+    #[test]
+    fn helpers_opened_from_home_offer_summary_setup() {
+        let mut s = State::new();
+        s.ai_notes.scene = true;
+        s.ai_notes.settings = Some(Default::default());
+        s.open_ai_notes();
+        assert!(super::super::ai_notes::setup_card(&s, theme::palette(false)).is_some());
     }
 
     #[test]
     fn startup_home_and_meeting_breadcrumb_route() {
-        use super::super::{nav::Page, theme, view};
+        use super::super::{nav::Filter, tasks::View, view};
         use rune::{Env, Runtime, text::TextSystem};
 
-        let mut s = State::new();
+        let s = State::new();
         assert!(s.page() == Page::Home);
         s.sidebar_open.set(true);
         let mut rt = Runtime::with_text(
@@ -169,6 +168,7 @@ mod tests {
             Env::new(false, 1.0),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
         );
+        rt.update(|s, _| s.notice = Some("Recover synthetic settled changes".into()));
         rt.settle_all();
         rt.frame(0.0);
         let home = rt
@@ -177,24 +177,34 @@ mod tests {
             .find(|e| e.key.as_deref() == Some("nav-home"))
             .unwrap();
         assert_eq!(home.fill, theme::palette(false).sel);
+        assert!(rt.find("notice-dismiss").is_some());
         for key in ["home-greeting", "home-tasks-tile", "home-meetings-tile"] {
             assert!(rt.find(key).is_some(), "missing {key}");
         }
 
         let root = tempfile::tempdir().unwrap();
-        let today = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
-        let sample = meeting(root.path(), today, r#"{"title":"Workshop"}"#);
+        let sample = meeting(root.path(), TODAY, r#"{"title":"Workshop"}"#);
         rt.update(|s, tx| {
             s.go_meetings();
             assert!(s.page() == Page::Meetings);
             let id = sample.id.clone();
             s.meetings.push(sample);
+            for origin in [View::Home, View::Meetings] {
+                s.view = origin;
+                s.open_citation(&id, "sample-answer".into(), tx);
+                s.go_back(tx);
+                assert_eq!(s.view, origin);
+                assert_eq!(s.pending_thread.as_ref().unwrap().key, "sample-answer");
+            }
+            s.filter = Filter::Peers;
             s.select(&id, tx);
         });
         rt.frame(0.0);
         let (x, y) = rt.find("meeting-breadcrumb-parent").unwrap();
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
+        rt.frame(0.2);
+        assert!(rt.state.filter == Filter::Peers);
         assert!(rt.state.page() == Page::Meetings);
         assert!(rt.state.selected.is_none());
     }
