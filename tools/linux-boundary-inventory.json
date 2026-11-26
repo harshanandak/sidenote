@@ -329,7 +329,7 @@
 
   "src/hex_probe.rs": "0c50a06725535b61c042aa2a6c13a2c42e046bc88ee3354b7aaa0bf004a88757",
 
-  "src/listener.rs": "f72c703b6d1361a66a92cf69c4088ef4090fc92729857590c995242f8a7813b2",
+  "src/listener.rs": "000ce154288492a2c7311e9a061456d00322ce9682d5a769c1717b563e9dc25f",
 
   "src/listener/completion.rs": "ed9ba2b329051ded8dc962dc150c7643fbf3f75723ee6faa6eebf95a1bf1e3a2",
 
@@ -467,5 +467,5 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "45902467319d456b1fb157834418525e19c535c6b556fe725cc44a5b9e317d38"
+  "src/updates_windows.rs": "20007287228fddb224194a2d48fb552bfdf76ced40aa0a31674c1eb19e402f75"
 }

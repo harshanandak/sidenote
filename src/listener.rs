@@ -391,9 +391,11 @@ fn script_command_with_environment(
     let filtered = Command::new("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command",
             "$ErrorActionPreference='Stop'; if ((Get-Command -Name $env:SIDENOTE_NOTES_SCRIPT).Parameters.ContainsKey('MeetingFolders')) { exit 0 }; exit 1"])
-        .env("SIDENOTE_NOTES_SCRIPT", script).creation_flags(HIDDEN)
+        .env("SIDENOTE_NOTES_SCRIPT", script).env_remove("PSModulePath").creation_flags(HIDDEN)
         .output().is_ok_and(|output| output.status.success());
+    // A PSModulePath inherited from PowerShell 7 hides Windows PowerShell's Get-FileHash.
     let mut command = Command::new("powershell.exe");
+    command.env_remove("PSModulePath");
     if filtered {
         command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command",
             "$ErrorActionPreference='Stop'; $folders=@(ConvertFrom-Json $env:SIDENOTE_MEETING_FOLDERS); & $env:SIDENOTE_NOTES_SCRIPT -MeetingFolders $folders; if (!$?) { exit 1 }"])
@@ -815,6 +817,17 @@ mod pipeline_tests {
     }
     #[cfg(windows)]
     #[test]
+    fn notes_script_runs_without_the_inherited_module_path() {
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("notes.ps1");
+        fs::write(&script, "param()\n").unwrap();
+        let (command, _) = script_command(&script, &[], |_| {}).unwrap();
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
+        }));
+    }
+    #[cfg(windows)]
+    #[test]
     fn listener_retries_contention_and_acquires_after_the_probe_releases() {
         use std::os::windows::fs::OpenOptionsExt;
         let root = tempfile::tempdir().unwrap();
@@ -942,12 +955,15 @@ mod pipeline_tests {
             })
             .unwrap();
         assert!(!filtered);
-        assert_eq!(command.get_envs().count(), 8);
-        assert!(
-            command.get_envs().all(
-                |(_, value)| value == Some(std::ffi::OsStr::new("synthetic environment value"))
-            )
-        );
+        // Eight synthetic settings plus the removed PSModulePath.
+        assert_eq!(command.get_envs().count(), 9);
+        assert!(command.get_envs().all(|(key, value)| {
+            if key == std::ffi::OsStr::new("PSModulePath") {
+                value.is_none()
+            } else {
+                value == Some(std::ffi::OsStr::new("synthetic environment value"))
+            }
+        }));
         assert_eq!(
             command
                 .get_args()
