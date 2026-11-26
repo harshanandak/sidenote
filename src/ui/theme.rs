@@ -13,7 +13,7 @@ pub struct Palette {
     pub card: Color,
     /// Floating details and help hints on the meeting page.
     pub raised: Color,
-    /// The sidebar.
+    /// The quiet inset fill for the current region.
     pub side: Color,
     pub ink: Color,
     pub body: Color,
@@ -84,6 +84,7 @@ struct SurfaceTokens {
 struct MeaningTokens {
     page: SurfaceTokens,
     sidebar: SurfaceTokens,
+    page_inset: Color,
     surface: Color,
     floating_surface: Color,
     border_strong: Color,
@@ -187,12 +188,14 @@ mod classic {
             warning: pick(AMBER_700, AMBER_400),
             danger: pick(RED_700, RED_300),
         };
+        let inset = pick(GREY_50, GREY_950);
         MeaningTokens {
             page,
             sidebar: SurfaceTokens {
-                fill: pick(GREY_50, GREY_950),
+                fill: inset,
                 ..page
             },
+            page_inset: inset,
             surface: pick(GREY_0, GREY_850),
             floating_surface: pick(GREY_0, GREY_825),
             border_strong: pick(GREY_200, GREY_800),
@@ -233,7 +236,7 @@ fn olive(dark: bool) -> MeaningTokens {
             primary: pick("#1f2118", "#eef0e6"),
             body: pick("#3b3d31", "#d3d7c6"),
             secondary: pick("#4f5143", "#b3b8a2"),
-            tertiary: pick("#5f6152", "#a0a690"),
+            tertiary: pick("#5f6152", "#a7a890"),
         },
         quiet_fill: pick("#ece4d3", "#232a1d"),
         selected_fill: pick("#e9e1cf", "#2c3424"),
@@ -273,10 +276,11 @@ fn olive(dark: bool) -> MeaningTokens {
     MeaningTokens {
         page,
         sidebar,
+        page_inset: page.quiet_fill,
         surface: pick("#fffdf8", "#1e2319"),
         floating_surface: pick("#fffdf8", "#252b1f"),
         border_strong: pick("#d8ceb9", "#2f3628"),
-        mark: pick("#9a9886", "#6d7360"),
+        mark: pick("#8d8b79", "#6d7360"),
         accent_solid: accent,
         accent_on: ink_on_accent,
         positive: pick("#2e7a1f", "#8fd37a"),
@@ -317,6 +321,7 @@ fn lime(dark: bool) -> MeaningTokens {
             fill: pick("#f1f3ea", "#0a0b09"),
             ..page
         },
+        page_inset: page.quiet_fill,
         surface: pick("#ffffff", "#171915"),
         floating_surface: pick("#ffffff", "#1d1f1a"),
         border_strong: pick("#d6dbc8", "#2a2d26"),
@@ -361,6 +366,7 @@ fn rose_clay(dark: bool) -> MeaningTokens {
             fill: pick("#f4e6e2", "#140d0f"),
             ..page
         },
+        page_inset: page.quiet_fill,
         surface: pick("#fffbfa", "#231a1c"),
         floating_surface: pick("#fffbfa", "#2b2023"),
         border_strong: pick("#e5cfc9", "#3a2b2e"),
@@ -377,9 +383,35 @@ fn rose_clay(dark: bool) -> MeaningTokens {
     }
 }
 
-pub fn palette(dark: bool) -> Palette {
+fn default_tokens(dark: bool) -> MeaningTokens {
     let [(_, default), ..] = PRESETS;
-    component_palette(&default(dark))
+    default(dark)
+}
+
+pub fn palette(dark: bool) -> Palette {
+    component_palette(&default_tokens(dark))
+}
+
+pub fn sidebar_palette(dark: bool, page: Palette) -> Palette {
+    let sidebar = default_tokens(dark).sidebar;
+    Palette {
+        side: sidebar.fill,
+        ink: sidebar.text.primary,
+        body: sidebar.text.body,
+        soft: sidebar.text.secondary,
+        faint: sidebar.text.tertiary,
+        line: sidebar.border_subtle,
+        warn: sidebar.warning,
+        danger: sidebar.danger,
+        chip: sidebar.quiet_fill,
+        sel: sidebar.selected_fill,
+        ..page
+    }
+}
+
+#[cfg(test)]
+pub(super) fn classic_palette(dark: bool) -> Palette {
+    component_palette(&classic::meaning(dark))
 }
 
 fn component_palette(tokens: &MeaningTokens) -> Palette {
@@ -388,7 +420,7 @@ fn component_palette(tokens: &MeaningTokens) -> Palette {
         bg: page.fill,
         card: tokens.surface,
         raised: tokens.floating_surface,
-        side: tokens.sidebar.fill,
+        side: tokens.page_inset,
         ink: page.text.primary,
         body: page.text.body,
         soft: page.text.secondary,
@@ -687,9 +719,9 @@ mod quiet_ink_switch_tests {
     }
 
     #[test]
-    fn on_switches_use_the_positive_status_color_in_both_themes() {
+    fn classic_on_switches_use_the_positive_status_color_in_both_themes() {
         for dark in [false, true] {
-            let p = palette(dark);
+            let p = component_palette(&classic::meaning(dark));
             let k = kit(&p);
             assert_eq!(k.c.bg_accent, p.ok);
             assert_eq!(k.c.bg_accent, p.switch_on);
@@ -697,6 +729,19 @@ mod quiet_ink_switch_tests {
             assert_ne!(k.c.bg_accent, p.accent);
             assert_ne!(k.c.bg_accent, p.button_fill);
             assert_eq!(k.c.text_accent, p.ink);
+        }
+    }
+
+    #[test]
+    fn olive_on_switches_use_the_accent_in_both_themes() {
+        for dark in [false, true] {
+            let p = palette(dark);
+            let k = kit(&p);
+            assert_eq!(k.c.bg_accent, p.accent);
+            assert_eq!(k.c.bg_accent, p.switch_on);
+            assert_eq!(k.c.knob_on, p.switch_knob);
+            assert_ne!(k.c.bg_accent, p.ok);
+            assert_eq!(k.c.text_accent, p.link.unwrap());
         }
     }
 }
@@ -934,9 +979,9 @@ mod type_and_contrast_tests {
     /// The colour rules: the accent is coral, the focus ring clears 3:1 on every surface, the
     /// primary button is the accent, and selection is a grey with no hue.
     #[test]
-    fn the_accent_is_coral_the_primary_button_and_the_ring_and_selection_is_grey() {
+    fn classic_accent_is_coral_the_primary_button_and_the_ring_and_selection_is_grey() {
         for dark in [false, true] {
-            let p = palette(dark);
+            let p = component_palette(&classic::meaning(dark));
             assert_eq!(p.button_fill, p.accent);
             assert!(p.accent.r > p.accent.b * 1.8 && p.accent.r > p.accent.g * 1.4);
             for fill in [p.bg, p.card, p.side, p.sel] {
@@ -945,6 +990,49 @@ mod type_and_contrast_tests {
             // The old selection was blue-tinted (blue above red); the greys here are warm.
             assert!(p.sel.b <= p.sel.r, "selection is blue-tinted");
             assert_ne!(p.sel, p.accent);
+        }
+    }
+
+    #[test]
+    fn olive_accent_is_the_primary_button_and_the_ring_and_selection_is_warm() {
+        for (dark, accent, selection) in
+            [(false, "#55682a", "#e9e1cf"), (true, "#a9c25a", "#2c3424")]
+        {
+            let p = palette(dark);
+            assert_eq!(p.accent, hex(accent));
+            assert_eq!(p.button_fill, p.accent);
+            for fill in [p.bg, p.card, p.side, p.sel] {
+                assert!(ratio(p.accent, fill) >= 3.0, "ring on a surface");
+            }
+            assert_eq!(p.sel, hex(selection));
+            assert!(p.sel.b <= p.sel.r, "selection is blue-tinted");
+            assert_ne!(p.sel, p.accent);
+        }
+    }
+
+    #[test]
+    fn olive_sidebar_labels_keep_four_and_a_half_to_one() {
+        for dark in [false, true] {
+            let page = palette(dark);
+            let p = sidebar_palette(dark, page);
+            let tokens = olive(dark);
+            assert_eq!(page.side, tokens.page.quiet_fill);
+            assert_eq!(p.side, tokens.sidebar.fill);
+            assert_eq!(p.chip, tokens.sidebar.quiet_fill);
+            assert_eq!(p.sel, tokens.sidebar.selected_fill);
+            assert_eq!(p.line, tokens.sidebar.border_subtle);
+            for (ink, expected) in [
+                (p.ink, tokens.sidebar.text.primary),
+                (p.body, tokens.sidebar.text.body),
+                (p.soft, tokens.sidebar.text.secondary),
+                (p.faint, tokens.sidebar.text.tertiary),
+            ] {
+                assert_eq!(ink, expected);
+                for fill in [p.side, p.chip, p.sel] {
+                    let contrast = ratio(ink, fill);
+                    assert!(contrast >= 4.5, "dark={dark}: {contrast:.2}:1");
+                }
+            }
         }
     }
 

@@ -2626,6 +2626,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         });
     app = app.child(bar);
     let open = s.sidebar_is_open();
+    let sidebar = theme::sidebar_palette(cx.system_dark(), p);
     let mut body = row()
         .w_full()
         .grow(1.0)
@@ -2636,11 +2637,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             rune::el()
                 .w(if s.hex_recording() { nav::RAIL } else { 0.0 })
                 .h_full()
-                .fill(p.side)
+                .fill(sidebar.side)
         } else {
-            nav::sidebar(s, p, open && !window_narrow, &mut layer)
+            nav::sidebar(s, sidebar, p, open && !window_narrow, &mut layer)
         })
-        .child(rune::el().w(1.0).h_full().fill(p.line))
+        .child(
+            rune::el()
+                .w(1.0)
+                .h_full()
+                .fill(if on_hex { p.line } else { sidebar.line }),
+        )
         .child(main);
     if window_narrow && open && !on_hex {
         body = body
@@ -2652,7 +2658,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .on_press(|s: &mut State| s.drawer_open.set(false)),
             )
             .child(
-                nav::sidebar(s, p, true, &mut layer)
+                nav::sidebar(s, sidebar, p, true, &mut layer)
                     .pin(Some(0.0), Some(0.0), None, Some(0.0))
                     .shadow(0.0, 32.0, p.shadow),
             );
