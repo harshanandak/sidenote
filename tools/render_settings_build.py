@@ -90,7 +90,8 @@ def render(job):
    assert elements['ask-input']['rect'][2]>=92.0,base.name
   assert elements['meeting-source-pt-0-1']['opacity']==int(name.endswith('-time')),base.name
   assert elements['help-hint-model-tip']['opacity']==int(name.endswith('-hint')),base.name
-  assert ('meeting-engine-status' in elements)==name.endswith('-status'),base.name
+  # Engine status shows before the status control opens (was only inside it before S4).
+  assert 'meeting-engine-status' in elements,base.name
  if name.startswith('meeting-refine-p6-') and name.endswith('-after'):
   rects={e['key']:e['rect'] for e in tree['elements'] if e.get('key')}
   if width>=1334:
