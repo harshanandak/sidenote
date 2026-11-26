@@ -7,6 +7,8 @@ pub(super) mod helper;
 pub mod idle_fixture;
 mod joined;
 mod language;
+#[cfg(test)]
+mod long_meetings;
 mod prompt;
 pub mod queue;
 mod schema;
