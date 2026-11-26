@@ -280,7 +280,9 @@ static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct Live {
     pub(super) session: Option<sidenote::core::meeting_parts::Meeting>,
+    // Set only by Hex's accepted Stop reply for this live session.
     pub(super) generate_after_pause: bool,
+    pause_save_pending: bool,
     recovering_part: bool,
     parts_checked: Option<Instant>,
     // Session-local recording identity; never included in timing records.
@@ -411,6 +413,7 @@ impl Live {
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
+            pause_save_pending: false,
             recovering_part: false,
             parts_checked: None,
             stopped: (phase == Phase::Making).then(Instant::now),
@@ -518,6 +521,16 @@ impl Live {
 }
 
 impl State {
+    #[cfg(test)]
+    pub(super) fn capture_live_work(&mut self) -> mpsc::Receiver<Work> {
+        let (tx, rx) = mpsc::channel();
+        self.live_writer = Some(NoteWriter {
+            tx,
+            stopped: Arc::new(AtomicBool::new(false)),
+        });
+        rx
+    }
+
     pub(super) fn live_work(&mut self, work: impl FnOnce() + Send + 'static) -> bool {
         if self.live_writer.is_none() {
             self.live_writer = NoteWriter::new(self.waker.clone()).ok();
@@ -824,13 +837,10 @@ impl State {
         self.live_sync_start();
         if !recording
             && !busy
-            && self
-                .live
-                .as_ref()
-                .is_some_and(|l| l.phase == Phase::Paused && l.generate_after_pause)
+            && self.hex_stop_confirmed()
+            && self.live.as_ref().is_some_and(|l| l.generate_after_pause)
         {
-            // The pause request belongs to this live session even after navigation.
-            self.generate_live_notes();
+            self.retry_paused_notes();
         }
         let Some(live) = self.live.as_mut() else {
             return;

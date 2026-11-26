@@ -231,7 +231,8 @@ impl State {
             return;
         };
         let _ = m.refresh(&core::meetings_dir());
-        if m.pause(&core::state_dir()).is_err() {
+        live.pause_save_pending = m.pause(&core::state_dir()).is_err();
+        if live.pause_save_pending {
             self.hex.error = Some("Could not save paused meeting.");
             return;
         }
@@ -239,7 +240,22 @@ impl State {
         live.stopped = Some(Instant::now());
         self.request_refresh();
     }
+    pub(super) fn retry_paused_notes(&mut self) {
+        if self.live.as_ref().is_some_and(|l| l.pause_save_pending) {
+            self.parts_paused();
+        }
+        if self
+            .live
+            .as_ref()
+            .is_some_and(|l| l.phase == Phase::Paused && !l.pause_save_pending)
+        {
+            self.generate_live_notes();
+        }
+    }
     pub(in crate::ui) fn meeting_pause(&mut self) {
+        self.pause_meeting(false);
+    }
+    fn pause_meeting(&mut self, generate_notes: bool) {
         if self.hex_stop_pending() {
             return;
         }
@@ -254,7 +270,7 @@ impl State {
         {
             return;
         }
-        self.hex_record_stop(hex::recording_id(self));
+        self.hex_submit_stop(hex::recording_id(self), generate_notes);
     }
     fn parts_select(&mut self) -> bool {
         if let Some(live) = &self.live {
@@ -305,6 +321,10 @@ impl State {
         if self.hex_stop_pending() {
             return;
         }
+        if let Some(live) = &mut self.live {
+            live.generate_after_pause = false;
+            live.pause_save_pending = false;
+        }
         if self.hex_status_unknown() {
             self.hex_recheck_resume();
             return;
@@ -347,43 +367,53 @@ impl State {
             return;
         }
         if self.hex_recording() {
-            if let Some(live) = &mut self.live {
-                live.generate_after_pause = true;
-            }
-            self.meeting_pause();
+            self.pause_meeting(true);
             return;
         }
         self.generate_live_notes();
     }
 
-    pub(super) fn generate_live_notes(&mut self) {
+    fn generate_live_notes(&mut self) {
         let Some(live) = &mut self.live else {
             return;
         };
         let Some(m) = &mut live.session else {
             return;
         };
-        if m.phase == SavedPhase::Ended {
-            return;
-        }
         let root = core::state_dir();
-        match m.prepare_notes(&root, &core::meetings_dir()) {
+        let mut prepared = m.clone();
+        let preparation = if m.phase != SavedPhase::Ended {
+            prepared.prepare_notes(&root, &core::meetings_dir())
+        } else if live.generate_after_pause {
+            // Retry submitting input that this request already prepared.
+            Ok(meeting_parts::inputs(&root).join(&m.id))
+        } else {
+            return;
+        };
+        match preparation {
             Ok(folder) => {
+                *m = prepared;
                 live.folder = Some(folder);
-                live.phase = Phase::Making;
-                live.generate_after_pause = false;
                 let id = m.id.clone();
                 self.live_flush();
                 let events = self.events_tx.clone();
                 let wake = self.waker.clone();
-                self.live_work(move || {
+                if !self.live_work(move || {
                     let result = sidenote::listener::generate_meeting(&id)
                         .map_err(|_| sidenote::hex_engine::HexError::Unsupported);
                     let _ = events.send(Event::Hex(hex::Msg::NotesRequested(result)));
                     if let Some(wake) = wake {
                         wake();
                     }
-                });
+                }) {
+                    self.hex.error = Some("Could not start notes. Try Generate notes again.");
+                    return;
+                }
+                if let Some(live) = &mut self.live {
+                    live.phase = Phase::Making;
+                    live.generate_after_pause = false;
+                }
+                self.hex.error = None;
                 self.request_refresh();
             }
             Err(error) => {
