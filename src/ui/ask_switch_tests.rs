@@ -1349,7 +1349,9 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             .into_iter()
             .find(|runner| runner.name == "Codex")
             .unwrap();
-        runner.program = std::env::current_exe().unwrap().to_str().unwrap().into();
+        let executable = core::state_dir().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+        runner.program = executable.to_str().unwrap().into();
         std::fs::write(
             core::state_dir().join("runners.json"),
             serde_json::to_vec(&[runner]).unwrap(),
@@ -1360,7 +1362,7 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     for context in ["meeting", "new chat", "live screen"] {
         rt.update(|s, _| {
             if context == "new chat" {
-                s.go_home();
+                s.go_meetings();
             } else if context == "live screen" {
                 scene_live(s, "", &[], false);
                 s.reload_runners();
@@ -1386,7 +1388,7 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
         assert!(rt.state.runner_open, "{context}");
-        assert!(rt.find("runner-item-0").is_some(), "{context}");
+        assert!(rt.find("runner-menu").is_some(), "{context}");
         rt.update(|s, _| s.runner_open = false);
     }
 }
