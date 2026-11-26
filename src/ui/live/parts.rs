@@ -230,16 +230,25 @@ impl State {
         let Some(m) = &mut live.session else {
             return;
         };
-        let generate_notes = std::mem::take(&mut live.generate_after_pause);
         let _ = m.refresh(&core::meetings_dir());
-        if m.pause(&core::state_dir()).is_err() {
+        live.pause_save_pending = m.pause(&core::state_dir()).is_err();
+        if live.pause_save_pending {
             self.hex.error = Some("Could not save paused meeting.");
             return;
         }
         live.phase = Phase::Paused;
         live.stopped = Some(Instant::now());
         self.request_refresh();
-        if generate_notes {
+    }
+    pub(super) fn retry_paused_notes(&mut self) {
+        if self.live.as_ref().is_some_and(|l| l.pause_save_pending) {
+            self.parts_paused();
+        }
+        if self
+            .live
+            .as_ref()
+            .is_some_and(|l| l.phase == Phase::Paused && !l.pause_save_pending)
+        {
             self.generate_live_notes();
         }
     }
@@ -312,6 +321,10 @@ impl State {
         if self.hex_stop_pending() {
             return;
         }
+        if let Some(live) = &mut self.live {
+            live.generate_after_pause = false;
+            live.pause_save_pending = false;
+        }
         if self.hex_status_unknown() {
             self.hex_recheck_resume();
             return;
@@ -367,26 +380,40 @@ impl State {
         let Some(m) = &mut live.session else {
             return;
         };
-        if m.phase == SavedPhase::Ended {
-            return;
-        }
         let root = core::state_dir();
-        match m.prepare_notes(&root, &core::meetings_dir()) {
+        let mut prepared = m.clone();
+        let preparation = if m.phase != SavedPhase::Ended {
+            prepared.prepare_notes(&root, &core::meetings_dir())
+        } else if live.generate_after_pause {
+            // Retry submitting input that this request already prepared.
+            Ok(meeting_parts::inputs(&root).join(&m.id))
+        } else {
+            return;
+        };
+        match preparation {
             Ok(folder) => {
+                *m = prepared;
                 live.folder = Some(folder);
-                live.phase = Phase::Making;
                 let id = m.id.clone();
                 self.live_flush();
                 let events = self.events_tx.clone();
                 let wake = self.waker.clone();
-                self.live_work(move || {
+                if !self.live_work(move || {
                     let result = sidenote::listener::generate_meeting(&id)
                         .map_err(|_| sidenote::hex_engine::HexError::Unsupported);
                     let _ = events.send(Event::Hex(hex::Msg::NotesRequested(result)));
                     if let Some(wake) = wake {
                         wake();
                     }
-                });
+                }) {
+                    self.hex.error = Some("Could not start notes. Try Generate notes again.");
+                    return;
+                }
+                if let Some(live) = &mut self.live {
+                    live.phase = Phase::Making;
+                    live.generate_after_pause = false;
+                }
+                self.hex.error = None;
                 self.request_refresh();
             }
             Err(error) => {

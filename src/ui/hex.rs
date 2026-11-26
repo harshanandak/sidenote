@@ -1050,6 +1050,10 @@ impl State {
         self.hex.recording().is_some()
     }
 
+    pub(super) fn hex_stop_confirmed(&self) -> bool {
+        !self.hex_status_unknown() && matches!(&self.hex.status, Some(Ok(s)) if stop::terminal(s))
+    }
+
     pub fn hex_running(&self) -> bool {
         self.hex.running()
     }
@@ -2511,5 +2515,95 @@ mod notes_stop_tests {
         state.live_sync();
         assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
         assert_eq!(notes::status(PART), Some(notes::JobState::Queued));
+    }
+
+    fn busy_notes_job() -> std::path::PathBuf {
+        let dir = core::state_dir().join("local/notes-jobs");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{PART}.json"));
+        fs::write(&path, r#"{"state":"running","attempts":1,"updated_at":0,"model":"","instructions":"default","message":""}"#).unwrap();
+        assert_eq!(notes::status(PART), Some(notes::JobState::Running));
+        path
+    }
+
+    #[test]
+    fn accepted_generate_retries_save_preparation_and_submission() {
+        let Some(mut state) = fixture("accepted_generate_retries_save_preparation_and_submission")
+        else {
+            return;
+        };
+        let work = state.capture_live_work();
+        state.meeting_generate();
+        drop(work.try_recv().unwrap());
+        let saved = core::state_dir().join(format!("local/meeting-parts/{PART}.json"));
+        let original = fs::read(&saved).unwrap();
+        fs::write(&saved, "{").unwrap();
+        let busy = busy_notes_job();
+        finish_stop(&mut state);
+        assert_eq!(state.hex.error, Some("Could not save paused meeting."));
+        assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
+        fs::write(saved, original).unwrap();
+        state.live_sync();
+        assert_eq!(
+            state.hex.error,
+            Some("Notes are still being written. Update them when they finish.")
+        );
+        assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
+        fs::remove_file(busy).unwrap();
+        drop(work);
+        state.live_sync();
+        assert!(state.live.as_ref().unwrap().generate_after_pause);
+        assert_eq!(notes::status(PART), None);
+        let work = state.capture_live_work();
+        state.live_sync();
+        work.try_recv().unwrap()();
+        state.live_sync();
+        assert!(matches!(work.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(notes::status(PART), Some(notes::JobState::Queued));
+    }
+
+    #[test]
+    fn resume_cancels_deferred_generate() {
+        let Some(mut state) = fixture("resume_cancels_deferred_generate") else {
+            return;
+        };
+        let busy = busy_notes_job();
+        let work = state.capture_live_work();
+        state.meeting_generate();
+        drop(work.try_recv().unwrap());
+        finish_stop(&mut state);
+        assert!(state.live.as_ref().unwrap().generate_after_pause);
+        state.meeting_resume();
+        assert!(!state.live.as_ref().unwrap().generate_after_pause);
+        fs::remove_file(busy).unwrap();
+        state.hex_apply(Msg::ObservedStatus(sample_status(|| Ok(status(true)))));
+        pause_without_notes(&mut state);
+    }
+
+    #[test]
+    fn replacing_live_session_cancels_deferred_generate() {
+        let Some(mut state) = fixture("replacing_live_session_cancels_deferred_generate") else {
+            return;
+        };
+        let busy = busy_notes_job();
+        let work = state.capture_live_work();
+        state.meeting_generate();
+        drop(work.try_recv().unwrap());
+        finish_stop(&mut state);
+        let live = state.live.as_ref().unwrap();
+        assert!(live.generate_after_pause);
+        let recording = live.recording_id;
+        let root = core::state_dir();
+        let mut other = core::meeting_parts::Meeting::begin(&root, "200-2", 200).unwrap();
+        other.phase = core::meeting_parts::Phase::Ended;
+        other.save(&root).unwrap();
+        state.live_writer = None;
+        state.selected = Some(other.id);
+        state.meeting_generate();
+        assert_ne!(state.live.as_ref().unwrap().recording_id, recording);
+        fs::remove_file(busy).unwrap();
+        state.live_sync();
+        assert_eq!(notes::status(PART), None);
+        assert_eq!(notes::status("200-2"), None);
     }
 }

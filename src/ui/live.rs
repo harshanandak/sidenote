@@ -282,6 +282,7 @@ pub struct Live {
     pub(super) session: Option<sidenote::core::meeting_parts::Meeting>,
     // Set only by Hex's accepted Stop reply for this live session.
     pub(super) generate_after_pause: bool,
+    pause_save_pending: bool,
     recovering_part: bool,
     parts_checked: Option<Instant>,
     // Session-local recording identity; never included in timing records.
@@ -412,6 +413,7 @@ impl Live {
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
+            pause_save_pending: false,
             recovering_part: false,
             parts_checked: None,
             stopped: (phase == Phase::Making).then(Instant::now),
@@ -833,6 +835,13 @@ impl State {
             return;
         }
         self.live_sync_start();
+        if !recording
+            && !busy
+            && self.hex_stop_confirmed()
+            && self.live.as_ref().is_some_and(|l| l.generate_after_pause)
+        {
+            self.retry_paused_notes();
+        }
         let Some(live) = self.live.as_mut() else {
             return;
         };
