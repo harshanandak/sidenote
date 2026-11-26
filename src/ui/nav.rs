@@ -437,7 +437,7 @@ pub(super) fn search(p: Palette) -> El {
 }
 
 /// The sidebar. `wide` is the open sidebar; otherwise the rail of icons.
-pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
+pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     if !wide && !s.hex_recording() {
         return el().w(0.0).h_full();
     }
@@ -467,7 +467,10 @@ pub fn sidebar(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
             .child(row().h(28.0).px(PAD).items_center().child(heading))
             .child(main_row(place, icon, p))
     });
-    let mut footer = col().w_full().pb(8.0).child(profile(s, p, wide, layer));
+    let mut footer = col()
+        .w_full()
+        .pb(8.0)
+        .child(profile(s, p, page, wide, layer));
     if !wide && s.hex_recording() {
         footer = footer.items_center().child(
             pressable(col().size(RAIL_ITEM_W, MAIN_H).center().child(icons::draw(
@@ -808,7 +811,7 @@ fn profile_avatar(name: &str, p: Palette, size: f32) -> El {
         .child(roles::NAME.line(initial, p.ink))
 }
 
-fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
+fn profile(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     let name = s
         .ai_notes
         .settings
@@ -837,7 +840,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
             status.as_str(),
             "Ready" | "Recording" | "Checking" | "Dictating"
         ) && !s.hex_recording();
-    let avatar = |size, dot_size| {
+    let avatar = |p: Palette, size, dot_size| {
         let mut avatar = profile_avatar(name, p, size);
         if attention {
             avatar = avatar.child(dot(dot_size, p.warn).absolute(size - dot_size, 0.0));
@@ -850,7 +853,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
         .px(PAD)
         .gap(10.0)
         .items_center()
-        .child(avatar(24.0, SIGNAL_D));
+        .child(avatar(p, 24.0, SIGNAL_D));
     if wide {
         trigger = trigger
             .child(roles::NAV.line(name, p.ink).grow(1.0))
@@ -880,6 +883,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
     });
     let device = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "This PC".into());
     if s.nav.profile_menu {
+        let p = page;
         let device_line = format!(
             "This PC: {device}{}",
             sync.as_ref()
@@ -893,7 +897,7 @@ fn profile(s: &State, p: Palette, wide: bool, layer: &mut Vec<El>) -> El {
                     .px(8.0)
                     .gap(10.0)
                     .items_center()
-                    .child(avatar(24.0, SIGNAL_D))
+                    .child(avatar(p, 24.0, SIGNAL_D))
                     .child(
                         col()
                             .grow(1.0)
@@ -1130,7 +1134,9 @@ mod tests {
         crate::test_paths::isolate();
         let view = |s: &State, _: &mut rune::Cx<State>| {
             let mut layer = Vec::new();
-            let trigger = profile(s, super::super::theme::palette(true), true, &mut layer);
+            let page = super::super::theme::palette(true);
+            let sidebar = super::super::theme::sidebar_palette(true, page);
+            let trigger = profile(s, sidebar, page, true, &mut layer);
             col().child(trigger).children(layer)
         };
         let mut rt = Runtime::new(State::new(), view, (400.0, 600.0), Env::new(true, 1.0));
