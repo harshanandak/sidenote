@@ -1342,21 +1342,36 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
     if in_parent("the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat") {
         return;
     }
+    let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+    let mut rt = page_with(DEFAULT_SIZE, || {
+        let mut runner = core::list_runners()
+            .unwrap()
+            .into_iter()
+            .find(|runner| runner.name == "Codex")
+            .unwrap();
+        runner.program = std::env::current_exe().unwrap().to_str().unwrap().into();
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&[runner]).unwrap(),
+        )
+        .unwrap();
+    });
+    hex::SKIP_INSTALL_DETECT.set(detect);
     for context in ["meeting", "new chat", "live screen"] {
-        let detect = hex::SKIP_INSTALL_DETECT.replace(true);
-        let mut rt = page();
-        hex::SKIP_INSTALL_DETECT.set(detect);
         rt.update(|s, _| {
             if context == "new chat" {
                 s.go_home();
             } else if context == "live screen" {
                 scene_live(s, "", &[], false);
+                s.reload_runners();
             }
-            scene_agents(s, &["codex"]);
         });
+        rt.settle_all();
         rt.frame(0.0);
-        assert!(rt.find("runner-menu").is_none(), "{context}");
+        assert!(rt.find("ask-options-menu").is_none(), "{context}");
         tap(&mut rt, "ask-options");
+        rt.settle_all();
+        rt.frame(0.0);
         let model = rt
             .elements()
             .into_iter()
@@ -1370,7 +1385,9 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             })
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
-        assert!(rt.find("runner-menu").is_some(), "{context}");
+        assert!(rt.state.runner_open, "{context}");
+        assert!(rt.find("runner-item-0").is_some(), "{context}");
+        rt.update(|s, _| s.runner_open = false);
     }
 }
 
