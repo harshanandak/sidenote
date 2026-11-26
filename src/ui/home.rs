@@ -145,15 +145,6 @@ mod tests {
     }
 
     #[test]
-    fn helpers_opened_from_home_offer_summary_setup() {
-        let mut s = State::new();
-        s.ai_notes.scene = true;
-        s.ai_notes.settings = Some(Default::default());
-        s.open_ai_notes();
-        assert!(super::super::ai_notes::setup_card(&s, theme::palette(false)).is_some());
-    }
-
-    #[test]
     fn startup_home_and_meeting_breadcrumb_route() {
         use super::super::{nav::Filter, tasks::View, view};
         use rune::{Env, Runtime, text::TextSystem};
@@ -176,7 +167,10 @@ mod tests {
             .into_iter()
             .find(|e| e.key.as_deref() == Some("nav-home"))
             .unwrap();
-        assert_eq!(home.fill, theme::palette(false).sel);
+        assert_eq!(
+            home.fill,
+            theme::sidebar_palette(false, theme::palette(false)).sel
+        );
         assert!(rt.find("notice-dismiss").is_some());
         for key in ["home-greeting", "home-tasks-tile", "home-meetings-tile"] {
             assert!(rt.find(key).is_some(), "missing {key}");

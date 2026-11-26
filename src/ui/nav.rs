@@ -1271,7 +1271,7 @@ mod tests {
         s.nav.peers = 1;
         let (places, peers) = places(&s, super::super::theme::palette(true));
         let names: Vec<_> = places.iter().map(|place| place.name).collect();
-        let expected = "Meetings, Tasks, People, Memory, Annotations, Diary";
+        let expected = "Home, Meetings, Tasks, People, Memory, Annotations, Diary";
         // S1a sizes: nav rows 30 high and the open sidebar 204 wide (old 34.0 and 230.0).
         assert_eq!(
             (MAIN_H, WIDE, names.join(", ").as_str()),
@@ -1279,6 +1279,7 @@ mod tests {
         );
 
         let glyphs = [
+            "solar-home-smile",
             "solar-document",
             "solar-check-circle",
             "solar-users-group-rounded",
@@ -1303,7 +1304,7 @@ mod tests {
         let (places, _) = places(&state, super::super::theme::palette(true));
         assert_eq!(
             places.iter().map(|place| place.name).collect::<Vec<_>>(),
-            ["Meetings", "Tasks"]
+            ["Home", "Meetings", "Tasks"]
         );
     }
 }
