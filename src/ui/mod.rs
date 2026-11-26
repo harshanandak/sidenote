@@ -1538,9 +1538,7 @@ impl State {
                 // A stop the owner asked for is not a failure: only the question comes back.
                 if message != core::ask::STOPPED {
                     self.ask_errors.insert(id.to_string(), message);
-                    if result.is_ok()
-                        && let Some(question) = &failed
-                    {
+                    if let Some(question) = failed.as_ref().filter(|_| result.is_ok()) {
                         let mut retry = question.clone();
                         retry.id = retry.id.filter(|_| retain);
                         self.ask_settings.retry_questions.insert(id.into(), retry);
@@ -2429,7 +2427,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.live_document_h.set(h as f32);
     }
     if s.selected.is_some()
-        && s.meeting_ui.tabs
+        && (s.meeting_ui.tabs || meeting::phone(s))
         && let Some(h) = cx.layout_with("ask-overlay", |r| r[3].round() as i32)
     {
         s.overlay_h.set(h as f32);

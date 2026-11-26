@@ -1268,8 +1268,7 @@ fn stamp(seconds: u64) -> String {
 /// they are back at the bottom.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PanelLimits {
-    #[cfg(test)]
-    space: f32,
+    pub space: f32,
     pub thread: f32,
     pub transcript: f32,
 }
@@ -1312,7 +1311,6 @@ fn panel_limits(
         0.0
     };
     PanelLimits {
-        #[cfg(test)]
         space,
         thread,
         transcript,

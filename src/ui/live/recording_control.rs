@@ -229,7 +229,14 @@ mod tests {
     #[test]
     fn live_recording_shows_elapsed_time_in_the_header_and_a_dot_in_the_dock() {
         crate::test_paths::isolate();
-        for (width, narrow) in [(1334.0, false), (390.0, true), (360.0, true)] {
+        for (width, height, narrow) in [
+            (1334.0, 900.0, false),
+            (390.0, 900.0, true),
+            (360.0, 900.0, true),
+            (1334.0, 600.0, false),
+            (390.0, 600.0, true),
+            (360.0, 600.0, true),
+        ] {
             let previous = crate::ui::hex::SKIP_INSTALL_DETECT.replace(true);
             let mut state = State::new();
             crate::ui::hex::SKIP_INSTALL_DETECT.set(previous);
@@ -252,7 +259,7 @@ mod tests {
             let mut rt = Runtime::with_text(
                 state,
                 view,
-                (width, 900.0),
+                (width, height),
                 Env::default(),
                 TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),
             );
@@ -277,6 +284,7 @@ mod tests {
             let status = keyed("recording-open");
             let [x, y, w, h] = status.rect;
             let pause = keyed("meeting-pause");
+            assert!(pause.rect[1] >= 0.0 && pause.rect[1] + pause.rect[3] <= height);
             assert_eq!(pause.label.as_deref(), Some("Pause recording"));
             assert_eq!(pause.help.as_deref(), Some("Pause recording"));
             assert!(rt.find("meeting-generate").is_none());
