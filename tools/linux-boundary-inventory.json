@@ -443,9 +443,9 @@
 
   "src/ui/meeting_delete.rs": "5f5f1662ecba8afe9172cc84ea7c401ff4b7fc79d76393dc4fa11d42d2e60c6c",
 
-  "src/ui/memory.rs": "7414eb22f15f02acfbd80d3595c000712abe5b8c905832b7daa6777fa6a110e6",
+  "src/ui/memory.rs": "271cd5370c09e4d49c2d3f0b1cf7d187909d8778d72f1c4ce0d4e34386f133a8",
 
-  "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
+  "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
   "src/ui/mod.rs": "2a6d927fd9d9837e9133758d1b4efc30af5fdd663d6eb3dbce0098220943f1e1",
 

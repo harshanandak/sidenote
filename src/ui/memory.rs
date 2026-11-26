@@ -2459,16 +2459,16 @@ mod refresh_tests {
         rt.frame(0.0);
         let nodes = rt.elements();
         for (key, glyph, fill, ink) in [
-            ("mrow-question", "lucide-circle-dashed", p.chip, p.ink),
+            ("mrow-question", "solar-question-circle", p.chip, p.ink),
             (
                 "mrow-retired",
-                "lucide-circle-check",
+                "solar-check-circle",
                 rune::Color::TRANSPARENT,
                 p.faint,
             ),
             (
                 "mrow-replaced",
-                "lucide-circle-check",
+                "solar-check-circle",
                 rune::Color::TRANSPARENT,
                 p.faint,
             ),
