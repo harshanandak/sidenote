@@ -1688,6 +1688,7 @@ impl State {
                 {
                     handle.invalidate();
                 }
+                self.cancel_missing_summary(&meetings);
                 for meeting in &meetings {
                     if meeting.has_summary()
                         && meeting

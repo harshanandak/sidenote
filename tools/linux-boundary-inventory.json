@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "f8e21b67c997f2184192ccc3897d23639eed1044598e51f1f653b963ecbd20f5",
 
-  "src/ui/ask_switch_tests.rs": "33e149d0a7a347d5c543769a9d64a5d62f9a803aec17e329373ed92e3e0809f5",
+  "src/ui/ask_switch_tests.rs": "0247f3bd9b79b4d5d783cedb7021948a8a3b0c69e7f300e1f64b287e1efc97e6",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -435,7 +435,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "a2cd66b98b892fd2f162a5450e21ea1d3bc46722c2167a3df4a7ce4dba94c457",
+  "src/ui/live.rs": "afb1151ebe10c783b14f4e39868019dd7fb84d7a5a8271eb1d292174e6634a4e",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
@@ -445,7 +445,7 @@
 
   "src/ui/memory/settled.rs": "9d0915dfa235083870103a6872b2fc6e23c267328989d288b2299e1e0e460b58",
 
-  "src/ui/mod.rs": "2a6d927fd9d9837e9133758d1b4efc30af5fdd663d6eb3dbce0098220943f1e1",
+  "src/ui/mod.rs": "784b0948fe46917eb63d035843a698de9b3828d54efc4667c282d4856ad1b3fe",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

@@ -278,6 +278,14 @@ pub enum Saving {
 
 static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Default)]
+enum SummarySource {
+    #[default]
+    Unresolved,
+    Candidate(PathBuf),
+    Ambiguous,
+}
+
 pub struct Live {
     pub(super) session: Option<sidenote::core::meeting_parts::Meeting>,
     // Set only by Hex's accepted Stop reply for this live session.
@@ -291,6 +299,7 @@ pub struct Live {
     pub phase: Phase,
     /// The meetings that existed when this one began, so the new one can be told apart.
     known: HashSet<String>,
+    summary_source: SummarySource,
     began: Instant,
     stopped: Option<Instant>,
     /// When the meeting began, for the heading. `exact` is false until Hex gives the real start.
@@ -410,6 +419,7 @@ impl Live {
             notes_response_time: 0,
             phase,
             known,
+            summary_source: SummarySource::default(),
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
@@ -457,31 +467,79 @@ impl Live {
         live
     }
 
+    fn meeting_id(&self) -> Option<String> {
+        if let Some(folder) = &self.folder {
+            return folder
+                .file_name()
+                .map(|id| id.to_string_lossy().into_owned());
+        }
+        let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
+        feed.hint.clone().or_else(|| {
+            feed.folder
+                .as_deref()?
+                .file_name()
+                .map(|id| id.to_string_lossy().into_owned())
+        })
+    }
+
     fn matches_meeting(&self, meeting: &sidenote::core::Meeting) -> bool {
         if meeting.device.is_some() {
             return false;
         }
-        if let Some(folder) = &self.folder {
-            return folder
-                .file_name()
-                .is_some_and(|id| id == meeting.id.as_str());
-        }
-        {
-            let feed = self.feed.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(id) = &feed.hint {
-                return meeting.id == *id;
-            }
-            if let Some(folder) = &feed.folder {
-                return folder
-                    .file_name()
-                    .is_some_and(|id| id == meeting.id.as_str());
-            }
+        if let Some(id) = self.meeting_id() {
+            return meeting.id == id;
         }
         meeting
             .started
             .map(|t| t.timestamp_millis())
-            .or_else(|| meeting.id.split_once('-')?.0.parse::<i64>().ok())
+            .or_else(|| folder_start(&meeting.id))
             .is_some_and(|made| made >= self.wall_start.timestamp_millis().saturating_sub(120_000))
+    }
+
+    fn resolve_summary_folder(&mut self, meetings: &[sidenote::core::Meeting]) -> Option<PathBuf> {
+        if matches!(self.summary_source, SummarySource::Ambiguous) {
+            return None;
+        }
+        let feed_start = self.feed.lock().unwrap_or_else(|e| e.into_inner()).start_ms;
+        let start = self
+            .exact
+            .then(|| self.wall_start.timestamp_millis())
+            .or(feed_start)?;
+        let near_start = |made: i64| made.abs_diff(start) <= 120_000;
+        let root = sidenote::core::meetings_dir();
+        let catalog_candidates: HashSet<_> = meetings
+            .iter()
+            .filter(|m| {
+                m.device.is_none()
+                    && !self.known.contains(&m.id)
+                    && m.started.is_some_and(|t| near_start(t.timestamp_millis()))
+            })
+            .map(|m| m.folder.as_path())
+            .collect();
+        // An unfinished recording may have a folder before it appears in the catalog.
+        let mut candidates = sidenote::core::file_reads::entries(&root)
+            .ok()?
+            .into_iter()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                (catalog_candidates.contains(path.as_path())
+                    || path
+                        .file_name()
+                        .and_then(|id| id.to_str())
+                        .is_some_and(|id| {
+                            !self.known.contains(id) && folder_start(id).is_some_and(near_start)
+                        }))
+                    && sidenote::core::file_reads::directory(path)
+            });
+        let folder = candidates.next()?;
+        if candidates.next().is_some()
+            || matches!(&self.summary_source, SummarySource::Candidate(old) if old != &folder)
+        {
+            self.summary_source = SummarySource::Ambiguous;
+            return None;
+        }
+        self.summary_source = SummarySource::Candidate(folder.clone());
+        Some(folder)
     }
 
     pub fn scene_pending(mut self, id: &str) -> Self {
@@ -926,19 +984,57 @@ impl State {
         // The normal refresh keeps calling live_scanned, even when notes take hours.
     }
 
-    /// After a scan: the first new local meeting while notes are being made is the one.
+    pub(super) fn cancel_missing_summary(&mut self, incoming: &[sidenote::core::Meeting]) {
+        let Some(live) = self
+            .live
+            .as_ref()
+            .filter(|live| live.phase == Phase::Making)
+        else {
+            return;
+        };
+        let id = live.meeting_id().or_else(|| match &live.summary_source {
+            SummarySource::Candidate(folder) => Some(folder.file_name()?.to_str()?.to_owned()),
+            _ => None,
+        });
+        let Some(id) = id else { return };
+        let is_source =
+            |meeting: &sidenote::core::Meeting| meeting.device.is_none() && meeting.id == id;
+        if !incoming.iter().any(is_source)
+            && (self.meetings.iter().any(is_source)
+                || sidenote::core::meeting_delete::suppressed_ids(&self.store.root)
+                    .is_ok_and(|ids| ids.contains(&id)))
+            && self.live_close()
+        {
+            self.live = None;
+            self.live_open = false;
+        }
+    }
+
+    /// Resolve the source before checking whether its summary is ready.
     pub fn live_scanned(&mut self) {
-        let Some(live) = self.live.as_ref() else {
+        let Some(live) = self.live.as_mut() else {
             return;
         };
         if live.phase != Phase::Making || live.close_failed {
             return;
         }
+        let id = live.meeting_id();
+        let folder = if id.is_none() {
+            let Some(folder) = live.resolve_summary_folder(&self.meetings) else {
+                return;
+            };
+            Some(folder)
+        } else {
+            None
+        };
         let found = self
             .meetings
             .iter()
             .find(|m| {
-                live.matches_meeting(m)
+                m.device.is_none()
+                    && id
+                        .as_ref()
+                        .map_or_else(|| folder.as_ref() == Some(&m.folder), |id| id == &m.id)
                     && m.has_summary()
                     && if let Some(session) = &live.session {
                         session
@@ -986,6 +1082,10 @@ impl State {
             }
         }
     }
+}
+
+fn folder_start(id: &str) -> Option<i64> {
+    id.split_once('-')?.0.parse().ok()
 }
 
 // ---- the live transcript and the notes -------------------------------------------------------
@@ -1689,7 +1789,9 @@ fn making_view(s: &State, p: Palette, narrow: bool) -> El {
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|v| v.to_str());
-        let meeting = s.meetings.iter().find(|m| live.matches_meeting(m));
+        let meeting = live
+            .meeting_id()
+            .and_then(|id| s.meetings.iter().find(|m| m.device.is_none() && m.id == id));
         let job = id
             .and_then(|id| {
                 s.ai_notes
@@ -1954,12 +2056,15 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
 }
 
 #[cfg(test)]
-pub(super) fn scene_wait_for_summary(s: &mut State, id: &str) {
+pub(super) fn scene_wait_for_summary(s: &mut State, id: Option<&str>, start_ms: i64) {
     let mut live = Live::scene(Phase::Making, None);
     live.known = s.known_ids();
+    live.wall_start = DateTime::from_timestamp_millis(start_ms)
+        .unwrap()
+        .with_timezone(&Local);
     {
         let mut feed = live.feed.lock().unwrap();
-        feed.hint = Some(id.into());
+        feed.hint = id.map(str::to_owned);
         feed.transcript = Some(Transcript::Ready);
     }
     s.live = Some(live);
