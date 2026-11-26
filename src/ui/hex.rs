@@ -1997,10 +1997,6 @@ fn keep_audio_row(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         .on_choose(|s: &mut State, value: &str, _: &mut Tx| s.hex_keep_audio(value))
         .build(&settings::row_field_kit(k, p), layer);
     crate::ui::cards::settings_row(true)
-        .child(crate::ui::cards::settings_tile(
-            &super::icons::AUDIO_LINES,
-            p,
-        ))
         .child(text)
         .child(control)
 }
@@ -2189,7 +2185,7 @@ fn setting_row(
             }
         }
     };
-    let (shell, tile, control) = if compact {
+    let (shell, control) = if compact {
         let has_help = !st.about.is_empty()
             || !st.writable
             || st.available == Some(false)
@@ -2197,19 +2193,16 @@ fn setting_row(
             || h.busy_keys.contains(&st.key);
         (
             crate::ui::cards::settings_row(has_help),
-            crate::ui::cards::settings_tile(settings::row_icon(&st.key), p),
             settings::row_control(s, control),
         )
     } else {
         (
-            crate::ui::cards::row_shell().flex_wrap(),
-            settings::icon_tile(settings::row_icon(&st.key), p),
+            crate::ui::cards::row_shell().flex_wrap().px(16.0).py(11.0),
             control,
         )
     };
     shell
         .key(format!("hs-{}", st.key))
-        .child(tile)
         .child(text)
         .child(control)
         .fill(settings::highlight(s, &format!("hs-{}", st.key), p))

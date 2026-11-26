@@ -391,19 +391,19 @@
 
   "src/sync_owner/mcp.rs": "0f59d5b4431ac3b617b0621351e09005116e2d09492693abc47da3fbf614e724",
 
-  "src/ui/ai_notes.rs": "3202445a5cf349915eb7ce8fb5083e8849dca594f24ad26d1e61ca1a21f80eeb",
+  "src/ui/ai_notes.rs": "395c53fc257b253ee44b676303366b2c4ee7b226e61661985822b53face8218b",
 
   "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
 
   "src/ui/annotations/notebooks.rs": "b01a26b59d7c308ea9b6b071ff7c93afab8271d55ddfb4fe616c76411616645d",
 
-  "src/ui/annotations/workflow.rs": "9a115fcd00254b85c056abebb06f4ed3ed984145a979993c243a672fdde77c04",
+  "src/ui/annotations/workflow.rs": "5009d591fc36df7aa19dd5d1f35ebf16fa46ebecc7f528a73d790c6083f76eb6",
 
   "src/ui/area.rs": "98e13ced4fe3ce0b1ad44649aa25e29a25caf7dbfaea88e0f892985f81a3137e",
 
   "src/ui/area_scene.rs": "ed9d0a3291369f5ab6a8a3e2c0da8a04bb05ba7155a065cd2604c9da7b1bf160",
 
-  "src/ui/ask_settings.rs": "f8e21b67c997f2184192ccc3897d23639eed1044598e51f1f653b963ecbd20f5",
+  "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
   "src/ui/ask_switch_tests.rs": "02e1c02de3adfe7262a3234f31c87bcd2b92ead4994f775fceac048b2c8a65d3",
 
@@ -417,7 +417,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "544fbafe7c8c022812c166e853c249e8c0c4feaf7379a00c19169c865de3326c",
+  "src/ui/hex.rs": "38c3dc20d67b4d75c1a9ff755e0a7d9fa1fb2272384c78da80143b460cb53da2",
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "c6da9b5e110be54c63636a038b2b2b59cd896f858c22b5e67c3304689b683225",
 
-  "src/ui/hex/settings.rs": "7d5df04622fbeae8b98c050f0c72f8ffc63492c1a72abf4376215afb4c9bc6c0",
+  "src/ui/hex/settings.rs": "3c9eb5b2b722bc381ebef161074fbe97b291a520b1f7f560ac4d5dca80d94ab5",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -463,7 +463,7 @@
 
   "src/ui/tasks_board.rs": "dca72526692a8be625cc11b229ea12aee8e00c20993dd942c799e5c99484765c",
 
-  "src/ui/theme.rs": "2e887406b7948ce0cbdffeed222c31233af6adde1765834a8fb5ea7b99dbf917",
+  "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
   "src/ui/updates.rs": "27541fef2da079140847c8b77684c5aa2a5c54e9f91d80df9e2fb7a0915f275f",
 
