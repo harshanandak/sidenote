@@ -71,20 +71,20 @@ function Read-IdleSoakResourceSample($Tree) {
     }
     [pscustomobject]@{working_set_bytes=$workingSet;private_bytes=$privateBytes;handle_count=$handles;missing=$missing}
 }
-function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[double]$DurationSeconds,[double]$CpuInterval,[double]$ResourceInterval,[double]$TimeoutSeconds) {
+function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[double]$DurationSeconds,[double]$WarmupSeconds,[double]$CpuInterval,[double]$ResourceInterval,[double]$TimeoutSeconds) {
     $firstTree=Get-IdleSoakProcessTree $RootProcessId
     if (-not $firstTree) { throw 'the root process is not running' }
     if (-not $firstTree[0].ExecutablePath) { throw 'the root process executable path is not readable' }
     if ((Get-IdleSoakFullPath $firstTree[0].ExecutablePath) -ine (Get-IdleSoakFullPath $CandidatePath)) { throw 'the root process executable does not match the candidate executable' }
-    $cpuByKey=@{}; $cpuSamples=@(); $resourceSamples=@(); $nextCpu=0.0; $nextResource=0.0
+    $cpuByKey=@{}; $cpuSamples=@(); $resourceSamples=@(); $nextCpu=0.0; $nextResource=$WarmupSeconds
     $clock=[Diagnostics.Stopwatch]::StartNew(); $endState='timeout'
     while ($true) {
-        $elapsed=$clock.Elapsed.TotalSeconds
+        $elapsed=$clock.Elapsed.TotalSeconds; $finishing=$elapsed -ge $DurationSeconds
         if ($elapsed -gt $TimeoutSeconds) { break }
         $queryFailed=$false
         try { $tree=Get-IdleSoakProcessTree $RootProcessId } catch { $queryFailed=$true; $tree=$null }
         if (-not $tree -and -not $queryFailed) { $endState='crash'; break }
-        if ($elapsed -ge $nextCpu) {
+        if ($elapsed -ge $nextCpu -or $finishing) {
             if ($tree) {
                 foreach ($row in $tree) {
                     $key='{0}:{1}' -f $row.ProcessId,$row.CreationDate
@@ -95,7 +95,7 @@ function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[doub
             } else { $cpuSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;total_cpu_seconds=$null;missing=$true} }
             $nextCpu=$elapsed+$CpuInterval
         }
-        if ($elapsed -ge $nextResource) {
+        if ($elapsed -ge $nextResource -or $finishing) {
             if ($tree) {
                 $sample=Read-IdleSoakResourceSample $tree
                 $sample|Add-Member -NotePropertyName elapsed_seconds -NotePropertyValue $elapsed -Force
@@ -103,7 +103,7 @@ function Invoke-IdleSoakSampler([int]$RootProcessId,[string]$CandidatePath,[doub
             } else { $resourceSamples+=[pscustomobject]@{elapsed_seconds=$elapsed;working_set_bytes=$null;private_bytes=$null;handle_count=$null;missing=$true} }
             $nextResource=$elapsed+$ResourceInterval
         }
-        if ($elapsed -ge $DurationSeconds) { $endState='completed'; break }
+        if ($finishing) { $endState='completed'; break }
         $nextWake=[math]::Min([math]::Min($nextCpu,$nextResource),$DurationSeconds)
         Start-Sleep -Milliseconds ([math]::Min(1000,[math]::Ceiling([math]::Max(0.05,$nextWake-$elapsed)*1000)))
     }
@@ -225,10 +225,10 @@ function Write-IdleSoakReport($Result,[string]$Root) {
 }
 function Invoke-IdleSoak {
     if ($DurationHours -le 0 -or $CpuSampleSeconds -le 0 -or $ResourceSampleSeconds -le 0) { throw 'duration and sample intervals must be positive' }
-    $durationSeconds=$DurationHours*3600.0; $warmupSeconds=$WarmupMinutes*60.0
-    if ($warmupSeconds -lt 0 -or $warmupSeconds -ge $durationSeconds) { throw 'warm-up must be shorter than the run' }
-    $timeoutSeconds=if ($TimeoutMinutes -gt 0) {$TimeoutMinutes*60.0} else {$durationSeconds+900.0}
-    if ($timeoutSeconds -lt $durationSeconds) { throw 'the timeout must not be shorter than the run' }
+    $measurementSeconds=$DurationHours*3600.0; $warmupSeconds=$WarmupMinutes*60.0; $runSeconds=$warmupSeconds+$measurementSeconds
+    if ($warmupSeconds -lt 0) { throw 'warm-up must not be negative' }
+    $timeoutSeconds=if ($TimeoutMinutes -gt 0) {$TimeoutMinutes*60.0} else {$runSeconds+900.0}
+    if ($timeoutSeconds -lt $runSeconds) { throw 'the timeout must not be shorter than warm-up plus measurement' }
     $root=Assert-IdleSoakSyntheticRoot $SyntheticDataRoot ([bool]$ApproveSyntheticDataRoot)
     $candidate=Get-IdleSoakCandidate $CandidateExePath
     if ($FixtureSamplesPath) {
@@ -236,12 +236,12 @@ function Invoke-IdleSoak {
     } else {
         if ($RootProcessId -le 0) { throw 'a running root process id is required unless fixture samples are used' }
         Assert-IdleSoakNoLiveHex @(Get-CimInstance Win32_Process -ErrorAction Stop)
-        $samples=Invoke-IdleSoakSampler $RootProcessId $candidate.path $durationSeconds $CpuSampleSeconds $ResourceSampleSeconds $timeoutSeconds
+        $samples=Invoke-IdleSoakSampler $RootProcessId $candidate.path $runSeconds $warmupSeconds $CpuSampleSeconds $ResourceSampleSeconds $timeoutSeconds
         $source='process-tree'
     }
-    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $durationSeconds $warmupSeconds $CpuSampleSeconds
+    $result=Measure-IdleSoakSeries $samples.cpu_samples $samples.resource_samples $samples.end_state $runSeconds $warmupSeconds $CpuSampleSeconds
     $result|Add-Member -NotePropertyMembers @{generated_at_utc=([DateTimeOffset]::UtcNow.ToString('o'));sample_source=$source;candidate=$candidate;thresholds=([pscustomobject]$script:IdleSoakThresholds);
-        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
+        configuration=([pscustomobject]@{duration_hours=$DurationHours;warmup_minutes=$WarmupMinutes;total_elapsed_seconds=$runSeconds;cpu_sample_seconds=$CpuSampleSeconds;resource_sample_seconds=$ResourceSampleSeconds;timeout_seconds=$timeoutSeconds});
         cpu_samples=@($samples.cpu_samples);resource_samples=@($samples.resource_samples)}
     Write-IdleSoakReport $result $root
     $result

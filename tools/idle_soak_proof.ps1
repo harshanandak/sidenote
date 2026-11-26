@@ -4,11 +4,11 @@ $soak=Join-Path $PSScriptRoot 'idle_soak.ps1'
 $proofRoot=Join-Path ([IO.Path]::GetTempPath()) ('sidenote-synthetic-idle-proof-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $proofRoot | Out-Null
 function Assert-Proof([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
-function New-Fixture([string]$Path,[string]$EndState='completed',[int]$Hours=24,[int[]]$MissingCpuHours=@(),[int[]]$MissingResourceHours=@(),[double]$MemoryGrowth=0,[double]$HandleGrowth=0) {
+function New-Fixture([string]$Path,[string]$EndState='completed',[int]$Hours=24,[double[]]$MissingCpuHours=@(),[double[]]$MissingResourceHours=@(),[double]$MemoryGrowth=0,[double]$HandleGrowth=0) {
     $cpu=@(); $resources=@()
-    for ($hour=0; $hour -le $Hours; $hour++) {
+    foreach ($hour in (@(0.0,0.5)+@(1..$Hours|ForEach-Object {$_+0.5}))) {
         $cpuMissing=$MissingCpuHours -contains $hour
-        $cpuTotal=3600.0*[math]::Min($hour,1)+9.0*[math]::Max(0,$hour-1)
+        $cpuTotal=3600.0*[math]::Min($hour/0.5,1.0)+9.0*[math]::Max(0.0,$hour-0.5)
         $cpu+=[pscustomobject]@{elapsed_seconds=$hour*3600.0;total_cpu_seconds=$(if ($cpuMissing) {$null} else {$cpuTotal});missing=$cpuMissing}
         $resourceMissing=$MissingResourceHours -contains $hour
         $resources+=[pscustomobject]@{elapsed_seconds=$hour*3600.0;working_set_bytes=$(if ($resourceMissing) {$null} else {200MB+$MemoryGrowth*$hour});private_bytes=$(if ($resourceMissing) {$null} else {150MB+$MemoryGrowth*$hour});handle_count=$(if ($resourceMissing) {$null} else {300+$HandleGrowth*$hour});missing=$resourceMissing}
@@ -57,7 +57,7 @@ foreach ($case in @(
     Assert-CaseOutput (Invoke-ProofCase $case.name $path) 1 $case.text
 }
 $missingFixture=Join-Path $fixtures 'missing.json'
-New-Fixture $missingFixture -MissingCpuHours @(10,11,12) -MissingResourceHours @(10,11,12)
+New-Fixture $missingFixture -MissingCpuHours @(10.5,11.5,12.5) -MissingResourceHours @(10.5,11.5,12.5)
 Assert-CaseOutput (Invoke-ProofCase 'missing' $missingFixture) 1 'missing samples'
 $trendFixture=Join-Path $fixtures 'trend.json'
 New-Fixture $trendFixture -MemoryGrowth (10MB) -HandleGrowth 10

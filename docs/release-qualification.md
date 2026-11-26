@@ -27,7 +27,7 @@ pwsh -File tools/idle_soak.ps1 `
   -CandidateExePath <candidate-sidenote.exe>
 ```
 
-Default collection is 24 hours after a 30-minute warm-up. CPU is sampled every 60 seconds; working set, private bytes, and handle count are sampled every 3,600 seconds. The default timeout is the requested duration plus 15 minutes. CPU time uses cumulative kernel plus user time summed across the whole process tree, including the last observed contribution of children that exit. Elapsed time comes from a monotonic stopwatch rather than wall-clock timestamps.
+Default collection measures 24 hours after a 30-minute warm-up (24.5 hours total elapsed). CPU is sampled every 60 seconds from process start; working set, private bytes, and handle count are sampled every 3,600 seconds beginning at warm-up end, with end-of-run CPU and resource samples if the measurement end is not on an interval boundary. The default timeout is warm-up plus the requested measurement duration plus 15 minutes. CPU time uses cumulative kernel plus user time summed across the whole process tree, including the last observed contribution of children that exit. Elapsed time comes from a monotonic stopwatch rather than wall-clock timestamps.
 
 ## Pass bar
 
