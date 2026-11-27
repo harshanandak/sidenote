@@ -9,6 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $checksumError = 'The update checksum does not match. Try again.'
+. (Join-Path $PSScriptRoot 'release_version.ps1')
 
 function Read-Json([string]$Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
@@ -41,14 +42,15 @@ function Copy-VerifiedPackageFiles([string]$Directory, [string]$Feed) {
 }
 
 function Get-ProofPackage([string]$Feed, [string]$Tag) {
-    . (Join-Path $PSScriptRoot 'release_ci.ps1') -ValidateOnly
+    . (Join-Path $PSScriptRoot 'release_ci.ps1') -LoadHelpers
     $full = @(Get-ChildItem -LiteralPath $Feed -File -Filter '*-full.nupkg')
     if ($full.Count -ne 1 -or $full[0].Name -cnotmatch
-        '\Asidenote-(\d+\.\d+\.\d+(?:-dev\.(?:0|[1-9]\d*))?)-(stable|dev)-full\.nupkg\z') {
+        '\Asidenote-(\d+\.\d+\.\d+(?:-dev\.(?:0|[1-9]\d*)(?:\.main\.[1-9]\d*)?)?)-(stable|dev|latest)-full\.nupkg\z') {
         throw 'Expected one versioned Sidenote full package.'
     }
     $version, $channel = $Matches[1], $Matches[2]
-    if (($version.Contains('-dev.') -ne ($channel -ceq 'dev')) -or ($Tag -and $Tag -cne "v$version")) {
+    $expectedChannel = if ($version.Contains('.main.')) { 'latest' } elseif ($version.Contains('-dev.')) { 'dev' } else { 'stable' }
+    if ($channel -cne $expectedChannel -or ($Tag -and $Tag -cne "v$version")) {
         throw 'The package version or channel does not match the release.'
     }
     [void](Get-ReleaseAssets $Feed $version $channel)
@@ -68,18 +70,6 @@ function Assert-PackageExecutable($Fixture, $Release) {
         throw 'The installed executable does not match the verified full package.'
     }
     Write-Output "Installed executable matches $($Release.Full.Name) ($hash)."
-}
-
-function Set-SourceVersion([string]$Source, [string]$Version) {
-    foreach ($entry in @(@('Cargo.toml', '[package]'), @('Cargo.lock', '[[package]]'))) {
-        $path = Join-Path $Source $entry[0]
-        $text = [IO.File]::ReadAllText($path)
-        $header = [regex]::Escape($entry[1])
-        $fields = [regex]::Matches($text, "(?m)^$header\r?\nname = ""sidenote""\r?\n(?:default-run = ""sidenote""\r?\n)?version = ""([^""\r\n]+)""\r?$")
-        if ($fields.Count -ne 1) { throw "Expected one Sidenote version in $($entry[0])." }
-        $field = $fields[0].Groups[1]
-        [IO.File]::WriteAllText($path, $text.Remove($field.Index, $field.Length).Insert($field.Index, $Version))
-    }
 }
 
 function New-ProofFixture([string]$Root, [string]$Source, [string]$Feed = (Join-Path $Root 'feed')) {
@@ -355,7 +345,11 @@ try {
         $next = $release.Version
         $channel = $release.Channel
         # Velopack needs a version core of at least 0.0.1; prereleases of 0.0.1 are accepted.
-        $n = if ($channel -ceq 'dev') { '0.0.1-dev.0' } else { '0.0.1' }
+        $n = switch ($channel) {
+            'dev' { '0.0.1-dev.0' }
+            'latest' { $next -creplace '\.main\.[0-9]+$', '.main.0' }
+            'stable' { '0.0.1' }
+        }
         if ([System.Management.Automation.SemanticVersion]$next -le [System.Management.Automation.SemanticVersion]$n) {
             throw "The release needs to be newer than the synthetic baseline $n."
         }
@@ -371,6 +365,15 @@ try {
         $fixture = New-ProofFixture (Join-Path $root.FullName 'clean') $source $feed
         [void](Install-ProofFixture $fixture $feed $next)
         Assert-PackageExecutable $fixture $release
+        if ($channel -ceq 'latest') {
+            $checkExit = Invoke-UpdateCommand $fixture '--update-check'
+            $report = Read-Json (Join-Path $fixture.Updates 'update-report.json')
+            Assert-Report $fixture $report $next
+            if ($checkExit -ne 0 -or $report.status.channel -cne 'latest' -or $report.status.phase -cne 'Idle') {
+                throw 'The clean install did not successfully check its Latest feed.'
+            }
+            Write-Output 'The clean install selected and checked the Latest feed.'
+        }
         Remove-ProofFixture $fixture
         $fixture = $null
     }
