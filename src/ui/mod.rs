@@ -51,7 +51,6 @@ mod sync_scene;
 mod tasks;
 mod teams;
 mod theme;
-mod today;
 mod todo;
 mod updates;
 mod widgets;
