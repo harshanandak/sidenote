@@ -131,23 +131,22 @@ fn successful_window_recovery_clears_its_saved_lock_error() {
     assert!(status.error.is_none());
 }
 #[test]
-fn app_start_retries_held_lock_before_preparing_listener_and_pipeline() {
+fn deferred_startup_retries_after_cli_check_releases_hook_lock() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path();
     fs::write(directory.join("install-hook.complete"), VERSION).unwrap();
-    let mut holder = open_hook_lock(directory).unwrap();
-    let clock = Cell::new(Instant::now());
+    let mut holder = Some(update_operation_lock(directory, true).unwrap());
+    let deferred = start_fixture(directory, || panic!("reconciled"), || panic!("started"));
+    assert_eq!(deferred, ReconcileOutcome::Busy);
+    let now = Instant::now();
     let assert_held = || {
         assert!(open_hook_lock(directory).unwrap().is_none());
         Ok(())
     };
-    let wait = |delay| {
-        clock.set(clock.get() + delay);
-        drop(holder.take());
-    };
+    let wait = |_| drop(holder.take());
     let start = window_start_at(
         directory,
-        (|| clock.get(), wait),
+        (|| now, wait),
         || panic!("reconciled without a resume marker"),
         assert_held,
         assert_held,
