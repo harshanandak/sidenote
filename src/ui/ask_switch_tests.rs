@@ -2262,7 +2262,8 @@ fn ask_on_every_page_shows_one_chip_per_page() {
         assert!(chips.next().is_none(), "{prompt}");
 
         tap(&mut rt, "ask-input");
-        for key in ["n", "/"] {
+        // Page shortcuts (new, find, list moves and ticks) type into Ask instead.
+        for key in ["n", "/", "j", "k", "x"] {
             rt.key(KeyEvent {
                 key: Key::Text(key.into()),
                 mods: rune::Mods::default(),
@@ -2270,7 +2271,7 @@ fn ask_on_every_page_shows_one_chip_per_page() {
         }
         rt.settle_all();
         rt.frame(0.0);
-        assert_eq!(rt.state.question.text, "n/");
+        assert_eq!(rt.state.question.text, "n/jkx");
         assert!(rt.state.finder.is_none());
         assert!(rt.state.tasks.panel.is_none());
         assert!(rt.find("ask-prompt").is_none(), "{prompt}");
