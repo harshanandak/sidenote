@@ -964,6 +964,10 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
 
 pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
 
+/// The surface's clip snaps to whole pixels, so a button flush with its bottom edge can lose a
+/// fraction of a pixel; this keeps it clear.
+const SURFACE_EDGE: f32 = 1.0;
+
 pub fn transcript_height(s: &State) -> f32 {
     // Leave room for transcript rows when the time controls wrap on a phone.
     let time_controls =
@@ -993,7 +997,7 @@ fn transcript_min_height() -> f32 {
     .into_iter()
     .map(measured_height)
     .sum();
-    chrome + 56.0
+    chrome + 56.0 + SURFACE_EDGE
 }
 
 fn pane_room(s: &State) -> f32 {
@@ -1134,6 +1138,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                                 .h(36.0)
                                 .self_end()
                                 .mr(8.0)
+                                .mb(SURFACE_EDGE)
                                 .on_press_tx(|s: &mut State, tx| {
                                     s.close_transcript_sheet();
                                     tx.focus("meeting-transcript", true);
