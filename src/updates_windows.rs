@@ -1,5 +1,5 @@
 //! Public and local Velopack feeds. Checks and downloads never apply an update.
-use crate::core::{CHANNEL, Channel};
+use crate::core::Channel;
 pub use crate::update_state::{CheckRequest, ListenerStatus, Phase, Status};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -235,6 +235,9 @@ fn public_feed(channel: Channel) -> &'static str {
     match channel {
         Channel::Stable => PUBLIC_FEED,
         Channel::Dev => "https://github.com/harshanandak/sidenote/releases/download/dev/",
+        Channel::Latest => {
+            "https://github.com/harshanandak/sidenote/releases/download/latest-main/"
+        }
     }
 }
 
@@ -242,6 +245,7 @@ fn channel_name(channel: Channel) -> &'static str {
     match channel {
         Channel::Stable => "stable",
         Channel::Dev => "dev",
+        Channel::Latest => "latest",
     }
 }
 
@@ -249,12 +253,13 @@ fn selected_channel(root: &Path, fallback: Channel) -> Channel {
     match fs::read(root.join("channel")).as_deref() {
         Ok(b"stable") => Channel::Stable,
         Ok(b"dev") => Channel::Dev,
+        Ok(b"latest") => Channel::Latest,
         _ => fallback,
     }
 }
 
 pub fn channel() -> Channel {
-    selected_channel(&directory(), CHANNEL)
+    selected_channel(&directory(), Channel::DEFAULT_UPDATE)
 }
 
 fn save_channel(root: &Path, choice: Channel) -> io::Result<()> {
@@ -385,7 +390,9 @@ fn read_saved_status(directory: &Path) -> Status {
         .ok()
         .and_then(|b| serde_json::from_slice::<Status>(&b).ok())
         .filter(|status| match status.channel.as_deref() {
-            Some(name) => name == channel_name(selected_channel(directory, CHANNEL)),
+            Some(name) => {
+                name == channel_name(selected_channel(directory, Channel::DEFAULT_UPDATE))
+            }
             None => status.phase != Phase::Ready,
         })
         .unwrap_or_default()
@@ -1716,15 +1723,17 @@ mod tests {
 
     #[test]
     fn channel_switch_selects_its_feed_and_only_offers_newer_versions() {
-        use Channel::{Dev, Stable};
+        use Channel::{Dev, Latest, Stable};
 
         let stable = "0.1.0";
         let dev = "0.1.1-dev.10";
+        let latest = "0.1.1-dev.10.main.7";
         let root = tempfile::tempdir().unwrap();
         let path = root.path();
         for (name, versions) in [
             ("stable", [stable, "0.0.1-dev.47"]),
             ("dev", ["0.1.1-dev.9", dev]),
+            ("latest", ["0.1.1-dev.10.main.6", latest]),
         ] {
             let assets = versions.map(|version| VelopackAsset {
                 PackageId: "sidenote".into(),
@@ -1750,10 +1759,13 @@ mod tests {
         for (installed, default, choice, expected) in [
             ("0.0.1-dev.47", Stable, None, Some(stable)),
             ("0.1.1-dev.9", Dev, None, Some(dev)),
+            (dev, Latest, None, Some(latest)),
             (stable, Stable, Some(Dev), Some(dev)),
             (dev, Dev, Some(Stable), None),
             (stable, Dev, Some(Stable), None),
             ("0.0.1-dev.47", Dev, Some(Stable), Some(stable)),
+            (dev, Dev, Some(Latest), Some(latest)),
+            (latest, Latest, Some(Dev), None),
         ] {
             fs::write(
                 &locator.ManifestPath,
@@ -1788,12 +1800,31 @@ mod tests {
         for (channel, expected) in [
             (Channel::Stable, "latest/download/releases.stable.json"),
             (Channel::Dev, "download/dev/releases.dev.json"),
+            (Channel::Latest, "download/latest-main/releases.latest.json"),
         ] {
             let source = HttpSource::new(public_feed(channel));
             let url = source.feed_url(channel_name(channel)).unwrap();
             let expected = format!("https://github.com/harshanandak/sidenote/releases/{expected}");
             assert_eq!(url.as_str(), expected);
         }
+    }
+
+    #[test]
+    fn latest_channel_persists_and_unknown_values_fall_back() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path();
+        let channel_file = path.join("channel");
+
+        fs::write(&channel_file, b"unknown").unwrap();
+        assert_eq!(selected_channel(path, Channel::Latest), Channel::Latest);
+        assert_eq!(selected_channel(path, Channel::Dev), Channel::Dev);
+
+        save_channel(path, Channel::Latest).unwrap();
+        assert_eq!(channel_name(Channel::Latest), "latest");
+        assert_eq!(fs::read_to_string(channel_file).unwrap(), "latest");
+        assert_eq!(selected_channel(path, Channel::Stable), Channel::Latest);
+        save_channel(path, Channel::Stable).unwrap();
+        assert_eq!(selected_channel(path, Channel::Latest), Channel::Stable);
     }
 
     #[test]

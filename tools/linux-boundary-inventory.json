@@ -465,9 +465,9 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "dde35242e666cf9eca7bd00d1fa06cd2bd80cb5475cf1c73bb12269bdd6a26c9",
+  "src/ui/updates.rs": "1bbe8893feb041aaf4eb2bbdc9ba5ccd8eb2afc308d45fbce07cf66f75c88d79",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "7a05a845a0679f177c311e06bf2e2d92ccdad915d8ed17945ea7e4a2a084aafa"
+  "src/updates_windows.rs": "a15e7a31e681ae2860e9609ebf3dc3c453bf9c125dbd6d84943fb19b4d8e0026"
 }
