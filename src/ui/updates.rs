@@ -432,6 +432,12 @@ fn channel_label(channel: Channel) -> &'static str {
         Channel::Latest => "Latest",
     }
 }
+pub(crate) fn channel_row_title(feed: Option<&std::path::Path>, channel: Channel) -> String {
+    match feed {
+        Some(folder) => format!("Updates come from a local folder: {}", folder.display()),
+        None => format!("Get updates from · {}", channel_label(channel)),
+    }
+}
 
 pub fn section(s: &State, p: Palette) -> El {
     if cfg!(target_os = "linux") {
@@ -512,7 +518,7 @@ pub fn section(s: &State, p: Palette) -> El {
         .child(super::hex::settings::setting_row(
             s,
             "update-channel",
-            &format!("Get updates from · {}", channel_label(current_channel)),
+            &channel_row_title(updates::feed().as_deref(), current_channel),
             channel_help,
             channel_control,
             false,
@@ -886,5 +892,19 @@ mod listener_tests {
             assert!(!updates.listener.ready);
             assert_eq!(updates.listener.error.as_deref(), Some("mismatched task"));
         }
+    }
+    #[test]
+    fn channel_row_names_the_local_feed_override() {
+        let folder = std::path::Path::new("E:/Sidenote updates");
+        let title = channel_row_title(Some(folder), Channel::Dev);
+        assert!(
+            title.starts_with("Updates come from a local folder:"),
+            "{title}"
+        );
+        assert!(title.contains("E:/Sidenote updates"), "{title}");
+        assert_eq!(
+            channel_row_title(None, Channel::Dev),
+            "Get updates from · Dev"
+        );
     }
 }

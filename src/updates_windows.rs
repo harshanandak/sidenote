@@ -424,6 +424,29 @@ pub fn source_label() -> String {
         |p| p.display().to_string(),
     )
 }
+// Messages are saved to updates.json and the report, so they never copy feed content.
+fn feed_error(folder: Option<&Path>, channel: Channel, error: &velopack::Error) -> String {
+    let Some(folder) = folder else {
+        return "Could not read the update feed. Check your connection and try again.".into();
+    };
+    let index = format!("releases.{}.json", channel_name(channel));
+    let folder = folder.display();
+    match error {
+        velopack::Error::Io(e) if e.kind() == io::ErrorKind::NotFound => {
+            format!("Could not read {index} in {folder}. The file is missing.")
+        }
+        velopack::Error::Io(e) => format!("Could not read {index} in {folder}: {}.", e.kind()),
+        velopack::Error::Json(e) => format!(
+            "{index} in {folder} is not a valid update feed (line {}, column {}).",
+            e.line(),
+            e.column()
+        ),
+        velopack::Error::Generic(m) if m == "Invalid local feed asset" => {
+            format!("{index} in {folder} lists a package that is not allowed.")
+        }
+        _ => format!("Could not read the update feed in {folder}."),
+    }
+}
 fn manager(channel: Channel) -> Result<UpdateManager, String> {
     let source: Box<dyn UpdateSource> = if let Some(feed) = feed() {
         if !feed.is_absolute() || feed.to_string_lossy().contains("://") {
@@ -485,7 +508,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         let mgr = manager(channel)?;
         let update = mgr
             .check_for_updates()
-            .map_err(|_| "Could not read the update feed. Check your connection and try again.")?;
+            .map_err(|error| feed_error(feed().as_deref(), channel, &error))?;
         match update {
             UpdateCheck::UpdateAvailable(mut update) => {
                 // Reconstructed delta ZIPs are not byte-identical to the feed's full SHA256.
@@ -2738,5 +2761,53 @@ if ($script:started) { exit 0 }; exit 3
                 "The update package is invalid."
             );
         }
+    }
+
+    #[test]
+    fn feed_error_names_the_missing_channel_index() {
+        let root = tempfile::tempdir().unwrap();
+        // FileSource reads the index with read_to_string, so a missing index is Io(NotFound).
+        let error = velopack::Error::Io(
+            fs::read_to_string(root.path().join("releases.dev.json")).unwrap_err(),
+        );
+        let message = feed_error(Some(root.path()), Channel::Dev, &error);
+        assert!(message.contains("releases.dev.json"), "{message}");
+        assert!(message.contains("missing"), "{message}");
+        assert!(
+            message.contains(&root.path().display().to_string()),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn feed_error_keeps_access_denied_for_an_existing_index() {
+        let root = tempfile::tempdir().unwrap();
+        let error = velopack::Error::Io(io::Error::from(io::ErrorKind::PermissionDenied));
+        let message = feed_error(Some(root.path()), Channel::Dev, &error);
+        assert!(message.contains("releases.dev.json"), "{message}");
+        assert!(message.contains("permission denied"), "{message}");
+        assert!(!message.contains("missing"), "{message}");
+    }
+
+    #[test]
+    fn feed_error_never_copies_feed_content() {
+        let root = tempfile::tempdir().unwrap();
+        let bad = r#"{"Assets":[{"Size":"private-feed-marker"}]}"#;
+        let error = velopack::Error::Json(
+            serde_json::from_str::<velopack::VelopackAssetFeed>(bad).unwrap_err(),
+        );
+        let message = feed_error(Some(root.path()), Channel::Dev, &error);
+        assert!(!message.contains("private-feed-marker"), "{message}");
+        assert!(message.contains("releases.dev.json"), "{message}");
+        assert!(message.contains("line 1"), "{message}");
+    }
+
+    #[test]
+    fn feed_error_keeps_the_connection_message_for_the_public_feed() {
+        let error = velopack::Error::Generic("synthetic".into());
+        assert_eq!(
+            feed_error(None, Channel::Dev, &error),
+            "Could not read the update feed. Check your connection and try again."
+        );
     }
 }
