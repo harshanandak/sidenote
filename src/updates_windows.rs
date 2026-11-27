@@ -20,7 +20,7 @@ use velopack::{
 
 #[path = "updates_windows/install_state.rs"]
 mod install_state;
-use install_state::install_pending_pipeline;
+use install_state::{PipelineCompletion, install_pending_pipeline};
 
 // Velopack's HttpSource constructs an unbounded default agent internally.
 #[derive(Clone)]
@@ -1248,7 +1248,7 @@ fn start_installed(
     started: Instant,
     reconcile: impl FnOnce(&InstallGuard<'_>, Instant) -> Result<(), String>,
     prepare: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
-    install: impl FnOnce() -> Result<(), String>,
+    install: impl FnOnce() -> Result<PipelineCompletion, String>,
     pending_update: impl FnOnce() -> bool,
     make_report: impl Fn(&Status) -> serde_json::Value,
 ) -> Result<bool, String> {
@@ -1288,16 +1288,17 @@ fn finish_window_start<T>(
 const PIPELINE_INSTALL_ERROR: &str = "The update could not install the meeting scripts. Check private pipeline settings, close processing jobs and reopen Sidenote to retry; the previous generation and original script backups are retained.";
 const PIPELINE_NOT_CONFIGURED_CODE: i32 = 3;
 
-fn pipeline_script_result(code: Option<i32>) -> Result<(), String> {
+fn pipeline_script_result(code: Option<i32>) -> Result<PipelineCompletion, String> {
     match code {
-        Some(PIPELINE_NOT_CONFIGURED_CODE) => Ok(()),
+        Some(0) => Ok(PipelineCompletion::Complete),
+        Some(PIPELINE_NOT_CONFIGURED_CODE) => Ok(PipelineCompletion::NotConfigured),
         _ => Err(PIPELINE_INSTALL_ERROR.into()),
     }
 }
 
 fn complete_pipeline_install(
     guard: &InstallGuard<'_>,
-    install: impl FnOnce() -> Result<(), String>,
+    install: impl FnOnce() -> Result<PipelineCompletion, String>,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<(), String> {
     let directory = guard.directory;
@@ -1318,7 +1319,7 @@ fn complete_pipeline_install(
     .map(|_| ())
 }
 
-fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
+fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<PipelineCompletion, String> {
     // Only an installed app update or its pending retry reaches this path.
     let files = std::collections::BTreeMap::from([
         (
@@ -1422,10 +1423,7 @@ fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
         None => child.wait(),
     }
     .map_err(|_| error)?;
-    if !status.success() {
-        return pipeline_script_result(status.code());
-    }
-    Ok(())
+    pipeline_script_result(status.code())
 }
 
 const INSTALL_LISTENER_ERROR: &str = "Sidenote could not restart its meeting listener after installation. Reopen Sidenote to retry, or reinstall it if this continues.";
@@ -1678,7 +1676,7 @@ fn reconcile_install(
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = pipeline();
     let listener = listener();
-    if pipeline.is_ok() && listener.is_ok() {
+    if listener.is_ok() {
         guard.finish_reconciliation()?;
     }
     Ok(Reconciliation {
@@ -1933,6 +1931,7 @@ mod window_lock_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use PipelineCompletion::Complete;
 
     fn reconcile_install(
         directory: &Path,
@@ -2072,7 +2071,7 @@ mod tests {
                             guard,
                             || {
                                 fs::write(&script, "new script").unwrap();
-                                Ok(())
+                                Ok(Complete)
                             },
                             || Ok(()),
                         )
@@ -2087,7 +2086,7 @@ mod tests {
                 .unwrap(),
                 expected
             );
-            assert!(!root.path().join("update-listener.resume").exists());
+            assert!(!install_state::listener_pending(root.path()));
         }
         assert_eq!(
             *calls.borrow(),
@@ -2103,7 +2102,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let started = std::cell::Cell::new(false);
             let pipeline = |guard: &InstallGuard<'_>| {
-                install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ())
+                install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
             };
             assert!(
                 reconcile_install(
@@ -2127,20 +2126,23 @@ mod tests {
                 started.get(),
                 "pipeline failure must not leave the listener stopped"
             );
-            assert!(!root.path().join("install-hook.complete").exists());
-            assert!(root.path().join("update-listener.resume").exists());
+            assert!(install_state::listener_completed_version(root.path()).is_none());
+            assert!(install_state::listener_pending(root.path()));
             assert_eq!(
-                root.path().join("pipeline-install.pending").exists(),
+                install_state::pipeline_pending(root.path()),
                 failed_step == "pipeline"
             );
             assert!(reconcile_install(root.path(), || Ok(()), pipeline, || Ok(())).unwrap());
-            assert!(!root.path().join("pipeline-install.pending").exists());
+            assert!(!install_state::pipeline_pending(root.path()));
         }
     }
 
     #[test]
     fn unconfigured_pipeline_install_retires_marker_without_error() {
-        assert!(pipeline_script_result(Some(PIPELINE_NOT_CONFIGURED_CODE)).is_ok());
+        assert_eq!(
+            pipeline_script_result(Some(PIPELINE_NOT_CONFIGURED_CODE)).unwrap(),
+            PipelineCompletion::NotConfigured
+        );
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
@@ -2153,7 +2155,7 @@ mod tests {
             )
             .unwrap()
         );
-        assert!(!marker.exists());
+        assert!(!install_state::pipeline_pending(root.path()));
         assert!(read_status(root.path()).error.is_none());
     }
 
@@ -2176,13 +2178,13 @@ mod tests {
             .unwrap_err(),
             PIPELINE_INSTALL_ERROR
         );
-        assert!(marker.exists());
+        assert!(install_state::pipeline_pending(root.path()));
         assert_eq!(
             read_status(root.path()).error.as_deref(),
             Some(PIPELINE_INSTALL_ERROR)
         );
-        assert!(install_pending_pipeline(&guard, || Ok(()), || Ok(())).unwrap());
-        assert!(!marker.exists());
+        assert!(install_pending_pipeline(&guard, || Ok(Complete), || Ok(())).unwrap());
+        assert!(!install_state::pipeline_pending(root.path()));
     }
 
     #[test]
@@ -2198,17 +2200,17 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                |guard| install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ()),
+                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
                 || Err("listener failed".into())
             )
             .is_err()
         );
-        assert!(!root.path().join("install-hook.complete").exists());
+        assert!(install_state::listener_completed_version(root.path()).is_none());
         assert!(
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                |guard| install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ()),
+                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
                 || Ok(())
             )
             .unwrap()
@@ -2222,7 +2224,7 @@ mod tests {
         // Simulate a failed status save: the existing resume marker must still expose failure.
         fs::create_dir(root.path().join("updates.json")).unwrap();
         let pipeline = |guard: &InstallGuard<'_>| {
-            install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ())
+            install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
         };
         assert!(
             reconcile_install(
@@ -2233,13 +2235,13 @@ mod tests {
             )
             .is_err()
         );
-        assert!(!root.path().join("install-hook.complete").exists());
+        assert!(install_state::listener_completed_version(root.path()).is_none());
         assert_eq!(
             read_status(root.path()).error.as_deref(),
             Some(INSTALL_LISTENER_ERROR)
         );
         assert!(reconcile_install(root.path(), || Ok(()), pipeline, || Ok(())).unwrap());
-        assert!(!root.path().join("update-listener.resume").exists());
+        assert!(!install_state::listener_pending(root.path()));
         assert!(read_status(root.path()).error.is_none());
     }
 
@@ -2284,10 +2286,7 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                |_| {
-                    fs::remove_file(root.path().join("pipeline-install.pending")).unwrap();
-                    Ok(())
-                },
+                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
                 || Ok(())
             )
             .unwrap()
@@ -2309,7 +2308,10 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(fs::read(&marker).unwrap(), VERSION.as_bytes());
+        assert_eq!(
+            install_state::pipeline_version(root.path()).as_deref(),
+            Some(VERSION)
+        );
         for phase in [
             Phase::Checking,
             Phase::Downloading,
@@ -2341,7 +2343,7 @@ mod tests {
             let restarted = read_status(root.path());
             assert_eq!(restarted.phase, Phase::Error);
             assert_eq!(restarted.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
-            assert!(marker.exists());
+            assert!(install_state::pipeline_pending(root.path()));
         }
         // A failed install, including a marker from an older version, remains pending.
         fs::write(&marker, "older version").unwrap();
@@ -2358,8 +2360,8 @@ mod tests {
         assert_eq!(reset.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
         // Only successful completion removes the marker, enabling the normal reset.
         fs::write(&marker, VERSION).unwrap();
-        assert!(install_pending_pipeline(&guard, || Ok(()), || Ok(())).unwrap());
-        assert!(!marker.exists());
+        assert!(install_pending_pipeline(&guard, || Ok(Complete), || Ok(())).unwrap());
+        assert!(!install_state::pipeline_pending(root.path()));
         let cleared = after_update_status(read_status(root.path()), root.path());
         assert_eq!(cleared.phase, Phase::Idle);
         assert!(cleared.error.is_none());
@@ -2389,7 +2391,7 @@ mod tests {
                 &guard,
                 || {
                     installs.set(installs.get() + 1);
-                    Ok(())
+                    Ok(Complete)
                 },
                 || {
                     fs::write(&path, serde_json::to_vec(&Status::default()).unwrap()).unwrap();
@@ -2403,7 +2405,7 @@ mod tests {
         };
         assert_eq!(run(true).unwrap_err(), "injected failure after status save");
         assert!(
-            marker.exists(),
+            install_state::pipeline_pending(root.path()),
             "retry marker was removed before cleanup finished"
         );
         let saved = read_saved_status(root.path());
@@ -2414,7 +2416,7 @@ mod tests {
         );
         assert!(run(false).unwrap());
         assert_eq!(installs.get(), 2);
-        assert!(!marker.exists());
+        assert!(!install_state::pipeline_pending(root.path()));
         assert!(read_status(root.path()).error.is_none());
     }
 
@@ -2753,7 +2755,6 @@ $script:migrated = $false
             ("legacy", "repair\nstart\n"),
         ] {
             let root = tempfile::tempdir().unwrap();
-            let pending = root.path().join("pipeline-install.pending");
             let log = root.path().join("task-operations");
             let probes = std::cell::Cell::new(0);
             assert!(
@@ -2765,12 +2766,14 @@ $script:migrated = $false
                         probes.set(probes.get() + 1);
                         mock_install_task(root.path(), scenario, mode)
                     },
-                    |_, _| {
+                    |guard, _| {
                         assert_eq!(probes.get(), 2);
                         assert!(!log.exists(), "preflight touched the task: {scenario}");
-                        assert_eq!(fs::read_to_string(&pending).unwrap(), VERSION);
-                        fs::remove_file(&pending).unwrap();
-                        Ok(())
+                        assert_eq!(
+                            install_state::pipeline_version(root.path()).as_deref(),
+                            Some(VERSION)
+                        );
+                        install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
                     },
                     |_| mock_install_task(
                         root.path(),
@@ -2788,7 +2791,7 @@ $script:migrated = $false
             );
             assert_eq!(fs::read_to_string(log).unwrap(), operations, "{scenario}");
             assert!(
-                root.path().join("install-hook.complete").exists(),
+                install_state::listener_completed_version(root.path()).as_deref() == Some(VERSION),
                 "{scenario}"
             );
         }
@@ -2850,7 +2853,7 @@ $script:migrated = $false
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
         assert_eq!(clock.get() - started, Duration::from_secs(work_seconds));
-        assert!(!root.path().join("install-hook.complete").exists());
+        assert!(install_state::listener_completed_version(root.path()).is_none());
     }
 
     #[test]
