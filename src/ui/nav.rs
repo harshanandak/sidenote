@@ -157,6 +157,7 @@ impl State {
 
     /// Meetings, with no filter.
     pub fn go_meetings(&mut self) {
+        self.meetings_view = super::list::MeetingsView::All;
         self.set_filter(Filter::All);
     }
 
