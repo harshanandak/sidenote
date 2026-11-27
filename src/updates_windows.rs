@@ -505,8 +505,8 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         return Ok(load());
     }
     let mut publish = |status| publish(pipeline_status(status, &local("pipeline-install.pending")));
-    let _check = exclusive("update-check.lock").map_err(|_| "Another update check is running.")?;
     drop(update_operation_lock(&directory(), true)?);
+    let _check = exclusive("update-check.lock").map_err(|_| "Another update check is running.")?;
     let channel = channel();
     let mut status = Status {
         channel: Some(channel_name(channel).into()),
@@ -1254,27 +1254,23 @@ fn window_start_at(
     persist: impl Fn(&Status) -> io::Result<()>,
     resume_apply: impl FnOnce() -> Result<(), String>,
 ) -> Result<ReconcileOutcome, String> {
-    let lock = match retry_hook_lock(directory, clock.0, clock.1) {
-        Ok(Some(lock)) => lock,
-        Ok(None) => return Ok(ReconcileOutcome::Busy),
-        Err(error) => return save_reconcile_status(Err(error), directory, persist),
+    let Some(lock) = retry_hook_lock(directory, clock.0, clock.1)? else {
+        return Ok(ReconcileOutcome::Busy);
     };
+    let receipt = fs::read(directory.join("install-hook.complete")).ok();
     let needs_reconcile = directory.join("update-listener.resume").exists()
-        || !directory.join("install-hook.complete").exists();
+        || receipt.as_deref() != Some(VERSION.as_bytes());
     if needs_reconcile
-        && let Err(error) = save_reconcile_status(reconcile(), directory, &persist)
+        && let Err(error) = reconcile()
         && error != PIPELINE_INSTALL_ERROR
     {
         return Err(error);
     }
     ensure()?;
+    retire_listener_resume(directory)?;
     let pipeline = if needs_reconcile { Ok(()) } else { pipeline() };
     if !needs_reconcile && pipeline.is_ok() && read_saved_status(directory).reconcile_error {
-        save_reconcile_status(
-            Ok(ReconcileOutcome::Complete { changed: false }),
-            directory,
-            &persist,
-        )?;
+        save_reconcile_status(Ok(false), directory, &persist)?;
     }
     finish_window_start(
         pipeline,
@@ -1291,8 +1287,8 @@ fn window_start_at(
             drop(lock);
             resume_apply()
         },
-    )?;
-    Ok(ReconcileOutcome::Complete { changed: false })
+    )
+    .map(|()| ReconcileOutcome::Complete { changed: false })
 }
 fn finish_window_start(
     pipeline: Result<(), String>,
@@ -1501,9 +1497,7 @@ fn run_install_hook(budget: ReconciliationBudget) -> Result<(), String> {
     if !installed() {
         return Ok(());
     }
-    let directory = directory();
-    let result = reconcile_on_device(&directory, started, budget);
-    match save_reconcile_status(result, &directory, save_status)? {
+    match reconcile_on_device(&directory(), started, budget)? {
         ReconcileOutcome::Busy => Err(UPDATE_RECONCILING.into()),
         ReconcileOutcome::Complete { .. } => Ok(()),
     }
@@ -1520,15 +1514,15 @@ fn reconcile_on_device(
         listener_task,
         |deadline| complete_pipeline_install_until(Some(deadline)),
         recover_listener_until,
+        save_status,
     )
 }
 fn save_reconcile_status(
-    result: Result<ReconcileOutcome, String>,
+    result: Result<bool, String>,
     directory: &Path,
     persist: impl FnOnce(&Status) -> io::Result<()>,
 ) -> Result<ReconcileOutcome, String> {
     let status = match &result {
-        Ok(ReconcileOutcome::Busy) => return result,
         Err(error) => Status {
             phase: Phase::Error,
             version: VERSION.into(),
@@ -1541,8 +1535,10 @@ fn save_reconcile_status(
             &directory.join("pipeline-install.pending"),
         ),
     };
-    let saved = persist(&status).map_err(|_| "Could not save installation status.");
-    result.and_then(|outcome| saved.map(|()| outcome).map_err(String::from))
+    let saved = persist(&status);
+    let changed = result?;
+    saved.map_err(|_| "Could not save installation status.")?;
+    Ok(ReconcileOutcome::Complete { changed })
 }
 
 fn reconcile_installed(
@@ -1552,6 +1548,7 @@ fn reconcile_installed(
     task: impl Fn(ListenerTaskMode, Instant) -> Result<(), ListenerTaskError>,
     pipeline: impl FnOnce(Instant) -> Result<(), String>,
     listener: impl FnOnce(Instant) -> Result<(), String>,
+    persist: impl FnOnce(&Status) -> io::Result<()>,
 ) -> Result<ReconcileOutcome, String> {
     let deadline = started
         + match budget {
@@ -1571,13 +1568,10 @@ fn reconcile_installed(
         };
         _lock = acquired;
     }
-    reconcile_install(
-        directory,
-        preflight,
-        || pipeline(pipeline_deadline),
-        || listener(deadline),
-    )
-    .map(|changed| ReconcileOutcome::Complete { changed })
+    let pipeline = || pipeline(pipeline_deadline);
+    let listener = || listener(deadline);
+    let result = reconcile_install(directory, preflight, pipeline, listener);
+    save_reconcile_status(result, directory, persist)
 }
 
 fn recover_listener() -> Result<(), String> {
@@ -1670,12 +1664,18 @@ fn reconcile_install(
     if pipeline_result.is_ok() && listener_result.is_ok() {
         fs::write(receipt, VERSION).map_err(|_| "Could not save install hook completion.")?;
     }
-    let resume = directory.join("update-listener.resume");
-    if listener_result.is_ok() && resume.exists() {
-        fs::remove_file(resume).map_err(|_| "Could not clear listener restart state.")?;
+    if listener_result.is_ok() {
+        retire_listener_resume(directory)?;
     }
     pipeline_result.and(listener_result)?;
     Ok(!current)
+}
+fn retire_listener_resume(directory: &Path) -> Result<(), String> {
+    let resume = directory.join("update-listener.resume");
+    if resume.exists() {
+        fs::remove_file(resume).map_err(|_| "Could not clear listener restart state.")?;
+    }
+    Ok(())
 }
 const LEGACY_HOOK_CONTENTION: &str = "Another install hook is reconciling Sidenote. Try again.";
 fn after_update_status(status: Status, marker: &Path) -> Status {
@@ -1699,11 +1699,7 @@ pub fn restarted() {
     if installed()
         && let Ok(Some(_lock)) = acquire_hook_lock(&directory)
     {
-        let _ = save_reconcile_status(
-            reconcile_on_device(&directory, Instant::now(), ReconciliationBudget::App),
-            &directory,
-            save_status,
-        );
+        let _ = reconcile_on_device(&directory, Instant::now(), ReconciliationBudget::App);
     }
 }
 fn restart_listener() {
@@ -1725,10 +1721,10 @@ pub fn apply(
     if !installed() {
         return Ok(());
     }
+    let _hook = update_operation_lock(&directory(), !from_window)?;
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
-    let _hook = update_operation_lock(&directory(), !from_window)?;
     publish(Phase::Preparing);
     let args: Vec<_> = std::env::args().skip(1).collect();
     for pair in args.windows(2).filter(|pair| {
@@ -1807,15 +1803,6 @@ fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     }
     Ok(report)
 }
-fn cli_update_at(
-    directory: Option<&Path>,
-    run: impl FnOnce() -> Result<Status, String>,
-) -> Result<Status, String> {
-    if let Some(directory) = directory {
-        drop(update_operation_lock(directory, true)?);
-    }
-    run()
-}
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     let probe = args.iter().any(|a| a == "--update-probe");
     let mut persist = probe;
@@ -1824,15 +1811,13 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     } else if probe {
         recording_idle().map(|_| load())
     } else if args.iter().any(|a| a == "--update-apply") {
-        cli_update_at(installed().then(directory).as_deref(), || {
-            apply(false, vec!["--update-status".into()], |phase| {
-                persist = true;
-                let _ = save(&Status { phase, ..load() });
-            })
-            .map(|_| load())
+        apply(false, vec!["--update-status".into()], |phase| {
+            persist = true;
+            let _ = save(&Status { phase, ..load() });
         })
+        .map(|_| load())
     } else if args.iter().any(|a| a == "--update-check") {
-        cli_update_at(installed().then(directory).as_deref(), || check(|_| {}))
+        check(|_| {})
     } else {
         Ok(load())
     };
@@ -2267,7 +2252,8 @@ mod tests {
                 ReconciliationBudget::InstallOrRecovery,
                 |_, _| Ok(()),
                 |_| panic!("overlapping pipeline"),
-                |_| panic!("overlapping listener")
+                |_| panic!("overlapping listener"),
+                |_| panic!("busy hook saved status"),
             )
             .unwrap(),
             ReconcileOutcome::Busy
@@ -2716,12 +2702,21 @@ $script:migrated = $false
                 },
                 |_| panic!("unexpected pipeline call for {scenario}"),
                 |_| panic!("unexpected listener recovery for {scenario}"),
+                |status| {
+                    assert_eq!(scenario, "changed-under-lock");
+                    assert!(open_hook_lock(root.path()).unwrap().is_none());
+                    fs::write(
+                        root.path().join("updates.json"),
+                        serde_json::to_vec(status)?,
+                    )
+                },
             );
             assert_eq!(result.unwrap_err(), error.message(), "{scenario}");
             for file in files {
                 assert_eq!(fs::read_to_string(root.path().join(file)).unwrap(), file);
             }
             assert_eq!(lock.exists(), scenario == "changed-under-lock");
+            assert_eq!(root.path().join("updates.json").exists(), lock.exists());
             assert!(!root.path().join("task-operations").exists(), "{scenario}");
         }
     }
@@ -2764,6 +2759,7 @@ $script:migrated = $false
                         },
                     )
                     .map_err(ListenerTaskError::message),
+                    |_| Ok(()),
                 )
                 .unwrap_or_else(|error| panic!("{scenario}: {error}")),
                 ReconcileOutcome::Complete { changed: true },
@@ -2829,6 +2825,7 @@ $script:migrated = $false
                 spend(TASK_COMMAND_TIMEOUT + Duration::from_secs(8), deadline);
                 Err(INSTALL_LISTENER_ERROR.into())
             },
+            |_| Ok(()),
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
         assert_eq!(clock.get() - started, Duration::from_secs(work_seconds));

@@ -469,7 +469,7 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "3e47908ae09500e087d79c28bc039744315a1f73b9a57440f320ed9619cac4e7",
+  "src/updates_windows.rs": "b38827583072a9618a495c1952ee42da39c74af4ea9383865ee950e9574ac30c",
 
-  "src/updates_windows/reconcile_tests.rs": "e125f2ac85456cfeeeac10f9f554e6541ea820aba310909ffa73e8b54493d2f3"
+  "src/updates_windows/reconcile_tests.rs": "3358e347e57584780b798cba545f8c705b6067e734e8851a708b524ef093a035"
 }
