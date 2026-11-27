@@ -12,6 +12,7 @@ param(
     [switch]$Before
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'install_recovery_check.ps1')
 $rows = [Collections.Generic.List[object]]::new()
 function Add-Check([string]$Name, [bool]$Pass, [string]$Observed) {
     $rows.Add([pscustomobject]@{ Check = $Name; Result = $(if ($Pass) { 'PASS' } else { 'FAIL' }); Observed = $Observed })
@@ -176,9 +177,9 @@ Add-Check 'Pipeline generation' (-not ($checks.Values -contains $false)) "$gener
 
 try {
     if (-not $local) { throw 'Local app data unavailable' }
-    $pending = Test-Path -LiteralPath (Join-Path $local 'Sidenote/updates/pipeline-install.pending')
-    Add-Check 'Pending pipeline install' (-not $pending) $(if ($pending) { 'present' } else { 'absent' })
-} catch { Add-Check 'Pending pipeline install' $false 'unreadable' }
+    $evidence = Get-InstallRecoveryEvidence (Join-Path $local 'Sidenote/updates') $Expect
+    Add-Check 'Install recovery' $true $evidence
+} catch { Add-Check 'Install recovery' $false 'incomplete or unreadable' }
 
 try {
     if (-not $installTime -or -not $scripts) { throw 'Folders or install time unavailable' }

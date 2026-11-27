@@ -10,6 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $checksumError = 'The update checksum does not match. Try again.'
 . (Join-Path $PSScriptRoot 'release_version.ps1')
+. (Join-Path $PSScriptRoot 'install_recovery_check.ps1')
 
 function Read-Json([string]$Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
@@ -185,22 +186,13 @@ function Wait-Proof([scriptblock]$Probe, [string]$Failure) {
 }
 
 function Assert-RecoveryState([string]$Updates, [string]$Version, [switch]$Canonical) {
-    $markers = @('update-listener.stop', 'update-listener.resume', 'pipeline-install.pending')
-    if ($Canonical) { $markers += 'install-hook.complete' }
-    foreach ($marker in $markers) {
-        if (Test-Path -LiteralPath (Join-Path $Updates $marker)) { throw "Unexpected marker: $marker." }
-    }
+    if (Test-Path -LiteralPath (Join-Path $Updates 'update-listener.stop')) { throw 'Unexpected marker: update-listener.stop.' }
     if ($Canonical) {
-        try { $state = Read-Json (Join-Path $Updates 'install-state.json') }
-        catch { throw 'Install state is missing or unreadable.' }
-        if ($state -isnot [Collections.IDictionary] -or
-            $state['schema_version'] -isnot [long] -or $state['schema_version'] -ne 1 -or
-            $state['app_version'] -isnot [string] -or $state['app_version'] -cne $Version -or
-            $state['listener_work'] -isnot [string] -or $state['listener_work'] -cne 'Complete' -or
-            $state['pipeline_work'] -cnotin @('Complete', 'NotConfigured')) {
-            throw "Install state did not complete for $Version."
-        }
+        Assert-CanonicalInstallState $Updates $Version
         return
+    }
+    foreach ($marker in @('update-listener.resume', 'pipeline-install.pending')) {
+        if (Test-Path -LiteralPath (Join-Path $Updates $marker)) { throw "Unexpected marker: $marker." }
     }
     if ([IO.File]::ReadAllText((Join-Path $Updates 'install-hook.complete')) -cne $Version) {
         throw "Install hook did not complete for $Version."
@@ -286,26 +278,60 @@ function Test-RecoveryState([string]$Root) {
     Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } 'Unexpected marker: install-hook.complete.'
     [IO.File]::Delete($receipt)
 
+    if ((Get-InstallRecoveryEvidence $updates $version) -cne 'legacy pipeline marker absent') {
+        throw 'Install check did not accept the legacy clean state.'
+    }
+    $pending = Join-Path $updates 'pipeline-install.pending'
+    [IO.File]::WriteAllText($pending, $version)
+    Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } 'Legacy pipeline install is pending.'
+    [IO.File]::Delete($pending)
+
     $record = Join-Path $updates 'install-state.json'
     $unreadable = 'Install state is missing or unreadable.'
     $incomplete = "Install state did not complete for $version."
     Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
     [IO.File]::WriteAllText($record, '{')
     Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
+    Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $unreadable
+    [IO.File]::WriteAllText($record, '{schema_version:1}')
+    Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
     $state = @{ schema_version = 1; app_version = $version; listener_work = 'Complete'; pipeline_work = 'Complete' }
     foreach ($case in @(
         @('schema_version', 2), @('schema_version', '1'), @('app_version', '0.1.1'),
-        @('listener_work', 'Pending'), @('pipeline_work', 'Pending'), @('pipeline_work', 'Unknown')
+        @('listener_work', 'Pending'), @('pipeline_work', 'Pending'), @('pipeline_work', 'Unknown'),
+        @('pipeline_work', @('Complete')), @('listener_work', @('Complete'))
     )) {
         $invalid = $state.Clone()
         $invalid[$case[0]] = $case[1]
         $invalid | ConvertTo-Json -Compress | Set-Content -LiteralPath $record
         Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $incomplete
+        Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $incomplete
     }
+    $duplicate = 'Install state contains a duplicate required field.'
+    foreach ($case in @(
+        @('Duplicate pipeline field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Duplicate listener field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Pending","listener_work":"Complete","pipeline_work":"Complete"}', $duplicate),
+        @('Case-only duplicate', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","Pipeline_Work":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Escaped duplicate', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_\u0077ork":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Null required field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":null}', $incomplete),
+        @('Missing required field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete"}', $incomplete)
+    )) {
+        [IO.File]::WriteAllText($record, $case[1])
+        try {
+            Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $case[2]
+            Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $case[2]
+        } catch { throw "$($case[0]): $($_.Exception.Message)" }
+    }
+    [IO.File]::WriteAllText($record, '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":"Complete","note":"{\"pipeline_work\":\"Pending\"}","metadata":{"listener_work":"Pending"}}')
+    Assert-RecoveryState $updates $version -Canonical
+
     foreach ($outcome in @('Complete', 'NotConfigured')) {
         $state.pipeline_work = $outcome
         $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $record
         Assert-RecoveryState $updates $version -Canonical
+        if ((Get-InstallRecoveryEvidence $updates $version) -cne 'canonical record complete') {
+            throw 'Install check did not accept a complete canonical record.'
+        }
     }
     foreach ($marker in @('install-hook.complete', 'update-listener.resume', 'pipeline-install.pending', 'update-listener.stop')) {
         $path = Join-Path $updates $marker
