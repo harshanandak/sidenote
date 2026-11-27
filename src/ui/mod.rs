@@ -3395,6 +3395,9 @@ pub fn spec() -> AppSpec<State> {
             ("settings-experimental", |s| {
                 hex::settings::scene(s, "settings-experimental")
             }),
+            ("settings-work-tasks", |s| {
+                hex::settings::scene(s, "settings-work-tasks")
+            }),
             ("settings-recording", |s| {
                 hex::settings::scene(s, "settings-recording")
             }),

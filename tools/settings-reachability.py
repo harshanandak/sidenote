@@ -46,7 +46,7 @@ def main():
                if not stable or key != "features.other_devices"}
     missing = {key: controls for key, controls in missing.items() if controls}
     assert not missing, f"Unreachable legacy settings: {missing}"
-    for name in ("General", "Meetings", "Prompt library", "Hex and dictation", "Models and agents", "Connected apps", "Appearance and startup", "Sync", "Privacy and data", "Updates", "Diagnostics"):
+    for name in ("General", "Meetings", "Prompt library", "Tasks", "Hex and dictation", "Models and agents", "Connected apps", "Appearance and startup", "Sync", "Privacy and data", "Updates", "Diagnostics"):
         assert (f"settings-page-{name}" in keys) == (not stable or name not in HIDDEN_PAGES), name
     assert "settings-page-People" not in keys, "People belongs to the home sidebar, not Settings"
     search = json.loads((folder / "settings-search-1280-light.json").read_text(encoding="utf-8-sig"))

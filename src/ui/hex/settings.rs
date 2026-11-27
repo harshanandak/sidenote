@@ -1,7 +1,7 @@
 //! Settings layout and destinations. Hex keys are routed, never renamed or migrated.
 use super::*;
 use crate::ui::{ai_notes, cards, icons, nav, tasks, widgets::ButtonDisabled};
-use sidenote::core::{CHANNEL, Channel, Feature as AppFeature, UiPrefs};
+use sidenote::core::{CHANNEL, Channel, Feature as AppFeature, TasksLayout, UiPrefs};
 use std::collections::BTreeMap;
 
 mod engine;
@@ -89,6 +89,7 @@ pub enum Page {
     Meetings,
     Prompts,
     Experimental,
+    Tasks,
     /// Search destination in the main sidebar.
     People,
     Hex,
@@ -101,11 +102,12 @@ pub enum Page {
     Diagnostics,
 }
 impl Page {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::General,
         Self::Meetings,
         Self::Prompts,
         Self::Experimental,
+        Self::Tasks,
         Self::Helpers,
         Self::ConnectedApps,
         Self::Hex,
@@ -120,6 +122,7 @@ impl Page {
             Self::General | Self::Meetings | Self::Prompts | Self::Experimental | Self::People => {
                 "You and meetings"
             }
+            Self::Tasks => "Your work",
             Self::Helpers | Self::ConnectedApps => "Ask and agents",
             Self::Hex | Self::Appearance | Self::Sync => "This PC",
             Self::Privacy | Self::Updates | Self::Diagnostics => "Data and maintenance",
@@ -131,6 +134,7 @@ impl Page {
             Self::Meetings => "Meetings",
             Self::Prompts => "Prompt library",
             Self::Experimental => Section::Experimental.name(),
+            Self::Tasks => "Tasks",
             Self::People => "People",
             Self::Hex => "Hex and dictation",
             Self::Helpers => "Models and agents",
@@ -144,6 +148,12 @@ impl Page {
     }
     fn visible(self, channel: Channel) -> bool {
         channel == Channel::Dev || !matches!(self, Self::Sync | Self::ConnectedApps)
+    }
+    fn shown(self, s: &State) -> bool {
+        match self {
+            Self::Tasks => s.config.features.tasks,
+            _ => true,
+        }
     }
     pub(in crate::ui) fn tabs(self) -> &'static [&'static str] {
         match self {
@@ -164,6 +174,7 @@ impl Page {
             },
             Self::Prompts => Section::PromptLibrary,
             Self::Experimental => Section::Experimental,
+            Self::Tasks => Section::Tasks,
             Self::People => Section::Teams,
             Self::Hex => Section::Dictation,
             Self::Helpers => match tab {
@@ -185,6 +196,7 @@ impl Page {
             Self::Meetings => &icons::MEETINGS,
             Self::Prompts => &icons::PROMPTS,
             Self::Experimental => &icons::FLASK,
+            Self::Tasks => &icons::TASKS,
             Self::People => &icons::PEOPLE,
             Self::Hex => &icons::MIC,
             Self::Helpers => icons::AGENTS,
@@ -205,6 +217,7 @@ fn current(section: Section) -> (Page, usize) {
         Section::AiNotes => (Page::Meetings, 1),
         Section::Features => (Page::Meetings, 2),
         Section::Experimental => (Page::Experimental, 0),
+        Section::Tasks => (Page::Tasks, 0),
         Section::MeetingEngine => (Page::Meetings, 3),
         Section::PromptLibrary => (Page::Prompts, 0),
         Section::Teams => (Page::People, 0),
@@ -225,15 +238,16 @@ fn current(section: Section) -> (Page, usize) {
 
 fn active(s: &State) -> (Page, usize) {
     let (page, tab) = current(s.hex.section);
-    if page.visible(CHANNEL) {
+    if page.visible(CHANNEL) && page.shown(s) {
         (page, tab)
     } else {
         (Page::General, 0)
     }
 }
 
-pub(in crate::ui) fn section_visible(section: Section) -> bool {
-    current(section).0.visible(CHANNEL)
+pub(in crate::ui) fn section_visible(s: &State, section: Section) -> bool {
+    let page = current(section).0;
+    page.visible(CHANNEL) && page.shown(s)
 }
 
 fn tab_visible(s: &State, page: Page, tab: usize) -> bool {
@@ -995,6 +1009,14 @@ fn app_index() -> Vec<Destination> {
             false,
         ),
         entry(
+            "work-tasks-layout",
+            "Tasks open as",
+            "tasks list board layout view",
+            Page::Tasks,
+            0,
+            false,
+        ),
+        entry(
             "agent-instructions",
             "Meeting summary instructions",
             "AI notes Notes prompt library instructions tasks",
@@ -1327,7 +1349,9 @@ fn index_for_channel(s: &State, channel: Channel) -> Vec<Destination> {
     );
     let mut seen = HashSet::new();
     entries.retain(|dest| {
-        dest.page.visible(channel) && seen.insert((dest.key.clone(), dest.page.name(), dest.tab))
+        dest.page.visible(channel)
+            && dest.page.shown(s)
+            && seen.insert((dest.key.clone(), dest.page.name(), dest.tab))
     });
     for alias in legacy_aliases() {
         if let Some(dest) = entries.iter_mut().find(|d| d.key == alias.target) {
@@ -1528,7 +1552,10 @@ fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
     } else {
         let (active, _) = active(s);
         let mut previous_group: Option<&'static str> = None;
-        for page in Page::ALL.into_iter().filter(|page| page.visible(CHANNEL)) {
+        for page in Page::ALL
+            .into_iter()
+            .filter(|page| page.visible(CHANNEL) && page.shown(s))
+        {
             let group = page.group();
             if previous_group != Some(group) {
                 let slug = group.to_ascii_lowercase().replace(' ', "-");
@@ -2606,6 +2633,57 @@ fn meeting_icon_capture(s: &State, k: &Kit, p: Palette) -> El {
     )
 }
 
+fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
+    let options = ["List", "Board"];
+    let current = match s.tasks.layout {
+        TasksLayout::List => "List",
+        TasksLayout::Board => "Board",
+    };
+    let select = Select::new("work-tasks-layout-select", &options)
+        .label("Tasks open as")
+        .current(Some(current))
+        .appearance(SelectAppearance::Field)
+        .width(short_select_width(s, 180.0))
+        .open(s.hex.select_open.as_deref() == Some("work-tasks-layout-select"))
+        .on_toggle(|s: &mut State| {
+            s.hex.select_open = if s.hex.select_open.is_some() {
+                None
+            } else {
+                Some("work-tasks-layout-select".into())
+            };
+        })
+        .on_close(|s: &mut State| s.hex.select_open = None)
+        .on_choose(|s: &mut State, value: &str, _| {
+            let layout = if value == "Board" {
+                TasksLayout::Board
+            } else {
+                TasksLayout::List
+            };
+            if s.save_layout(layout).is_ok() {
+                s.feature_error = None;
+                s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
+            } else {
+                s.hex.shell.saved = None;
+                s.feature_error = Some("Could not save Tasks settings. Try again.".into());
+            }
+            s.hex.select_open = None;
+        })
+        .build(&row_field_kit(k, p), layer);
+    settings_card(
+        "Tasks",
+        setting_row(
+            s,
+            "work-tasks-layout",
+            "Tasks open as",
+            "Choose whether Tasks opens as a list or a board.",
+            select,
+            false,
+            p,
+        ),
+        p,
+    )
+}
+
 fn privacy(s: &State, k: &Kit, p: Palette) -> El {
     ai_notes::section(s, k, p, ai_notes::Part::Privacy)
 }
@@ -2616,6 +2694,7 @@ fn body(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, page: Page, tab: us
                 feature(s, k, test, test.name(), test.description(), p)
             })),
         ),
+        (Page::Tasks, _) => work_tasks(s, k, p, layer),
         (Page::General, _) => col()
             .w_full()
             .child(ai_notes::section(s, k, p, ai_notes::Part::Identity))
@@ -3204,6 +3283,7 @@ pub fn scene(s: &mut State, name: &str) {
     let (page, tab) = match name.trim_end_matches("-expanded") {
         "settings-general" => (Page::General, 0),
         "settings-experimental" => (Page::Experimental, 0),
+        "settings-work-tasks" => (Page::Tasks, 0),
         "settings-recording" => (Page::Meetings, 0),
         "settings-summaries" => (Page::Meetings, 1),
         "settings-tasks" => (Page::Meetings, 2),
@@ -3862,6 +3942,7 @@ mod tests {
             (Page::Meetings, "solar-document"),
             (Page::Prompts, "solar-notebook-minimalistic"),
             (Page::Experimental, "solar-flask"),
+            (Page::Tasks, "solar-check-circle"),
             (Page::Helpers, "solar-four-point-star"),
             (Page::ConnectedApps, "solar-link"),
             (Page::Hex, "solar-microphone-3"),
@@ -3910,9 +3991,8 @@ mod tests {
             .collect();
         ordered.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let actual: Vec<&str> = ordered.iter().map(|(key, _)| *key).collect();
-        // Spec section 2 order. PR1 has no "Your work" page yet (PR2 adds
-        // Tasks), so the plan's "five-group order" is four groups here.
-        let groups: [(&str, &[Page]); 4] = [
+        // Spec section 2 order.
+        let groups: [(&str, &[Page]); 5] = [
             (
                 "settings-heading-you-and-meetings",
                 &[
@@ -3922,6 +4002,7 @@ mod tests {
                     Page::Experimental,
                 ],
             ),
+            ("settings-heading-your-work", &[Page::Tasks]),
             (
                 "settings-heading-ask-and-agents",
                 &[Page::Helpers, Page::ConnectedApps],
@@ -4132,6 +4213,243 @@ mod tests {
                 .is_some_and(|key| key.starts_with("find-setting-"))),
             "expected search results for \"sound\""
         );
+    }
+
+    fn settings_runtime(state: State, size: (f32, f32)) -> rune::Runtime<State> {
+        let mut rt = rune::Runtime::with_text(
+            state,
+            crate::ui::view,
+            size,
+            rune::Env::default(),
+            rune::text::TextSystem::new(
+                crate::ui::theme::fonts(),
+                (crate::ui::theme::SANS, "Inter"),
+            ),
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        rt
+    }
+
+    fn work_tasks_state(root: Option<&std::path::Path>) -> State {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        if let Some(root) = root {
+            state.store.root = root.to_path_buf();
+            state.tasks.layout = TasksLayout::List;
+        }
+        state.config.features.tasks = true;
+        state.open_hex();
+        navigate(&mut state, Page::Tasks, 0);
+        state
+    }
+
+    fn tap_key(rt: &mut rune::Runtime<State>, key: &str) {
+        let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.2);
+    }
+
+    fn element_rect(elements: &[rune::ElementInfo], key: &str) -> [f32; 4] {
+        elements
+            .iter()
+            .find(|element| element.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}"))
+            .rect
+    }
+
+    fn row_shows_text(elements: &[rune::ElementInfo], key: &str, text: &str) -> bool {
+        let Some(row) = elements
+            .iter()
+            .find(|element| element.key.as_deref() == Some(key))
+        else {
+            return false;
+        };
+        let inside = format!("{}/", row.path);
+        elements.iter().any(|element| {
+            element.path.starts_with(&inside) && element.text.as_deref() == Some(text)
+        })
+    }
+
+    fn choose_tasks_layout(rt: &mut rune::Runtime<State>, option: usize) {
+        tap_key(rt, "work-tasks-layout-select-trigger");
+        rt.settle_all();
+        rt.frame(0.0);
+        let key = format!("option{option}");
+        tap_key(rt, &key);
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    #[test]
+    fn work_tasks_page_is_listed_under_your_work() {
+        for size in [(1334.0, 900.0), (390.0, 844.0)] {
+            let state = work_tasks_state(None);
+            let mut rt = settings_runtime(state, size);
+            if size.0 < DRAWER_AT {
+                tap_key(&mut rt, "settings-navigation");
+                rt.settle_all();
+                rt.frame(0.0);
+            }
+            let elements = rt.elements();
+            let heading = element_rect(&elements, "settings-heading-your-work");
+            let page = element_rect(&elements, "settings-page-Tasks");
+            let next = element_rect(&elements, "settings-heading-ask-and-agents");
+            assert!(heading[1] < page[1], "{size:?}: heading above page");
+            assert!(page[1] < next[1], "{size:?}: page before Ask and agents");
+            assert!(
+                row_shows_text(&elements, "settings-heading-your-work", "Your work"),
+                "{size:?}: heading label"
+            );
+        }
+    }
+
+    #[test]
+    fn work_tasks_page_hides_when_tasks_are_off() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.config.features.tasks = false;
+        state.open_hex();
+        state.hex.section = Section::Tasks;
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        assert_eq!(active(&rt.state), (Page::General, 0));
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.key.as_deref() != Some("settings-page-Tasks"))
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.key.as_deref() != Some("settings-heading-your-work"))
+        );
+        rt.update(|s, _| s.hex.filter = TextEdit::new("board"));
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.key.as_deref() != Some("find-setting-work-tasks-layout"))
+        );
+
+        rt.update(|s, _| {
+            s.open_finder();
+            s.finder_query = TextEdit::new("tasks");
+            s.finder_changed();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .filter(|element| {
+                    element
+                        .key
+                        .as_deref()
+                        .is_some_and(|key| key.starts_with("finder-row-"))
+                })
+                .all(|element| element.label.as_deref() != Some("Settings · Tasks")),
+            "the finder offered Settings · Tasks with Tasks off"
+        );
+    }
+
+    #[test]
+    fn work_tasks_layout_row_writes_the_same_pref_as_the_toolbar() {
+        for size in [(1334.0, 900.0), (390.0, 844.0)] {
+            let root = tempfile::tempdir().unwrap();
+            let state = work_tasks_state(Some(root.path()));
+            let mut rt = settings_runtime(state, size);
+            choose_tasks_layout(&mut rt, 1);
+            assert_eq!(UiPrefs::load(root.path()).tasks_layout, TasksLayout::Board);
+            assert_eq!(rt.state.tasks.layout, TasksLayout::Board);
+            assert_eq!(rt.state.feature_error, None, "{size:?}");
+            choose_tasks_layout(&mut rt, 0);
+            assert_eq!(UiPrefs::load(root.path()).tasks_layout, TasksLayout::List);
+            assert_eq!(rt.state.tasks.layout, TasksLayout::List);
+            assert_eq!(rt.state.feature_error, None, "{size:?}");
+        }
+    }
+
+    #[test]
+    fn work_tasks_layout_save_failure_is_shown() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local/ui.json")).unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        // An earlier save's confirmation must not stay beside the error.
+        state.hex.shell.saved = Some(Instant::now() + Duration::from_secs(60));
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        choose_tasks_layout(&mut rt, 1);
+        assert_eq!(
+            rt.state.feature_error.as_deref(),
+            Some("Could not save Tasks settings. Try again.")
+        );
+        assert!(rt.state.hex.shell.saved.is_none());
+        // Going back to List must not pass because the unreadable file loads as List.
+        choose_tasks_layout(&mut rt, 0);
+        assert_eq!(
+            rt.state.feature_error.as_deref(),
+            Some("Could not save Tasks settings. Try again.")
+        );
+        assert!(rt.state.hex.shell.saved.is_none());
+        let elements = rt.elements();
+        assert!(
+            elements.iter().any(|element| element.text.as_deref()
+                == Some("Could not save Tasks settings. Try again.")),
+            "the save failure is rendered"
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.text.as_deref() != Some("Saved")),
+            "a failed save must not say Saved"
+        );
+    }
+
+    #[test]
+    fn work_tasks_search_finds_the_row() {
+        let mut rt = settings_runtime(work_tasks_state(None), (1334.0, 900.0));
+        rt.update(|s, _| {
+            navigate(s, Page::Meetings, 0);
+            s.hex.filter = TextEdit::new("board");
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        // Click the rendered result, so a broken handler or scroll fails here.
+        tap_key(&mut rt, "find-setting-work-tasks-layout");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(active(&rt.state), (Page::Tasks, 0));
+        assert_eq!(
+            rt.state.hex.shell.highlighted.as_ref().unwrap().0,
+            "work-tasks-layout"
+        );
+        let elements = rt.elements();
+        let [_, top, _, height] = element_rect(&elements, "hex-scroll");
+        let [_, y, _, h] = element_rect(&elements, "work-tasks-layout");
+        assert!(y >= top && y + h <= top + height, "the row is on screen");
+    }
+
+    #[test]
+    fn work_tasks_page_leaves_the_ask_dock_clear() {
+        let state = work_tasks_state(None);
+        let mut rt = settings_runtime(state, (390.0, 844.0));
+        rt.update(|s, _| crate::ui::scene_agents(s, crate::ui::ALL_AGENTS));
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let [_, scroll_y, _, scroll_h] = element_rect(&elements, "hex-scroll");
+        let [dock_x, dock_y, dock_w, _] = element_rect(&elements, "ask-overlay");
+        let [pill_x, pill_y, pill_w, pill_h] = element_rect(&elements, "ask-pill");
+        let [_, input_y, _, input_h] = element_rect(&elements, "ask-input");
+        assert!(scroll_y + scroll_h <= dock_y + 1.0);
+        assert_eq!(pill_h, 48.0);
+        assert!((pill_x + pill_w / 2.0 - dock_x - dock_w / 2.0).abs() <= 1.0);
+        assert!((input_y + input_h / 2.0 - pill_y - pill_h / 2.0).abs() <= 1.0);
     }
 
     #[test]
