@@ -271,7 +271,14 @@ fn recording_clock_stays_visible_on_the_live_page() {
         s.listener_finished(Ok(()));
     });
     hex_records(&mut rt);
-    assert_eq!(element(&rt, "top-bar").rect[3], 48.0);
+    // No bar spans the window: the 48 px page header sits in the content column, and the
+    // sidebar beside it starts at the top.
+    let header = element(&rt, "page-header");
+    let nav = element(&rt, "nav");
+    assert!(rt.find("top-bar").is_none());
+    assert_eq!(header.rect[3], 48.0);
+    assert_eq!(nav.rect[1], 0.0);
+    assert!(header.rect[0] >= nav.rect[0] + nav.rect[2]);
     tap(&mut rt, "nav-new-menu");
     let record = element(&rt, "new-meeting");
     let reason = if cfg!(target_os = "linux") {
@@ -334,13 +341,8 @@ fn recording_clock_stays_visible_on_the_live_page() {
         .count();
     assert_eq!(toggles, 1);
     assert_eq!(element(&rt, "nav-search").fill, rune::Color::TRANSPARENT);
-    // The Meetings list owns the window chrome: its title row is the first row, and its
-    // controls stay clear of the Windows caption buttons.
     #[cfg(windows)]
-    {
-        let [x, _, w, _] = element(&rt, "meetings-title-more").rect;
-        assert!(x + w <= DEFAULT_SIZE.0 - rt.state.chrome.get().1 + 0.5);
-    }
+    assert!(element(&rt, "meetings-title-more").rect[1] >= 48.0);
     tap(&mut rt, "sidebar-toggle");
     rt.update(|s, _| s.hex.status = Some(Err(sidenote::hex_engine::HexError::Timeout)));
     rt.frame(0.2);

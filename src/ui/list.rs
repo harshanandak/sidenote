@@ -487,16 +487,10 @@ fn week_rail(meetings: usize, minutes: u64, open: usize, p: Palette) -> El {
         )
 }
 
-/// Whether the Meetings list shows its title row, which carries the window chrome; the
-/// archived short recordings list replaces the page and has none.
-pub fn has_title_row(s: &State) -> bool {
-    s.filter != Filter::Short
-}
-
 /// The home page: saved and pending meetings, newest day first, with the Ask bar floating over
 /// it. Ask here covers all of them.
 pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    if !has_title_row(s) {
+    if s.filter == Filter::Short {
         return short_recordings(s, p, narrow);
     }
     let side = if narrow { 16.0 } else { 40.0 };
@@ -516,8 +510,20 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .w_full()
         .max_w(1040.0)
         .px(side)
-        .pt(4.0)
+        .pt(if narrow { 8.0 } else { 20.0 })
         .pb(32.0)
+        .child(
+            row()
+                .key("meetings-title-row")
+                .w_full()
+                .items_center()
+                .gap(8.0)
+                .mb(10.0)
+                .child(text_title("Meetings", if narrow { 28.0 } else { 34.0 }, p))
+                .child(roles::meta(count, p))
+                .child(el().grow(1.0))
+                .child(title_more(s, k, p, layer)),
+        )
         .children((s.filter != Filter::All).then(|| {
             link("Show all meetings", p)
                 .key("filter-clear")
@@ -574,23 +580,13 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     }
     doc = doc.child(content);
     // "meeting-pane" is the key the Ask thread measures to size itself.
-    let title = row()
-        .key("meetings-title-row")
-        .w_full()
-        .items_center()
-        .gap(8.0)
-        .child(text_title("Meetings", if narrow { 28.0 } else { 34.0 }, p))
-        .child(roles::meta(count, p))
-        .child(el().grow(1.0))
-        .child(title_more(s, k, p, layer));
     let mut pane = col()
         .key("meeting-pane")
         .grow(1.0)
         .min_w(0.0)
         .min_h(0.0)
         .w_full()
-        .fill(p.bg)
-        .child(super::page_header(s, p, side, 1040.0, title));
+        .fill(p.bg);
     if let Some(note) = &s.notice {
         pane = pane.child(notice_bar(note, p));
     }

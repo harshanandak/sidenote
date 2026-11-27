@@ -528,21 +528,16 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
     pane
 }
 
-/// The open sidebar's first row: the mark, the fixed workspace name, a decorative caret that
-/// opens nothing, then the collapse and search buttons.
+/// The open sidebar's first row: the collapse and search buttons at the top left. While the
+/// sidebar is closed the page header draws the same two icons in the same place.
 fn workspace_row(p: Palette) -> El {
     row()
         .key("nav-workspace")
         .w_full()
         .h(48.0)
         .pl(6.0)
-        .pr(2.0)
         .gap(2.0)
         .items_center()
-        .child(logo().key("nav-logo"))
-        .child(roles::NAV.line("Sidenote", p.ink).pl(6.0))
-        .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.faint).a11y_hidden())
-        .child(el().grow(1.0))
         .child(collapse(p))
         .child(search(p))
 }
@@ -1138,15 +1133,16 @@ mod tests {
                     .find(|e| e.key.as_deref() == Some(key))
                     .unwrap_or_else(|| panic!("missing {key} at width {width}"))
             };
-            // Home owns the window chrome: no `top-bar` row, and the sidebar's first row sits
-            // beside the page header, so the menu opens below that row, not below a bar.
+            // No bar spans the window: the page header is the first row of the content column,
+            // beside the sidebar's own top row, and the menu opens below both.
             assert!(elements.iter().all(|e| e.key.as_deref() != Some("top-bar")));
             let header = find("page-header");
             let workspace = find("nav-workspace");
             let button = find("new-meeting");
             assert_eq!(header.rect[1], 0.0);
-            assert!(header.rect[3] >= crate::ui::TITLEBAR_H);
+            assert_eq!(header.rect[3], crate::ui::TITLEBAR_H);
             assert!(!button.path.starts_with(&header.path));
+            assert!(button.rect[1] >= header.rect[1] + header.rect[3]);
             assert!(button.rect[1] >= workspace.rect[1] + workspace.rect[3]);
             assert_eq!(button.label.as_deref(), Some(label.as_str()));
             assert!(!button.focusable);
@@ -1295,25 +1291,29 @@ mod tests {
                 "{key} is not in the page header"
             );
         }
-        assert!(
+        let count = |key| {
             elements
                 .iter()
-                .all(|e| e.key.as_deref() != Some("sidebar-toggle")),
-            "the open sidebar's header has no toggle"
-        );
+                .filter(|e| e.key.as_deref() == Some(key))
+                .count()
+        };
+        assert_eq!(count("sidebar-toggle"), 0, "no toggle outside the sidebar");
+        assert_eq!((count("top-bar"), count("nav-search")), (0, 1));
     }
 
-    /// A page that carries the window chrome, with the key of the title the header holds.
+    /// A page, with the key of an element that sits in or under its header.
     fn chrome_page(name: &str) -> (rune::Runtime<State>, &'static str) {
         let mut rt = new_meeting_runtime(1334.0, false);
         let title = match name {
             "home" => "home-greeting",
             "tasks" => "tasks-header",
+            "hex" => "nav-logo",
             _ => "meetings-title-row",
         };
         rt.update(|s, _| match name {
             "home" => s.go_home(),
             "tasks" => s.set_view(View::Tasks),
+            "hex" => s.open_hex(),
             _ => s.go_meetings(),
         });
         rt.settle_all();
@@ -1322,7 +1322,7 @@ mod tests {
     }
 
     #[test]
-    fn page_title_is_first_row_without_an_empty_top_bar() {
+    fn page_title_follows_a_header_row_with_no_top_bar() {
         for name in ["home", "tasks", "meetings"] {
             let (rt, title) = chrome_page(name);
             let elements = rt.elements();
@@ -1339,19 +1339,18 @@ mod tests {
             let header = find("page-header");
             let title = find(title);
             assert_eq!(header.rect[1], 0.0, "{name}: the header is the first row");
-            assert!(title.path.starts_with(&header.path), "{name}");
+            assert_eq!(header.rect[3], crate::ui::TITLEBAR_H, "{name}");
             assert!(
-                title.rect[1] < crate::ui::TITLEBAR_H,
-                "{name}: the title starts inside the first 48 px"
+                title.rect[1] >= header.rect[3],
+                "{name}: the title follows it"
             );
-            assert!(header.rect[3] >= crate::ui::TITLEBAR_H);
         }
     }
 
     #[test]
     fn header_row_keeps_window_drag_and_caption_inset() {
         const CAPTION: f32 = 138.0;
-        for name in ["home", "tasks", "meetings"] {
+        for name in ["home", "tasks", "meetings", "hex"] {
             let (mut rt, _) = chrome_page(name);
             let mut insets = rune::ChromeInsets::default();
             insets.trailing = CAPTION;
@@ -1371,8 +1370,8 @@ mod tests {
                     e.key
                 );
             }
-            // A press in the header's bare left padding moves the window.
-            let (x, y) = (header.rect[0] + 4.0, header.rect[1] + 4.0);
+            // A press in the header's empty middle moves the window.
+            let (x, y) = (header.rect[0] + header.rect[2] / 2.0, header.rect[1] + 24.0);
             rt.pointer_move(x, y);
             rt.pointer_down(x, y);
             assert_eq!(
@@ -1385,44 +1384,100 @@ mod tests {
     }
 
     #[test]
-    fn an_unconverted_page_keeps_the_top_bar_toggle_and_search() {
+    fn closed_sidebar_shows_one_top_left_toggle_and_no_top_bar() {
         let mut rt = new_meeting_runtime(1334.0, false);
-        rt.update(|s, _| {
-            s.config.features.people = true;
-            s.sidebar_open.set(false);
-            s.open_people();
-        });
+        rt.update(|s, _| s.sidebar_open.set(false));
         rt.settle_all();
         rt.frame(0.0);
         let elements = rt.elements();
-        let bar = elements
-            .iter()
-            .find(|e| e.key.as_deref() == Some("top-bar"))
-            .expect("People still draws the top bar");
-        assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
-        for key in ["sidebar-toggle", "nav-search"] {
-            let control = elements
-                .iter()
-                .find(|e| e.key.as_deref() == Some(key))
-                .unwrap_or_else(|| panic!("missing {key}"));
-            assert!(control.path.starts_with(&bar.path), "{key} is in the bar");
-        }
-        assert!(
+        let count = |key| {
             elements
                 .iter()
-                .all(|e| e.key.as_deref() != Some("page-header"))
-        );
+                .filter(|e| e.key.as_deref() == Some(key))
+                .count()
+        };
+        let find = |key| {
+            elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap()
+        };
+        assert_eq!(count("top-bar"), 0);
+        assert_eq!((count("sidebar-toggle"), count("nav-search")), (1, 1));
+        let (header, toggle) = (find("page-header"), find("sidebar-toggle"));
+        assert!(toggle.path.starts_with(&header.path) && toggle.rect[0] < 40.0);
     }
 
     #[test]
-    fn sidebar_logo_uses_the_new_mark() {
+    fn the_toggles_and_ctrl_backslash_open_and_close_the_sidebar() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        let shown =
+            |rt: &rune::Runtime<State>| (rt.find("nav-collapse"), rt.find("sidebar-toggle"));
+        assert!(shown(&rt).0.is_some() && shown(&rt).1.is_none());
+        tap(&mut rt, "nav-collapse");
+        assert!(!rt.state.sidebar_is_open() && shown(&rt).1.is_some());
+        tap(&mut rt, "sidebar-toggle");
+        assert!(rt.state.sidebar_is_open() && shown(&rt).0.is_some());
+        for open in [false, true] {
+            rt.update(|s, tx| {
+                let mods = rune::Mods {
+                    ctrl: true,
+                    ..Default::default()
+                };
+                let key = rune::Key::Command('\\');
+                assert!(crate::ui::on_key(s, &rune::KeyEvent { key, mods }, tx));
+            });
+            rt.settle_all();
+            rt.frame(0.0);
+            assert_eq!(rt.state.sidebar_is_open(), open);
+        }
+    }
+
+    #[test]
+    fn the_sidebar_top_is_the_same_on_every_page() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| {
+            s.config.features.people = true;
+            s.config.features.memory = true;
+        });
+        type Open = fn(&mut State);
+        let pages: [(&str, Open); 6] = [
+            ("home", |s| s.go_home()),
+            ("tasks", |s| s.set_view(View::Tasks)),
+            ("people", |s| s.open_people()),
+            ("companies", |s| s.companies.open = true),
+            ("memory", |s| s.open_memory()),
+            ("hex", |s| s.open_hex()),
+        ];
+        for (name, open) in pages {
+            rt.update(|s, _| {
+                s.companies.open = false;
+                open(s);
+            });
+            rt.settle_all();
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let find = |keys: &[&str]| {
+                elements
+                    .iter()
+                    .find(|e| keys.contains(&e.key.as_deref().unwrap_or_default()))
+                    .unwrap_or_else(|| panic!("{name}: missing {keys:?}"))
+            };
+            let (side, header) = (find(&["nav", "settings-sidebar"]), find(&["page-header"]));
+            assert!(elements.iter().all(|e| e.key.as_deref() != Some("top-bar")));
+            assert_eq!((side.rect[1], header.rect[1]), (0.0, 0.0), "{name}");
+        }
+    }
+
+    #[test]
+    fn hex_page_logo_uses_the_new_mark() {
         // S1a replaced the layered 20-unit mark with the crisp 18 px mark: a #1e1e1c square,
         // a white curve and an #e3aa55 tip, and no #bcb9b0 frame.
-        let elements = new_meeting_runtime(1334.0, false).elements();
+        let elements = chrome_page("hex").0.elements();
         let logo = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("nav-logo"))
-            .expect("sidebar logo");
+            .expect("Hex page logo");
         assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
         let prefix = format!("{}/", logo.path);
         let tints: Vec<_> = elements

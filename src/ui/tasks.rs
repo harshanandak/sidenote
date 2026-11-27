@@ -1799,6 +1799,7 @@ fn title_row(s: &State, k: &Kit, narrow: bool, p: Palette, layer: &mut Vec<El>) 
         .items_start()
         .gap(12.0)
         .justify_between()
+        .mb(16.0)
         .child(
             col()
                 .grow(1.0)
@@ -3743,28 +3744,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 ),
         );
     }
-    let side = if narrow {
-        16.0
-    } else if t.panel.is_some() {
-        24.0
-    } else {
-        30.0
-    };
-    // Centred over the list like the rows below it, unless the panel or the board takes the width.
-    let title_w = if t.panel.is_some() || t.layout == core::TasksLayout::Board {
-        4000.0
-    } else {
-        920.0
-    };
-    pane = pane
-        .child(super::page_header(
-            s,
-            p,
-            side,
-            title_w,
-            title_row(s, k, narrow, p, layer),
-        ))
-        .child(super::diary::return_link(s, p));
+    pane = pane.child(super::diary::return_link(s, p));
     let body = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     let body = match panel(s, k, p, overlay, layer) {
         None => body.child(list_column(s, k, p, narrow, list_w, layer)),
@@ -3830,7 +3810,7 @@ fn list_column(
         .w_full()
         .max_w(if wide_board { list_w } else { 920.0 })
         .px(side)
-        .pt(4.0)
+        .pt(if narrow { 8.0 } else { 30.0 })
         .pb(56.0)
         .children(if let super::nav::Filter::Project(name) = &s.filter {
             Some(
@@ -3843,6 +3823,7 @@ fn list_column(
         } else {
             None
         })
+        .child(title_row(s, k, narrow, p, layer))
         .children((!t.items.is_empty()).then(|| redo_older_control(s, k, p, layer)))
         .child(toolbar(s, k, p, list_w < 700.0, layer).mb(10.0))
         .child(board::filter_row(s, k, p, layer))
