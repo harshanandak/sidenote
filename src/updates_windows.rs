@@ -18,6 +18,10 @@ use velopack::{
     sources::{FileSource, UpdateSource},
 };
 
+#[cfg(test)]
+#[path = "updates_windows/listener_handoff.rs"]
+mod listener_handoff;
+
 // Velopack's HttpSource constructs an unbounded default agent internally.
 #[derive(Clone)]
 struct HttpSource {
@@ -618,6 +622,7 @@ enum ListenerTaskError {
     Disabled,
     UnmanagedAction,
     PermissionDenied,
+    TaskChanged,
 }
 impl ListenerTaskError {
     fn message(self) -> String {
@@ -638,6 +643,9 @@ impl ListenerTaskError {
             }
             Self::PermissionDenied => {
                 "Sidenote could not verify the meeting listener task's Windows identity."
+            }
+            Self::TaskChanged => {
+                "The meeting listener task changed during installation. Try again."
             }
         }
     }
@@ -698,7 +706,7 @@ if ($env:SIDENOTE_TASK_REGISTER -eq 'yes' -and !(Get-ScheduledTask -TaskPath '\'
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME -Action $action -Trigger @($logon, $retry) -Principal $principal -Settings $settings | Out-Null
 }
-function Read-ListenerTask {
+function Read-ListenerTask($expectedExe = $env:SIDENOTE_TASK_EXE, [switch]$Staged) {
     $t = Get-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME
     $a = @($t.Actions)
     $principal = $t.Principal.UserId
@@ -706,25 +714,38 @@ function Read-ListenerTask {
     else { $principal = ([Security.Principal.NTAccount]$principal).Translate([Security.Principal.SecurityIdentifier]).Value }
     if ($principal -ne $sid -or $t.Principal.LogonType -ne 'Interactive') { throw 'other_user' }
     if ($t.Principal.RunLevel -ne 'Limited') { throw 'elevated' }
-    if (!$t.Settings.Enabled) { throw 'disabled' }
-    if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
+    if (!$t.Settings.Enabled -and !$Staged) { throw 'disabled' }
+    if ($a.Count -ne 1 -or $a[0].Execute -ne $expectedExe -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
     return $t
 }
-if ($env:SIDENOTE_TASK_REGISTER -eq 'inspect') {
+function Open-ListenerTask {
+    # An exact lookup distinguishes a missing task from an inaccessible task.
+    try {
+        $folder.GetTask($env:SIDENOTE_TASK_NAME)
+    } catch {
+        if ($_.Exception.GetBaseException().HResult -ne -2147024894) { throw } # ERROR_FILE_NOT_FOUND
+    }
+}
+function Read-ListenerSecurity($registered, $flags) {
+    $security = $registered.GetSecurityDescriptor($flags)
+    $owner = [Security.AccessControl.RawSecurityDescriptor]::new($security).Owner
+    if (!$owner) { throw 'permission_denied' }
+    if ($owner.Value -ne $sid) { throw 'other_user' }
+    $security
+}
+if ($env:SIDENOTE_TASK_REGISTER -in @('inspect', 'handoff')) {
     try {
         $service = New-Object -ComObject 'Schedule.Service'
         $service.Connect()
         $folder = $service.GetFolder('\')
-        try { $registered = $folder.GetTask($env:SIDENOTE_TASK_NAME) }
-        catch {
-            # An exact lookup distinguishes a missing task from an inaccessible task.
-            if ($_.Exception.GetBaseException().HResult -eq -2147024894) { exit 0 } # ERROR_FILE_NOT_FOUND
-            throw
+        $registered = Open-ListenerTask
+        if ($env:SIDENOTE_TASK_REGISTER -eq 'handoff') {
+            Invoke-ListenerHandoff $registered
+            exit 0
         }
+        if (!$registered) { exit 0 }
         $null = Read-ListenerTask
-        $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
-        if (!$owner) { exit 35 }
-        if ($owner.Value -ne $sid) { exit 31 }
+        $null = Read-ListenerSecurity $registered 1
         exit 0
     } catch {
         switch ($_.Exception.Message) {
@@ -732,6 +753,7 @@ if ($env:SIDENOTE_TASK_REGISTER -eq 'inspect') {
             'elevated' { exit 32 }
             'disabled' { exit 33 }
             'unmanaged_action' { exit 34 }
+            'task_changed' { exit 36 }
             default { exit 35 }
         }
     }
@@ -785,7 +807,12 @@ if ($env:SIDENOTE_TASK_RUN -eq 'yes') {
 #[derive(Clone, Copy)]
 enum ListenerTaskMode {
     Preflight,
-    Recover { run: bool, register: bool },
+    #[cfg(test)]
+    Handoff,
+    Recover {
+        run: bool,
+        register: bool,
+    },
 }
 
 fn listener_task(mode: ListenerTaskMode) -> Result<(), ListenerTaskError> {
@@ -841,6 +868,8 @@ fn run_listener_task(
 ) -> Result<(), ListenerTaskError> {
     let (run, register) = match mode {
         ListenerTaskMode::Preflight => ("no", "inspect"),
+        #[cfg(test)]
+        ListenerTaskMode::Handoff => ("no", "handoff"),
         ListenerTaskMode::Recover { run, register } => (
             if run { "yes" } else { "no" },
             if register { "yes" } else { "no" },
@@ -876,12 +905,13 @@ fn run_listener_task(
     if status.success() {
         return Ok(());
     }
-    Err(if matches!(mode, ListenerTaskMode::Preflight) {
+    Err(if !matches!(mode, ListenerTaskMode::Recover { .. }) {
         match status.code() {
             Some(31) => ListenerTaskError::OtherUser,
             Some(32) => ListenerTaskError::Elevated,
             Some(33) => ListenerTaskError::Disabled,
             Some(34) => ListenerTaskError::UnmanagedAction,
+            Some(36) => ListenerTaskError::TaskChanged,
             _ => ListenerTaskError::PermissionDenied,
         }
     } else {
@@ -2166,10 +2196,11 @@ mod tests {
     }
 
     // Shadow the scheduler and process commands so tests cannot reach a real task or listener.
-    const MOCK_LISTENER_TASK: &str = r#"
+    pub(super) const MOCK_LISTENER_TASK: &str = r#"
 function New-Object {
     param([string]$ComObject)
     if ($ComObject -ne 'Schedule.Service') { throw 'Unexpected COM request' }
+    if (Get-Command New-HandoffFixture -CommandType Function -ErrorAction SilentlyContinue) { return New-HandoffFixture }
     $task = [PSCustomObject]@{}
     $task | Add-Member ScriptMethod GetSecurityDescriptor {
         param($Flags)
@@ -2190,8 +2221,9 @@ function New-Object {
     $service
 }
 function Get-ScheduledTask {
+    if (Get-Command Read-HandoffFixtureTask -CommandType Function -ErrorAction SilentlyContinue) { return Read-HandoffFixtureTask }
     if ($env:SIDENOTE_TEST_MISMATCH -eq 'absent' -and !$script:registered) { return }
-    $action = [PSCustomObject]@{ Execute = $env:SIDENOTE_TASK_EXE; Arguments = $env:SIDENOTE_TASK_ARGS }
+    $action = [PSCustomObject]@{ Execute = $env:SIDENOTE_TASK_EXE; Arguments = $env:SIDENOTE_TASK_ARGS; WorkingDirectory = $env:SIDENOTE_TEST_WORKING_DIR }
     $actions = @($action)
     $principal = [PSCustomObject]@{ UserId = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
     $settings = [PSCustomObject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew'; ExecutionTimeLimit = 'PT0S' }

@@ -469,5 +469,7 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "fd65f34562fe9511fe7b83f5a1382f815dd18122d7c1c72c303ad3499e1465e5"
+  "src/updates_windows.rs": "01d34628a7c818ed82062e88b8cccea35f57476686c31c023cae8ee6c2ef884b",
+
+  "src/updates_windows/listener_handoff_tests.rs": "b899d01ce1dcc0e79e593f058ffe535cf9b2a6521b209e4bc385cbdf4a28ea19"
 }
