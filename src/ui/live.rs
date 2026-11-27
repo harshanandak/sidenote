@@ -926,11 +926,16 @@ impl State {
         // The normal refresh keeps calling live_scanned, even when notes take hours.
     }
 
-    pub(super) fn cancel_missing_summary(&mut self, known: bool, incoming: &[CatalogMeeting]) {
+    pub(super) fn cancel_missing_summary(
+        &mut self,
+        known: bool,
+        incoming: &[CatalogMeeting],
+        failed: &[PathBuf],
+    ) {
         if let Some(id) = self.live.as_ref().and_then(Live::meeting_id) {
             let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
-            // The previous catalog came from an earlier good read, so it counts even when this
-            // read failed and is about to replace it with an empty one.
+            // A failed read never publishes presence, so the previous catalog counts even when
+            // this read failed and is about to replace it with an empty one.
             if (self.meetings.iter().any(in_catalog) || (known && incoming.iter().any(in_catalog)))
                 && let Some(live) = self.live.as_mut()
             {
@@ -945,8 +950,14 @@ impl State {
                         let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
                         let deleted = meeting_delete::suppressed_ids(&self.store.root);
                         let suppressed = deleted.is_ok_and(|ids| ids.contains(&id));
+                        // A folder this refresh could not read proves nothing about absence.
+                        let source = sidenote::core::meetings_dir().join(&id);
+                        let unread = failed
+                            .iter()
+                            .any(|p| source.starts_with(p) || p.starts_with(&source));
                         (live.source_seen || self.meetings.iter().any(in_catalog) || suppressed)
                             && !incoming.iter().any(in_catalog)
+                            && !unread
                     }))
         });
         if !missing {
@@ -2572,7 +2583,7 @@ mod writer_tests {
         // (a) A known refresh that lists the meeting keeps the wait.
         let mut state = waiting_state(store_root.path(), id);
         state.meetings = vec![entry.clone()];
-        state.cancel_missing_summary(true, std::slice::from_ref(&entry));
+        state.cancel_missing_summary(true, std::slice::from_ref(&entry), &[]);
         assert!(
             state.live.is_some(),
             "a known refresh listing the meeting must not cancel the wait"
@@ -2582,7 +2593,7 @@ mod writer_tests {
 
         // (b) A failed refresh with an empty catalog does not cancel.
         state.meetings = Vec::new();
-        state.cancel_missing_summary(false, &[]);
+        state.cancel_missing_summary(false, &[], &[]);
         assert!(
             state.live.is_some(),
             "a failed catalog read must not cancel the wait"
@@ -2590,7 +2601,7 @@ mod writer_tests {
         assert!(!state.live.as_ref().unwrap().source_lost);
 
         // (c) The next known refresh without the meeting cancels the wait.
-        state.cancel_missing_summary(true, &[]);
+        state.cancel_missing_summary(true, &[], &[]);
         assert!(
             state.live.is_none(),
             "a known refresh missing a previously seen source must cancel the wait"
@@ -2599,7 +2610,7 @@ mod writer_tests {
         // A source that was never seen does not cancel.
         let mut unseen = waiting_state(store_root.path(), id);
         unseen.meetings = Vec::new();
-        unseen.cancel_missing_summary(true, &[]);
+        unseen.cancel_missing_summary(true, &[], &[]);
         assert!(
             unseen.live.is_some(),
             "a source that was never seen must not cancel the wait"
@@ -2610,18 +2621,33 @@ mod writer_tests {
         let mut early = waiting_state(store_root.path(), id);
         early.live.as_mut().unwrap().phase = Phase::Recording;
         early.meetings = vec![entry.clone()];
-        early.cancel_missing_summary(true, std::slice::from_ref(&entry));
+        early.cancel_missing_summary(true, std::slice::from_ref(&entry), &[]);
         early.live.as_mut().unwrap().phase = Phase::Making;
-        early.cancel_missing_summary(false, &[]);
+        early.cancel_missing_summary(false, &[], &[]);
         assert!(
             early.live.is_some(),
             "a failed catalog read must not cancel the wait"
         );
         early.meetings = Vec::new();
-        early.cancel_missing_summary(true, &[]);
+        early.cancel_missing_summary(true, &[], &[]);
         assert!(
             early.live.is_none(),
             "a source listed before Stop and lost during a failed read must cancel the wait"
+        );
+
+        // A good read that could not open the source folder does not cancel a seen source.
+        let mut unread = waiting_state(store_root.path(), id);
+        unread.live.as_mut().unwrap().source_seen = true;
+        let folder = sidenote::core::meetings_dir().join(id);
+        unread.cancel_missing_summary(true, &[], std::slice::from_ref(&folder));
+        assert!(
+            unread.live.is_some(),
+            "a source folder the refresh could not read must not cancel the wait"
+        );
+        unread.cancel_missing_summary(true, &[], &[sidenote::core::meetings_dir()]);
+        assert!(
+            unread.live.is_some(),
+            "an unreadable meetings folder must not cancel the wait"
         );
     }
 }
