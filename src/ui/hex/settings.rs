@@ -2747,7 +2747,8 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         grouping_current,
     )
     .placeholder("Unavailable")
-    .disabled(grouping_failed)
+    // A queued Group menu save would land after this direct write and undo it.
+    .disabled(grouping_failed || s.edit_busy)
     .on_choose(|s: &mut State, value: &str, _| {
         let Some(by) = TASK_GROUPINGS
             .into_iter()
@@ -4700,6 +4701,21 @@ mod tests {
             Some("Could not save Tasks settings. Try again.")
         );
         assert!(rt.state.hex.shell.saved.is_none());
+    }
+
+    #[test]
+    fn work_tasks_grouping_waits_for_a_queued_save() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        state.tasks.grouping_loaded = true;
+        state.edit_busy = true;
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        tap_key(&mut rt, "work-tasks-grouping-select-trigger");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(rt.state.hex.select_open, None);
+        assert_eq!(rt.state.tasks.grouping, TaskGrouping::Status);
+        assert!(!root.path().join("local/task-grouping.json").exists());
     }
 
     #[test]
