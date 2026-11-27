@@ -1371,19 +1371,30 @@ fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
 }
 
 const INSTALL_LISTENER_ERROR: &str = "Sidenote could not restart its meeting listener after installation. Reopen Sidenote to retry, or reinstall it if this continues.";
-// Velopack terminates the fast hook after 30 seconds. Leave time to stop children and save status.
+// Velopack 0.0.1298 allows 30 s for Setup (commands/install.rs:190)
+// and 15 s for the update hook (commands/apply_windows_impl.rs:155).
 const INSTALL_HOOK_WORK_LIMIT: Duration = Duration::from_secs(25);
+const UPDATE_HOOK_WORK_LIMIT: Duration = Duration::from_secs(11);
 const INSTALL_HOOK_RECOVERY_RESERVE: Duration = Duration::from_secs(4);
 
+enum ReconciliationBudget {
+    InstallOrRecovery,
+    FastUpdate,
+}
+
 pub fn after_install() -> Result<(), String> {
-    run_install_hook()
+    run_install_hook(ReconciliationBudget::InstallOrRecovery)
 }
 
 pub fn after_update() -> Result<(), String> {
-    run_install_hook()
+    run_install_hook(ReconciliationBudget::InstallOrRecovery)
 }
 
-fn run_install_hook() -> Result<(), String> {
+pub fn after_update_fast() -> Result<(), String> {
+    run_install_hook(ReconciliationBudget::FastUpdate)
+}
+
+fn run_install_hook(budget: ReconciliationBudget) -> Result<(), String> {
     let started = Instant::now();
     if !installed() {
         return Ok(());
@@ -1391,6 +1402,7 @@ fn run_install_hook() -> Result<(), String> {
     let result = reconcile_installed(
         &directory(),
         started,
+        budget,
         listener_task,
         |deadline| complete_pipeline_install_until(Some(deadline)),
         recover_listener_until,
@@ -1414,11 +1426,16 @@ fn run_install_hook() -> Result<(), String> {
 fn reconcile_installed(
     directory: &Path,
     started: Instant,
+    budget: ReconciliationBudget,
     task: impl Fn(ListenerTaskMode, Instant) -> Result<(), ListenerTaskError>,
     pipeline: impl FnOnce(Instant) -> Result<(), String>,
     listener: impl FnOnce(Instant) -> Result<(), String>,
 ) -> Result<bool, String> {
-    let deadline = started + INSTALL_HOOK_WORK_LIMIT;
+    let deadline = started
+        + match budget {
+            ReconciliationBudget::InstallOrRecovery => INSTALL_HOOK_WORK_LIMIT,
+            ReconciliationBudget::FastUpdate => UPDATE_HOOK_WORK_LIMIT,
+        };
     let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
     reconcile_install(
         directory,
@@ -2434,12 +2451,15 @@ $script:migrated = $false
             let result = reconcile_installed(
                 root.path(),
                 Instant::now(),
+                ReconciliationBudget::InstallOrRecovery,
                 |mode, _| {
                     let task = if scenario == "changed-under-lock" {
-                        if lock.exists() {
-                            "foreign-owner"
-                        } else {
-                            "none"
+                        match OpenOptions::new().write(true).open(&lock) {
+                            Err(error) if error.raw_os_error() == Some(32) => "foreign-owner",
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => "none",
+                            other => {
+                                panic!("expected an absent or exclusively held lock: {other:?}")
+                            }
                         }
                     } else {
                         scenario
@@ -2475,6 +2495,7 @@ $script:migrated = $false
                 reconcile_installed(
                     root.path(),
                     Instant::now(),
+                    ReconciliationBudget::InstallOrRecovery,
                     |mode, _| {
                         probes.set(probes.get() + 1);
                         mock_install_task(root.path(), scenario, mode)
@@ -2526,6 +2547,15 @@ $script:migrated = $false
 
     #[test]
     fn reconciliation_shares_one_deadline_and_reserves_recovery_time() {
+        assert_reconciliation_budget(ReconciliationBudget::InstallOrRecovery, 25);
+    }
+
+    #[test]
+    fn update_reconciliation_fits_velopack_hook_deadline() {
+        assert_reconciliation_budget(ReconciliationBudget::FastUpdate, 11);
+    }
+
+    fn assert_reconciliation_budget(budget: ReconciliationBudget, work_seconds: u64) {
         let root = tempfile::tempdir().unwrap();
         let started = Instant::now();
         let clock = std::cell::Cell::new(started);
@@ -2536,6 +2566,7 @@ $script:migrated = $false
         let result = reconcile_installed(
             root.path(),
             started,
+            budget,
             |_, deadline| {
                 spend(TASK_COMMAND_TIMEOUT, deadline);
                 Ok(())
@@ -2551,7 +2582,7 @@ $script:migrated = $false
             },
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
-        assert_eq!(clock.get() - started, Duration::from_secs(25));
+        assert_eq!(clock.get() - started, Duration::from_secs(work_seconds));
         assert!(!root.path().join("install-hook.complete").exists());
     }
 

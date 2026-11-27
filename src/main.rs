@@ -91,6 +91,9 @@ fn main() {
             .set_auto_apply_on_startup(false)
             .on_after_install_fast_callback(|_| {
                 if let Err(error) = sidenote::updates::after_install() {
+                    sidenote::listener::log_process(&format!(
+                        "after-install hook failed reason={error}"
+                    ));
                     eprintln!("{error}");
                     std::process::exit(1);
                 }
@@ -99,7 +102,10 @@ fn main() {
                 let _ = sidenote::updates::after_update();
             })
             .on_after_update_fast_callback(|_| {
-                if let Err(error) = sidenote::updates::after_update() {
+                if let Err(error) = sidenote::updates::after_update_fast() {
+                    sidenote::listener::log_process(&format!(
+                        "after-update hook failed reason={error}"
+                    ));
                     eprintln!("{error}");
                     std::process::exit(1);
                 }
