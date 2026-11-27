@@ -777,6 +777,9 @@ impl State {
     }
 
     pub fn focus_search(&mut self) {
+        // An open Ask menu or model picker would sit above the search and keep its focus.
+        self.ask_settings.scope_open = false;
+        self.runner_open = false;
         if self.annotations.open {
             self.reset_navigation();
         }
@@ -2188,7 +2191,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
     let tasks_view = s.view == tasks::View::Tasks;
     let ask_typing = tx.focused() == Some("ask-input");
     let typing = if s.annotations.open {
-        false
+        ask_typing
     } else if tasks_view {
         ask_typing || s.tasks.typing() || s.search.focused
     } else if s.on_check() || s.on_memory() || s.on_hex() {
@@ -2516,7 +2519,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else if people_view {
         people::pane(s, &k, p, narrow, &mut layer)
     } else if s.annotations.open {
-        annotations::pane(s, p, narrow)
+        annotations::pane(s, &k, p, narrow, &mut layer)
     } else if on_check {
         check::pane(s, &k, p, narrow, &mut layer)
     } else if on_memory {

@@ -2209,7 +2209,7 @@ fn setting_row(
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    settings::pane(s, k, p, narrow, layer)
+    settings::pane(s, k, p, narrow, layer).child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 pub fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
