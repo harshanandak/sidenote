@@ -3,7 +3,7 @@
 param(
     [Parameter(Mandatory, ParameterSetName = 'Test')][switch]$SelfTest,
     [Parameter(Mandatory, ParameterSetName = 'Package')][string]$PackageDirectory,
-    [Parameter(ParameterSetName = 'Package')][string]$ExpectedTag
+    [Parameter(Mandatory, ParameterSetName = 'Package')][string]$ExpectedTag
 )
 
 Set-StrictMode -Version Latest
@@ -35,6 +35,11 @@ function Copy-VerifiedPackageFiles([string]$Directory, [string]$Feed) {
         Write-Output "Verified SHA256SUMS for $name ($hash)."
     }
     if (-not $names.Count) { throw 'SHA256SUMS is empty.' }
+    # Publishing uploads every file in the directory, so each one must be covered.
+    $unlisted = @(Get-ChildItem -LiteralPath $Directory -Force | Where-Object {
+        $_.Name -cne 'SHA256SUMS' -and -not $names.Contains($_.Name)
+    })
+    if ($unlisted.Count) { throw "Unlisted package file: $($unlisted[0].Name)." }
 }
 
 function Get-ProofPackage([string]$Feed, [string]$Tag) {
@@ -305,6 +310,15 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         }
         if (-not $rejected) { throw 'Package checksum verification accepted invalid input.' }
     }
+    [IO.File]::WriteAllText($sum, $entry)
+    [IO.File]::WriteAllText((Join-Path $packages 'stray.txt'), 'Unlisted bytes')
+    $rejected = $false
+    try { Copy-VerifiedPackageFiles $packages (Join-Path $Root 'verified') | Out-Null }
+    catch {
+        if ($_.Exception.Message -cne 'Unlisted package file: stray.txt.') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'Package checksum verification accepted an unlisted file.' }
     Write-Output 'Release update fixture, report and refusal self-test passed.'
     Write-Output 'Release package checksum self-test passed.'
 }
