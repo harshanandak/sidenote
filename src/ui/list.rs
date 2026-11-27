@@ -154,7 +154,14 @@ impl State {
 /// 2px page-background border, the first letter upcased in 10/600, labelled with the full
 /// name. Each circle after the first pulls left 5px so the row reads as a stack.
 fn row_avatar(name: &str, overlap: bool, p: Palette) -> El {
-    let initial: String = name.chars().take(1).flat_map(char::to_uppercase).collect();
+    // The first letter or digit, so leading spaces or symbols do not leave a blank circle.
+    let initial: String = name
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .or_else(|| name.trim().chars().next())
+        .into_iter()
+        .flat_map(char::to_uppercase)
+        .collect();
     let mut avatar = col()
         .size(20.0, 20.0)
         .radius(10.0)
@@ -173,11 +180,18 @@ fn row_avatar(name: &str, overlap: bool, p: Palette) -> El {
     avatar
 }
 
-/// The outcome counts under a meeting row: decisions, tasks and questions, then the peer
-/// device. Empty when the meeting has nothing to count and no device.
+/// The line beside the initials: the meeting kind when nobody is named, the peer device,
+/// then decisions, tasks and questions. Empty when there is nothing to say.
 fn row_counts(m: &Meeting) -> Option<String> {
     let decided = m.points().filter(|p| p.kind == "decided").count();
     let mut parts = Vec::new();
+    if m.summary.people.is_empty() && !m.summary.kind.trim().is_empty() {
+        parts.push(flat(&m.summary.kind));
+    }
+    // The device goes first so a phone-width wrap never pushes it out of view.
+    if let Some(device) = &m.device {
+        parts.push(format!("from {device}"));
+    }
     if decided > 0 {
         parts.push(plural(decided, "decision", "decisions"));
     }
@@ -187,10 +201,12 @@ fn row_counts(m: &Meeting) -> Option<String> {
     if !m.summary.to_settle.is_empty() {
         parts.push(plural(m.summary.to_settle.len(), "question", "questions"));
     }
-    if let Some(device) = &m.device {
-        parts.push(format!("from {device}"));
-    }
     (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+}
+
+/// Saved text on one line: line breaks and runs of spaces become single spaces.
+fn flat(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The people-and-outcomes row under a meeting title: up to 3 initial circles, "+n" for
@@ -215,7 +231,8 @@ fn row_bottom(m: &Meeting, p: Palette) -> Option<El> {
         bottom = bottom.child(roles::META.line(format!("+{extra}"), p.faint));
     }
     if let Some(counts) = counts {
-        bottom = bottom.child(roles::META.line(counts, p.soft));
+        // Wraps rather than cuts off, so every count stays readable at phone width.
+        bottom = bottom.child(roles::META.wrap(counts, p.soft).grow(1.0).min_w(0.0));
     }
     // With the column's 2px gap this sits 4px below the line above.
     Some(bottom.mt(2.0))
@@ -267,7 +284,7 @@ fn home_row(
         .grow(1.0)
         .min_w(0.0)
         .gap(2.0)
-        .child(roles::TITLE.line(&m.title, p.ink));
+        .child(roles::TITLE.line(flat(&m.title), p.ink));
     match status {
         Some(status) => {
             text_col = text_col.child(roles::META.wrap(
@@ -283,7 +300,7 @@ fn home_row(
         }
         None => {
             if let Some(first) = m.summary.context.iter().find(|s| !s.trim().is_empty()) {
-                text_col = text_col.child(roles::SMALL.line(first, p.soft));
+                text_col = text_col.child(roles::SMALL.line(flat(first), p.body));
             }
         }
     }
@@ -1055,28 +1072,7 @@ mod tests {
     #[test]
     fn row_counts_list_decisions_tasks_and_questions() {
         let meeting = fixture();
-        let decided = meeting.points().filter(|p| p.kind == "decided").count();
-        let mut parts = Vec::new();
-        if decided > 0 {
-            parts.push(plural(decided, "decision", "decisions"));
-        }
-        if !meeting.summary.todo.is_empty() {
-            parts.push(plural(meeting.summary.todo.len(), "task", "tasks"));
-        }
-        if !meeting.summary.to_settle.is_empty() {
-            parts.push(plural(
-                meeting.summary.to_settle.len(),
-                "question",
-                "questions",
-            ));
-        }
-        let expected = parts.join(" \u{b7} ");
-        assert!(
-            expected.contains("decision")
-                && expected.contains("task")
-                && expected.contains("question"),
-            "the fixture has all three outcome kinds"
-        );
+        let expected = "3 decisions \u{b7} 4 tasks \u{b7} 1 question";
         let mut rt = render_home(home_state(vec![meeting]), 390.0);
         rt.settle_all();
         rt.frame(0.0);
@@ -1086,6 +1082,58 @@ mod tests {
                 .any(|e| e.text.as_deref() == Some(expected.as_str())),
             "the row counts read {expected}"
         );
+    }
+
+    #[test]
+    fn row_counts_wrap_with_the_device_first_at_phone_width() {
+        let mut meeting = fixture();
+        meeting.device = Some("Pixel 9".into());
+        let expected = "from Pixel 9 \u{b7} 3 decisions \u{b7} 4 tasks \u{b7} 1 question";
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let counts = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some(expected))
+            .unwrap_or_else(|| panic!("the row counts read {expected}"));
+        // META is 17px a line: a one-line box would be cut off at this width.
+        assert!(
+            counts.rect[3] > 30.0,
+            "the counts wrap onto a second line, got height {}",
+            counts.rect[3]
+        );
+    }
+
+    #[test]
+    fn row_shows_the_meeting_kind_when_nobody_is_named() {
+        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry standup");
+        meeting.summary.kind = "Team meeting".into();
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Team meeting"))
+        );
+    }
+
+    #[test]
+    fn row_puts_saved_line_breaks_on_one_line() {
+        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry\nstandup");
+        meeting.summary.context = vec!["Kickoff\nBudget".into()];
+        meeting.summary.people = vec!["  ada".into()];
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        for shown in ["Invented blueberry standup", "Kickoff Budget", "A"] {
+            assert!(
+                elements.iter().any(|e| e.text.as_deref() == Some(shown)),
+                "the row shows {shown}"
+            );
+        }
     }
 
     #[test]
