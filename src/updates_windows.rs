@@ -1228,7 +1228,11 @@ pub fn window_start(publish: impl Fn(Phase)) -> Result<(), String> {
         },
         || {
             if !listener_stopping() && pending.is_some() {
-                apply(true, Vec::new(), publish)?;
+                apply(true, Vec::new(), publish).inspect_err(|error| {
+                    if let Ok(guard) = InstallGuard::acquire(&directory()) {
+                        save_apply_error(&guard, error);
+                    }
+                })?;
             }
             Ok(())
         },
@@ -1662,14 +1666,15 @@ pub fn apply(
     }
     let result = apply_ready(restart_args, publish);
     if let (Some(guard), Err(error)) = (&guard, &result) {
-        let status = Status {
-            phase: Phase::Error,
-            error: Some(error.clone()),
-            ..read_status(&directory)
-        };
-        let _ = guard.save(&status, report);
+        save_apply_error(guard, error);
     }
     result
+}
+fn save_apply_error(guard: &InstallGuard<'_>, error: &str) {
+    let mut status = read_status(guard.directory);
+    status.phase = Phase::Error;
+    status.error = Some(error.into());
+    let _ = guard.save(&status, report);
 }
 fn apply_ready(restart_args: Vec<String>, mut publish: impl FnMut(Phase)) -> Result<(), String> {
     publish(Phase::Preparing);

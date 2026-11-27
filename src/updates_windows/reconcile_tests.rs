@@ -66,12 +66,8 @@ fn hook_lock_only_sharing_violation_is_busy() {
         InstallGuard::acquire(&not_directory),
         Err(InstallAdmission::Io(_))
     ));
-    assert!(matches!(
-        InstallAdmission::from(io::Error::from_raw_os_error(5)),
-        InstallAdmission::Io(_)
-    ));
-    assert!(matches!(
-        InstallAdmission::from(io::Error::from_raw_os_error(33)),
-        InstallAdmission::Io(_)
-    ));
+    for code in [5, 33] {
+        let admission = InstallAdmission::from(io::Error::from_raw_os_error(code));
+        assert!(matches!(admission, InstallAdmission::Io(_)));
+    }
 }
