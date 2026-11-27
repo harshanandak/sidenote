@@ -4,6 +4,7 @@ on:
   push:
     tags: ['v[0-9]*']
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - .github/workflows/release.yml
       - tools/release_ci.ps1
@@ -39,24 +40,21 @@ permissions:
   contents: read
 
 # Only a PR's newest head needs its proof; tag pushes and manual runs never cancel.
+# A label change other than release-proof does no work and cancels nothing.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof') && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof') }}
 
 jobs:
   package:
-    name: ${{ matrix.task == 'package' && 'Package Windows release artifacts' || 'Prove clean Windows install and update' }}
-    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published
+    name: Package Windows release artifacts
+    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof')
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
-    strategy:
-      fail-fast: false
-      matrix:
-        task: ${{ fromJSON(github.event_name == 'pull_request' && '["package","update-proof"]' || '["package"]') }}
-    env:
+    env: &release-env
       RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_CHANNEL: ${{ inputs.channel }}
@@ -66,19 +64,18 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Resolve release identity
+      - &identity
+        name: Resolve release identity
         id: identity
         shell: pwsh
         run: ./tools/release_ci.ps1 -ValidateOnly
       - name: Test release contract and validate this build
-        if: matrix.task == 'package'
         shell: pwsh
         run: |
           pwsh -NoProfile -File tools/release_ci.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Release contract self-test failed.' }
           ./tools/release_ci.ps1 -ValidateOnly
       - name: Test the package import check
-        if: matrix.task == 'package'
         shell: pwsh
         run: python -I tools/check_package_imports.py --self-test
       - &rust
@@ -110,7 +107,6 @@ jobs:
           "RUST_GNU_BIN=$gnuBin" | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
       - name: Build and validate Windows packages
         id: package
-        if: matrix.task == 'package'
         shell: pwsh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
@@ -119,11 +115,15 @@ jobs:
           # Spectre injects ANSI into vpk help on Actions, including when the packer captures it.
           $env:GITHUB_ACTIONS = $null
           ./tools/release_ci.ps1 -OutputDirectory $env:RELEASE_ASSETS
+      - name: Verify Windows DLL imports in the PR packages
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: python -I tools/check_package_imports.py (Join-Path $env:RUNNER_TEMP 'sidenote-release')
       # One name per run: "Re-run failed jobs" keeps this artifact for the publish jobs,
       # and a full re-run replaces it.
       - name: Upload validated packages
         id: upload
-        if: matrix.task == 'package' && steps.package.outcome == 'success'
+        if: steps.package.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sidenote-windows-${{ github.event_name }}-${{ steps.package.outputs.tag }}
@@ -132,8 +132,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  update-proof:
+    name: Prove clean Windows install and update
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release-proof') && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env: *release-env
+    steps:
+      - *checkout
+      - *identity
+      - *rust
+      - *msys2
+      - *dotnet
+      - *velopack
       - name: Prove installed updates against an isolated feed
-        if: matrix.task == 'update-proof'
         shell: pwsh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
@@ -147,7 +160,9 @@ jobs:
     needs: package
     if: >-
       ${{ !cancelled() &&
-      (inputs.prove_published || (github.event_name != 'workflow_dispatch' && needs.package.result == 'success')) }}
+      (inputs.prove_published ||
+      (github.event_name != 'workflow_dispatch' && needs.package.result == 'success' &&
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-proof')))) }}
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
