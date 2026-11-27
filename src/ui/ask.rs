@@ -914,7 +914,7 @@ pub fn overlay_with(
                 super::widgets::button(
                     if s.check_back {
                         "\u{2039} Back to the check"
-                    } else if s.cite_back.is_some() {
+                    } else if !s.citation_returns.is_empty() {
                         "\u{2039} Back to your answer"
                     } else {
                         "\u{2191} Back to the summary point"

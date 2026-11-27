@@ -807,7 +807,7 @@ fn transcript_panel(s: &State, k: &Kit, m: &Meeting, overlay: bool, p: Palette) 
                     "Back to Memory"
                 } else if s.check_back {
                     "Back to the check"
-                } else if s.cite_back.is_some() {
+                } else if !s.citation_returns.is_empty() {
                     "Back to your answer"
                 } else {
                     "Back to the summary point"
