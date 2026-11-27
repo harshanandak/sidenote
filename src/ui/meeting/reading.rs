@@ -964,8 +964,7 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
 
 pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;
 
-/// The surface's clip snaps to whole pixels, so a button flush with its bottom edge can lose a
-/// fraction of a pixel; this keeps it clear.
+/// The surface clip snaps to whole pixels; this keeps its bottom button clear of it.
 const SURFACE_EDGE: f32 = 1.0;
 
 pub fn transcript_height(s: &State) -> f32 {
