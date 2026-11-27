@@ -184,16 +184,34 @@ function Wait-Proof([scriptblock]$Probe, [string]$Failure) {
     throw $Failure
 }
 
+function Assert-RecoveryState([string]$Updates, [string]$Version, [switch]$Canonical) {
+    $markers = @('update-listener.stop', 'update-listener.resume', 'pipeline-install.pending')
+    if ($Canonical) { $markers += 'install-hook.complete' }
+    foreach ($marker in $markers) {
+        if (Test-Path -LiteralPath (Join-Path $Updates $marker)) { throw "Unexpected marker: $marker." }
+    }
+    if ($Canonical) {
+        try { $state = Read-Json (Join-Path $Updates 'install-state.json') }
+        catch { throw 'Install state is missing or unreadable.' }
+        if ($state -isnot [Collections.IDictionary] -or
+            $state['schema_version'] -isnot [long] -or $state['schema_version'] -ne 1 -or
+            $state['app_version'] -isnot [string] -or $state['app_version'] -cne $Version -or
+            $state['listener_work'] -isnot [string] -or $state['listener_work'] -cne 'Complete' -or
+            $state['pipeline_work'] -cnotin @('Complete', 'NotConfigured')) {
+            throw "Install state did not complete for $Version."
+        }
+        return
+    }
+    if ([IO.File]::ReadAllText((Join-Path $Updates 'install-hook.complete')) -cne $Version) {
+        throw "Install hook did not complete for $Version."
+    }
+}
+
 function Assert-Fixture($Fixture, [string]$Version) {
     foreach ($entry in $Fixture.Sentinels.GetEnumerator()) {
         if ((Get-FileHash -LiteralPath $entry.Key).Hash -ne $entry.Value) { throw 'Synthetic fixture content changed.' }
     }
-    foreach ($marker in @('update-listener.stop', 'update-listener.resume', 'pipeline-install.pending')) {
-        if (Test-Path -LiteralPath (Join-Path $Fixture.Updates $marker)) { throw "Unexpected marker: $marker." }
-    }
-    if ([IO.File]::ReadAllText((Join-Path $Fixture.Updates 'install-hook.complete')) -cne $Version) {
-        throw "Install hook did not complete for $Version."
-    }
+    Assert-RecoveryState $Fixture.Updates $Version
     $pointer = Read-Json (Join-Path $Fixture.Scripts '.pipeline-current.json')
     $manifestPath = Join-Path $Fixture.Scripts ".pipeline-generations/$($pointer.current.generation)/.generation.json"
     if ((Get-FileHash -LiteralPath $manifestPath).Hash -ine $pointer.current.manifest_sha256 -or
@@ -249,7 +267,57 @@ function Assert-PersistedChecksumRefusal($Fixture, [string]$ReportPath, [int]$Ap
     Assert-ChecksumRefusal $exitCode (Read-Json $ReportPath).status
 }
 
+function Assert-RecoveryRefused([scriptblock]$Probe, [string]$Expected) {
+    try { & $Probe }
+    catch {
+        if ($_.Exception.Message -cne $Expected) { throw }
+        return
+    }
+    throw "Recovery proof accepted invalid evidence. Expected: $Expected"
+}
+
+function Test-RecoveryState([string]$Root) {
+    $updates = [IO.Directory]::CreateDirectory((Join-Path $Root 'recovery')).FullName
+    $version = '0.1.0'
+    $receipt = Join-Path $updates 'install-hook.complete'
+    [IO.File]::WriteAllText($receipt, $version)
+    Assert-RecoveryState $updates $version
+    Assert-RecoveryRefused { Assert-RecoveryState $updates '0.1.1' } 'Install hook did not complete for 0.1.1.'
+    Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } 'Unexpected marker: install-hook.complete.'
+    [IO.File]::Delete($receipt)
+
+    $record = Join-Path $updates 'install-state.json'
+    $unreadable = 'Install state is missing or unreadable.'
+    $incomplete = "Install state did not complete for $version."
+    Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
+    [IO.File]::WriteAllText($record, '{')
+    Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
+    $state = @{ schema_version = 1; app_version = $version; listener_work = 'Complete'; pipeline_work = 'Complete' }
+    foreach ($case in @(
+        @('schema_version', 2), @('schema_version', '1'), @('app_version', '0.1.1'),
+        @('listener_work', 'Pending'), @('pipeline_work', 'Pending'), @('pipeline_work', 'Unknown')
+    )) {
+        $invalid = $state.Clone()
+        $invalid[$case[0]] = $case[1]
+        $invalid | ConvertTo-Json -Compress | Set-Content -LiteralPath $record
+        Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $incomplete
+    }
+    foreach ($outcome in @('Complete', 'NotConfigured')) {
+        $state.pipeline_work = $outcome
+        $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $record
+        Assert-RecoveryState $updates $version -Canonical
+    }
+    foreach ($marker in @('install-hook.complete', 'update-listener.resume', 'pipeline-install.pending', 'update-listener.stop')) {
+        $path = Join-Path $updates $marker
+        [IO.File]::WriteAllText($path, 'synthetic')
+        Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } "Unexpected marker: $marker."
+        [IO.File]::Delete($path)
+    }
+    Write-Output 'Legacy and canonical recovery proof self-test passed.'
+}
+
 function Invoke-SelfTest([string]$Root, [string]$Source) {
+    Test-RecoveryState $Root
     $fixture = New-ProofFixture $Root $Source
     if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates) -or
         (Test-Path -LiteralPath $fixture.Feed) -or $fixture.Env.SIDENOTE_PEERS_DIR -eq $fixture.Peers -or

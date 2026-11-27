@@ -4,16 +4,14 @@ use PipelineCompletion::Complete;
 fn hook(
     root: &Path,
     listener: impl FnOnce(Instant) -> Result<(), String>,
-    make_report: impl FnOnce(&Status) -> serde_json::Value,
+    make_report: impl Fn(&Status) -> serde_json::Value,
 ) -> Result<bool, String> {
     reconcile_installed(
         root,
         Instant::now(),
         ReconciliationBudget::InstallOrRecovery,
         |_, _| Ok(()),
-        |guard, _| {
-            complete_pipeline_install(guard, || Ok(Complete), |status| serde_json::json!(status))
-        },
+        |_| Ok(Complete),
         listener,
         make_report,
     )
@@ -197,7 +195,7 @@ fn pipeline_failure_listener_success_allows_newer_update() {
         Instant::now(),
         ReconciliationBudget::InstallOrRecovery,
         |_, _| Ok(()),
-        |_, _| Err(PIPELINE_INSTALL_ERROR.into()),
+        |_| Err(PIPELINE_INSTALL_ERROR.into()),
         |_| Ok(()),
         report,
     )
