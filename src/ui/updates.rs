@@ -7,7 +7,10 @@ use super::{
 use rune::{El, col, el, row};
 use sidenote::core::{CHANNEL, Channel};
 use sidenote::listener::heartbeat;
-use sidenote::updates::{self, Phase, Status};
+use sidenote::updates::{self, Phase, Status, WindowStart};
+use std::time::Duration;
+
+const LISTENER_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Updates {
     pub status: Status,
@@ -24,6 +27,7 @@ pub struct Updates {
     notes_open: bool,
     scene: bool,
     applying: bool,
+    reconcile_pending: bool,
 }
 impl Default for Updates {
     fn default() -> Self {
@@ -42,10 +46,20 @@ impl Default for Updates {
             notes_open: false,
             scene: false,
             applying: false,
+            reconcile_pending: false,
         }
     }
 }
 impl Updates {
+    fn worker_busy(&self) -> bool {
+        self.listener_busy || self.listener_probe_busy || self.applying
+    }
+    fn reconcile_retry_due(&self, elapsed: Duration) -> bool {
+        self.reconcile_pending && elapsed >= LISTENER_INTERVAL && !self.worker_busy()
+    }
+    fn can_apply(&self) -> bool {
+        self.status.phase == Phase::Ready && !self.applying && !self.reconcile_pending
+    }
     fn feed_status(&mut self, status: Status) {
         self.status = status;
     }
@@ -67,7 +81,7 @@ impl State {
         if !updates::installed() || self.updates.scene || rune::tooling::headless_run().is_some() {
             return;
         }
-        let interval = std::time::Duration::from_secs(5);
+        let interval = LISTENER_INTERVAL;
         let elapsed = self
             .updates
             .listener_probed
@@ -78,10 +92,12 @@ impl State {
         } else {
             interval
         });
+        if self.updates.reconcile_retry_due(elapsed) {
+            self.updates_start();
+            return;
+        }
         if elapsed < interval
-            || self.updates.listener_busy
-            || self.updates.listener_probe_busy
-            || self.updates.applying
+            || self.updates.worker_busy()
             || matches!(
                 self.updates.status.phase,
                 Phase::Preparing | Phase::StoppingListener
@@ -114,7 +130,7 @@ impl State {
         self.updates.listener_probed(status);
     }
     pub fn updates_start(&mut self) {
-        if !updates::installed() {
+        if !updates::installed() || self.updates.worker_busy() {
             return;
         }
         self.updates.listener_busy = true;
@@ -132,7 +148,7 @@ impl State {
                     wake();
                 }
             });
-            let _ = events.send(Event::UpdateFinished(result.map(|_| updates::load())));
+            let _ = events.send(Event::UpdateFinished(result));
             if let Some(wake) = &wake {
                 wake();
             }
@@ -158,11 +174,16 @@ impl State {
         }
         self.updates.feed_status(status);
     }
-    pub fn update_finished(&mut self, result: Result<Status, String>) {
+    pub fn update_finished(&mut self, result: Result<WindowStart, String>) {
         self.updates.applying = false;
         self.updates.listener_busy = false;
         self.updates.listener = updates::listener_status();
-        if self.updates.service.is_none() && updates::installed() {
+        self.updates.reconcile_pending = result
+            .as_ref()
+            .is_ok_and(|start| start.pending_status.is_some());
+        if self.updates.reconcile_pending {
+            self.updates.listener_probed = Some(std::time::Instant::now());
+        } else if self.updates.service.is_none() && updates::installed() {
             let events = self.events_tx.clone();
             let wake = self.waker.clone();
             self.updates.service = updates::start(move |status| {
@@ -173,8 +194,8 @@ impl State {
             });
         }
         match result {
-            Ok(status) => self.updates.status = status,
-            Err(_) if !self.updates.listener.ready => {}
+            Ok(start) => self.updates.status = start.pending_status.unwrap_or_else(updates::load),
+            Err(_) if !self.updates.listener.ready => self.updates.status = updates::load(),
             Err(error) => {
                 self.updates.status.phase = if self.updates.status.version.is_empty() {
                     Phase::Error
@@ -200,6 +221,7 @@ impl State {
         if self.updates.scene
             || self.updates.listener_busy
             || self.updates.applying
+            || self.updates.reconcile_pending
             || rune::tooling::headless_run().is_some()
         {
             return None;
@@ -273,8 +295,7 @@ impl State {
     }
     fn install_update(&mut self) {
         if self.updates.scene
-            || self.updates.applying
-            || self.updates.status.phase != Phase::Ready
+            || !self.updates.can_apply()
             || rune::tooling::headless_run().is_some()
         {
             return;
@@ -304,7 +325,9 @@ impl State {
                     wake();
                 }
             });
-            let _ = events.send(Event::UpdateFinished(result.map(|_| updates::load())));
+            let _ = events.send(Event::UpdateFinished(
+                result.map(|()| WindowStart::default()),
+            ));
             if let Some(wake) = &wake {
                 wake();
             }
@@ -327,7 +350,7 @@ fn busy(status: &Status) -> bool {
     )
 }
 fn install(s: &State, p: Palette, footer: bool) -> El {
-    let ready = s.updates.status.phase == Phase::Ready
+    let ready = s.updates.can_apply()
         && !s.hex_recording()
         && !s.hex_record_busy()
         && s.asks.is_empty()
@@ -520,6 +543,7 @@ pub fn section(s: &State, p: Palette) -> El {
         ));
     let title = match status.phase {
         Phase::Manual => "Updates are off for this manual install".into(),
+        Phase::Preparing if s.updates.reconcile_pending => "Finishing the update".into(),
         Phase::Preparing => "Preparing update".into(),
         Phase::StoppingListener => "Stopping the listener".into(),
         Phase::Idle => "Sidenote is up to date.".into(),
@@ -860,6 +884,31 @@ mod listener_tests {
             e.key.as_deref() == Some("update-install")
                 && e.label.as_deref() == Some("Install update and restart Sidenote")
         }));
+    }
+
+    #[test]
+    fn pending_reconcile_schedules_one_worker() {
+        let mut updates = Updates {
+            reconcile_pending: true,
+            ..Default::default()
+        };
+        updates.status.phase = Phase::Preparing;
+        assert!(!updates.reconcile_retry_due(LISTENER_INTERVAL - Duration::from_millis(1)));
+        assert!(updates.reconcile_retry_due(LISTENER_INTERVAL));
+        updates.listener_busy = true;
+        assert!(!updates.reconcile_retry_due(LISTENER_INTERVAL));
+    }
+
+    #[test]
+    fn pending_reconcile_does_not_start_another_apply() {
+        let mut updates = Updates {
+            reconcile_pending: true,
+            ..Default::default()
+        };
+        updates.status.phase = Phase::Ready;
+        assert!(!updates.can_apply());
+        updates.reconcile_pending = false;
+        assert!(updates.can_apply());
     }
 
     #[test]

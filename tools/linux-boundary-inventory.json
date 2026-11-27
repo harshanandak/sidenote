@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "ace386b695cb91b9340724edd6d9f3444660e98959ae63fe3a2c9c23f750a6a5",
+  "src/ui/mod.rs": "3099df6e986d1eddc0b889cfffecb63742352402323a2265636d8b89fcd23aa6",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -465,9 +465,11 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "1bbe8893feb041aaf4eb2bbdc9ba5ccd8eb2afc308d45fbce07cf66f75c88d79",
+  "src/ui/updates.rs": "f460e66fa854c45a04a64a74b206aef4b0ac95d4ad7a681e39c95fdddfde176a",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "2aa620e5fdeca9e4fc74c9d9a52eab42f3450087ce74ebbdd023a33f5b08168c"
+  "src/updates_windows.rs": "a76d449bbc06ecdca2c9e091e6022e81f2cb52fd6a6fd315c75834244cc6921c",
+
+  "src/updates_windows/reconcile_tests.rs": "52e42939e2ecf5dd3a74797500c753b1ec82900959d50b9ab872108c518f4efc"
 }

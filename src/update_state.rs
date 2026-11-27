@@ -31,6 +31,11 @@ pub struct Status {
     pub error: Option<String>,
 }
 
+#[derive(Default)]
+pub struct WindowStart {
+    pub pending_status: Option<Status>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ListenerStatus {
     pub ready: bool,
