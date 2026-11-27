@@ -729,6 +729,8 @@ mod tests {
             (width, 900.0),
             rune::Env::default(),
         );
+        // The app's key handler, as `spec()` installs it, so list keys reach the list.
+        rt.on_key = Some(super::super::on_key);
         rt.frame(0.0);
         rt
     }
