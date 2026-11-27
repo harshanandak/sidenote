@@ -344,7 +344,8 @@ try {
         $release = Get-ProofPackage $feed $ExpectedTag
         $next = $release.Version
         $channel = $release.Channel
-        $n = if ($channel -ceq 'dev') { '0.0.0-dev.0' } else { '0.0.0' }
+        # Velopack refuses package versions below 0.0.1, and a 0.0.1 prerelease sorts below it.
+        $n = if ($channel -ceq 'dev') { '0.0.2-dev.0' } else { '0.0.1' }
         if ([System.Management.Automation.SemanticVersion]$next -le [System.Management.Automation.SemanticVersion]$n) {
             throw "The release needs to be newer than the synthetic baseline $n."
         }
