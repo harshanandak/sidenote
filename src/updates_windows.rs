@@ -707,14 +707,16 @@ static TASK_VALIDATION: std::sync::Mutex<TaskValidation> = std::sync::Mutex::new
     failure: None,
 });
 fn checked_listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
-    checked_listener_task_until(run, register, Instant::now() + TASK_COMMAND_TIMEOUT)
+    checked_listener_task_until(
+        ListenerTaskMode::Recover { run, register },
+        Instant::now() + TASK_COMMAND_TIMEOUT,
+    )
 }
 fn checked_listener_task_until(
-    run: bool,
-    register: bool,
+    mode: ListenerTaskMode,
     deadline: Instant,
 ) -> Result<(), ListenerTaskError> {
-    let result = listener_task(ListenerTaskMode::Recover { run, register }, deadline);
+    let result = listener_task(mode, deadline);
     TASK_VALIDATION
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1098,7 +1100,16 @@ pub fn listener_lock() -> io::Result<Option<File>> {
     exclusive("update-listener.lock").map(Some)
 }
 pub fn ensure_listener() -> Result<(), String> {
+    if !installed() {
+        return Ok(());
+    }
+    let directory = directory();
+    let guard =
+        InstallGuard::for_startup(&directory, Instant::now()).map_err(InstallAdmission::message)?;
     let _check = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
+    prepare_startup_listener(&guard)
+}
+fn prepare_startup_listener(_guard: &InstallGuard<'_>) -> Result<(), String> {
     let result = prepare_listener();
     finish_listener(&result);
     result
@@ -1209,40 +1220,69 @@ pub fn window_start(publish: impl Fn(Phase)) -> Result<(), String> {
     if !installed() {
         return Ok(());
     }
-    if local("update-listener.resume").exists() {
-        let _ = after_update();
-    }
-    let channel = channel();
-    let pending = manager(channel)
-        .ok()
-        .and_then(|mgr| pending_asset(&mgr, channel));
-    ensure_listener()?;
-    finish_window_start(
-        complete_pipeline_install(),
-        |error| {
-            let _ = save(&Status {
-                phase: Phase::Error,
-                error: Some(error),
-                ..load()
-            });
-        },
+    let resume_apply = start_installed(
+        &directory(),
+        Instant::now(),
+        reconcile_startup,
+        prepare_startup_listener,
+        || install_pipeline_scripts(None),
         || {
-            if !listener_stopping() && pending.is_some() {
-                apply(true, Vec::new(), publish).inspect_err(|error| {
-                    if let Ok(guard) = InstallGuard::acquire(&directory()) {
-                        save_apply_error(&guard, error);
-                    }
-                })?;
-            }
-            Ok(())
+            let channel = channel();
+            !listener_stopping()
+                && manager(channel)
+                    .ok()
+                    .and_then(|mgr| pending_asset(&mgr, channel))
+                    .is_some()
         },
+        report,
+    )?;
+    // Apply acquires the check lock first, so startup must release its guard.
+    if resume_apply {
+        apply(true, Vec::new(), publish).inspect_err(|error| {
+            if let Ok(guard) = InstallGuard::acquire(&directory()) {
+                save_apply_error(&guard, error);
+            }
+        })?;
+    }
+    Ok(())
+}
+
+fn start_installed(
+    directory: &Path,
+    started: Instant,
+    reconcile: impl FnOnce(&InstallGuard<'_>, Instant) -> Result<(), String>,
+    prepare: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
+    install: impl FnOnce() -> Result<(), String>,
+    pending_update: impl FnOnce() -> bool,
+    make_report: impl Fn(&Status) -> serde_json::Value,
+) -> Result<bool, String> {
+    let guard = InstallGuard::for_startup(directory, started).map_err(InstallAdmission::message)?;
+    let _check = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
+    if directory.join("update-listener.resume").exists() {
+        reconcile(&guard, started)?;
+        return Ok(pending_update());
+    }
+    prepare(&guard)?;
+    finish_window_start(
+        complete_pipeline_install(&guard, install, &make_report),
+        |error| {
+            let _ = guard.save(
+                &Status {
+                    phase: Phase::Error,
+                    error: Some(error),
+                    ..read_status(directory)
+                },
+                make_report,
+            );
+        },
+        || Ok(pending_update()),
     )
 }
-fn finish_window_start(
+fn finish_window_start<T>(
     pipeline: Result<(), String>,
     report: impl FnOnce(String),
-    resume: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+    resume: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     // Keep the pending marker for retry without gating app updates or listener readiness.
     if let Err(error) = pipeline {
         report(error);
@@ -1259,13 +1299,12 @@ fn pipeline_script_result(code: Option<i32>) -> Result<(), String> {
     }
 }
 
-fn complete_pipeline_install() -> Result<(), String> {
-    complete_pipeline_install_at(&directory(), || install_pipeline_scripts(None))
-}
-fn complete_pipeline_install_at(
-    directory: &Path,
+fn complete_pipeline_install(
+    guard: &InstallGuard<'_>,
     install: impl FnOnce() -> Result<(), String>,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<(), String> {
+    let directory = guard.directory;
     install_pending_pipeline(&directory.join("pipeline-install.pending"), install, || {
         let mut status = read_saved_status(directory);
         if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
@@ -1274,7 +1313,9 @@ fn complete_pipeline_install_at(
             }
             status.error = None;
             // Persist success before retiring the marker that makes cleanup retryable.
-            save_status_at(directory, &status, report).map_err(|_| PIPELINE_INSTALL_ERROR)?;
+            guard
+                .save(&status, make_report)
+                .map_err(|_| PIPELINE_INSTALL_ERROR)?;
         }
         Ok(())
     })
@@ -1452,6 +1493,22 @@ impl<'a> InstallGuard<'a> {
         })
     }
 
+    fn for_startup(directory: &'a Path, started: Instant) -> Result<Self, InstallAdmission> {
+        let deadline = started + Duration::from_secs(2);
+        loop {
+            match Self::acquire(directory) {
+                Err(InstallAdmission::Busy) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(InstallAdmission::Busy);
+                    }
+                    std::thread::sleep(Duration::from_millis(100).min(remaining));
+                }
+                result => return result,
+            }
+        }
+    }
+
     fn save(
         &self,
         status: &Status,
@@ -1489,9 +1546,7 @@ fn run_install_hook(budget: ReconciliationBudget) -> Result<(), String> {
         budget,
         listener_task,
         |guard, deadline| {
-            complete_pipeline_install_at(guard.directory, || {
-                install_pipeline_scripts(Some(deadline))
-            })
+            complete_pipeline_install(guard, || install_pipeline_scripts(Some(deadline)), report)
         },
         recover_listener_until,
         report,
@@ -1525,6 +1580,31 @@ fn reconcile_installed(
         || listener(deadline),
         make_report,
     )
+    .and_then(Reconciliation::hook_result)
+}
+
+fn reconcile_startup(guard: &InstallGuard<'_>, started: Instant) -> Result<(), String> {
+    let deadline = started + INSTALL_HOOK_WORK_LIMIT;
+    let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
+    let result = reconcile_and_save(
+        guard,
+        || {
+            checked_listener_task_until(ListenerTaskMode::Preflight, pipeline_deadline)
+                .map_err(ListenerTaskError::message)
+        },
+        || {
+            complete_pipeline_install(
+                guard,
+                || install_pipeline_scripts(Some(pipeline_deadline)),
+                report,
+            )
+        },
+        || recover_listener_until(deadline),
+        report,
+    )
+    .and_then(|work| work.listener);
+    finish_listener(&result);
+    result
 }
 
 fn recover_listener() -> Result<(), String> {
@@ -1540,44 +1620,81 @@ fn recover_listener_until(deadline: Instant) -> Result<(), String> {
             }
         })
         .map_err(|_| "Could not clear the listener stop marker.")?;
-    checked_listener_task_until(true, true, deadline).map_err(ListenerTaskError::message)?;
+    checked_listener_task_until(
+        ListenerTaskMode::Recover {
+            run: true,
+            register: true,
+        },
+        deadline,
+    )
+    .map_err(ListenerTaskError::message)?;
     wait_for_listener(
         deadline.min(Instant::now() + Duration::from_secs(8)),
         listener_lock,
         std::thread::sleep,
     )
 }
+struct Reconciliation {
+    changed: bool,
+    pipeline: Result<(), String>,
+    listener: Result<(), String>,
+}
+
+impl Reconciliation {
+    fn error(&self) -> Option<&String> {
+        self.pipeline
+            .as_ref()
+            .err()
+            .or(self.listener.as_ref().err())
+    }
+
+    fn hook_result(self) -> Result<bool, String> {
+        self.pipeline?;
+        self.listener?;
+        Ok(self.changed)
+    }
+}
+
 fn reconcile_and_save(
     guard: &InstallGuard<'_>,
     preflight: impl FnOnce() -> Result<(), String>,
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
-) -> Result<bool, String> {
+) -> Result<Reconciliation, String> {
     let result = preflight().and_then(|()| reconcile_install(guard, pipeline, listener));
     let directory = guard.directory;
     let status = read_status(directory);
     let pending = directory.join("pipeline-install.pending");
-    let status = match &result {
-        Err(error) => Status {
+    let error = match &result {
+        Err(error) => Some(error),
+        Ok(work) => work.error(),
+    };
+    let status = match error {
+        Some(error) => Status {
             phase: Phase::Error,
             version: VERSION.into(),
             error: Some(error.clone()),
             ..status
         },
-        Ok(_) => after_update_status(status, &pending),
+        None => after_update_status(status, &pending),
     };
     let saved = guard
         .save(&status, make_report)
-        .map_err(|_| "Could not save installation status.".into());
-    result.and_then(|changed| saved.map(|()| changed))
+        .map_err(|_| "Could not save installation status.".to_owned());
+    result.and_then(|work| {
+        if work.error().is_none() {
+            saved?;
+        }
+        Ok(work)
+    })
 }
 
 fn reconcile_install(
     guard: &InstallGuard<'_>,
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
-) -> Result<bool, String> {
+) -> Result<Reconciliation, String> {
     let directory = guard.directory;
     let receipt = directory.join("install-hook.complete");
     let pending = directory.join("pipeline-install.pending");
@@ -1590,16 +1707,20 @@ fn reconcile_install(
     fs::write(directory.join("update-listener.resume"), b"resume")
         .map_err(|_| INSTALL_LISTENER_ERROR)?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
-    let pipeline_result = pipeline();
-    let listener_result = listener();
-    pipeline_result?;
-    listener_result?;
-    fs::write(receipt, VERSION).map_err(|_| "Could not save install hook completion.")?;
-    let resume = directory.join("update-listener.resume");
-    if resume.exists() {
-        fs::remove_file(resume).map_err(|_| "Could not clear listener restart state.")?;
+    let pipeline = pipeline();
+    let listener = listener();
+    if pipeline.is_ok() && listener.is_ok() {
+        fs::write(receipt, VERSION).map_err(|_| "Could not save install hook completion.")?;
+        let resume = directory.join("update-listener.resume");
+        if resume.exists() {
+            fs::remove_file(resume).map_err(|_| "Could not clear listener restart state.")?;
+        }
     }
-    Ok(!current)
+    Ok(Reconciliation {
+        changed: !current,
+        pipeline,
+        listener,
+    })
 }
 fn after_update_status(status: Status, marker: &Path) -> Status {
     let status = if status.version == VERSION && !marker.exists() {
@@ -1846,7 +1967,7 @@ mod tests {
         preflight()?;
         let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
         preflight()?;
-        super::reconcile_install(&guard, pipeline, listener)
+        super::reconcile_install(&guard, pipeline, listener).and_then(Reconciliation::hook_result)
     }
 
     #[test]
@@ -2349,7 +2470,7 @@ mod tests {
             |error| *reported.borrow_mut() = Some(error),
             || {
                 applied.set(true);
-                Err("app update failure".into())
+                Err::<(), _>("app update failure".into())
             },
         );
         assert!(applied.get());
