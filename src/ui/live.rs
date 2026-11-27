@@ -935,10 +935,10 @@ impl State {
             })
         {
             let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
-            if self.meetings.iter().any(in_catalog) || incoming.iter().any(in_catalog) {
-                if let Some(live) = self.live.as_mut() {
-                    live.source_seen = true;
-                }
+            if (self.meetings.iter().any(in_catalog) || incoming.iter().any(in_catalog))
+                && let Some(live) = self.live.as_mut()
+            {
+                live.source_seen = true;
             }
         }
         let missing = self.live.as_ref().is_some_and(|live| {
@@ -2576,7 +2576,7 @@ mod writer_tests {
         // (a) A known refresh that lists the meeting keeps the wait.
         let mut state = waiting_state(store_root.path(), id);
         state.meetings = vec![entry.clone()];
-        state.cancel_missing_summary(true, &[entry.clone()]);
+        state.cancel_missing_summary(true, std::slice::from_ref(&entry));
         assert!(
             state.live.is_some(),
             "a known refresh listing the meeting must not cancel the wait"
