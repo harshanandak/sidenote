@@ -399,6 +399,76 @@ fn home_row(
     out
 }
 
+/// Meetings from the current calendar week (Monday to today, local time): how many there
+/// are, their recorded minutes, and the open tasks filed against them. `today` is a
+/// parameter so tests can pin the week without depending on the clock.
+fn this_week_stats(s: &State, today: chrono::NaiveDate) -> (usize, u64, usize) {
+    let week_start = today.week(chrono::Weekday::Mon).first_day();
+    let mut ids = std::collections::HashSet::new();
+    let mut minutes = 0u64;
+    for m in &s.meetings {
+        // Read the day in the current zone, the same one `today` comes from.
+        let in_week = m.started.as_ref().is_some_and(|t| {
+            let date = t.with_timezone(&chrono::Local).date_naive();
+            date >= week_start && date <= today
+        });
+        // A meeting loaded twice (two peer copies of one id) counts once.
+        if in_week && ids.insert(m.id.as_str()) {
+            minutes = minutes.saturating_add(m.minutes.unwrap_or(0));
+        }
+    }
+    let open: std::collections::HashSet<(&str, usize)> = s
+        .tasks
+        .all
+        .iter()
+        .filter(|t| !t.done && ids.contains(t.meeting_id.as_str()))
+        .map(|t| (t.meeting_id.as_str(), t.index))
+        .collect();
+    (ids.len(), minutes, open.len())
+}
+
+/// Recorded minutes as the rail prints them: hours to one decimal, `.0` dropped.
+fn week_hours(minutes: u64) -> String {
+    let hours = format!("{:.1}", minutes as f64 / 60.0);
+    format!("{} h", hours.strip_suffix(".0").unwrap_or(&hours))
+}
+
+/// The "This week" rail card: the week's meeting count, recorded hours and open tasks.
+fn week_rail(meetings: usize, minutes: u64, open: usize, p: Palette) -> El {
+    let stat = |key: &str, value: String, label: &str| {
+        col()
+            .key(key)
+            .grow(1.0)
+            .child(
+                text(value)
+                    .font(TextStyle::new(18.0, 600.0).lh(24.0))
+                    .color(p.ink),
+            )
+            .child(roles::META.line(label, p.faint))
+    };
+    col()
+        .key("meetings-week-rail")
+        .w(260.0)
+        .gap(12.0)
+        .mt(6.0)
+        .child(
+            col()
+                .radius(12.0)
+                .fill(p.card)
+                .px(14.0)
+                .py(13.0)
+                .gap(10.0)
+                .child(roles::NAV.bold().wrap("This week", p.ink))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .child(stat("week-meetings", meetings.to_string(), "meetings"))
+                        .child(stat("week-recorded", week_hours(minutes), "recorded"))
+                        .child(stat("week-open-tasks", open.to_string(), "open tasks")),
+                ),
+        )
+}
+
 /// The home page: saved and pending meetings, newest day first, with the Ask bar floating over
 /// it. Ask here covers all of them.
 pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -420,7 +490,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut doc = col()
         .key("home")
         .w_full()
-        .max_w(860.0)
+        .max_w(1040.0)
         .px(side)
         .pt(if narrow { 8.0 } else { 20.0 })
         .pb(32.0)
@@ -453,6 +523,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .child(toolbar(s, k, p, layer));
     let mut position = 0;
     let today = chrono::Local::now().date_naive();
+    let mut list_col = col().grow(1.0).min_w(0.0);
     for group in &s.groups {
         let (day, date) = core::day_column(group.date, today);
         let key = group
@@ -470,7 +541,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             rows = rows.child(home_row(s, k, item, position, narrow, p, layer));
             position += 1;
         }
-        doc = doc.child(
+        list_col = list_col.child(
             row()
                 .items_start()
                 .gap(8.0)
@@ -480,8 +551,16 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         );
     }
     if position == 0 {
-        doc = doc.child(roles::SMALL.wrap(empty_text(s), p.soft).mt(24.0).px(10.0));
+        list_col = list_col.child(roles::SMALL.wrap(empty_text(s), p.soft).mt(24.0).px(10.0));
     }
+    let mut content = row().items_start().gap(28.0).mt(10.0).child(list_col);
+    // The rail reads the pane, not the window-width `narrow` flag: the window less the
+    // sidebar and the 1px divider the body keeps even with the sidebar folded.
+    if s.app_w.get() - super::nav::width(s) - 1.0 >= 900.0 {
+        let (week_meetings, week_minutes, week_open) = this_week_stats(s, today);
+        content = content.child(week_rail(week_meetings, week_minutes, week_open, p));
+    }
+    doc = doc.child(content);
     // "meeting-pane" is the key the Ask thread measures to size itself.
     let mut pane = col()
         .key("meeting-pane")
@@ -1176,6 +1255,176 @@ mod tests {
                 .iter()
                 .any(|e| e.text.as_deref() == Some("from Pixel 9"))
         );
+    }
+
+    /// A meeting on `date` at noon with recorded `minutes`, so the week rail can count it.
+    /// Saved (not "No summary yet"), so its row renders content like a real meeting's.
+    fn week_meeting(id: &str, date: chrono::NaiveDate, minutes: Option<u64>) -> Meeting {
+        week_meeting_at(id, date, (12, 0), minutes)
+    }
+
+    fn week_meeting_at(
+        id: &str,
+        date: chrono::NaiveDate,
+        (hour, min): (u32, u32),
+        minutes: Option<u64>,
+    ) -> Meeting {
+        let mut meeting = summarised_meeting("Invented standup");
+        meeting.id = id.into();
+        meeting.started = date
+            .and_hms_opt(hour, min, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .single();
+        meeting.minutes = minutes;
+        meeting
+    }
+
+    fn week_task(meeting_id: &str, index: usize, done: bool) -> core::TaskItem {
+        core::TaskItem {
+            meeting_id: meeting_id.into(),
+            meeting_title: "Invented standup".into(),
+            meeting_date: None,
+            meeting_rank: 1,
+            index,
+            task: format!("Invented task {index}"),
+            stable_id: format!("task-{index}"),
+            title: format!("Invented task {index}"),
+            description: String::new(),
+            status: Default::default(),
+            waiting_on: None,
+            waiting_label: None,
+            subtasks: Vec::new(),
+            team: String::new(),
+            owner: None,
+            due: None,
+            due_date: None,
+            due_default: false,
+            stamp: None,
+            project: core::UNSORTED.into(),
+            area_id: None,
+            mine: None,
+            done,
+            edited: false,
+            manual: false,
+        }
+    }
+
+    /// Renders the wide list with fixtures built for today's date. Builds again if midnight
+    /// passed during the render, so the fixtures and the rail agree on the week.
+    fn render_this_week(build: impl Fn(chrono::NaiveDate) -> State) -> rune::Runtime<State> {
+        loop {
+            let today = chrono::Local::now().date_naive();
+            let mut rt = render_home(build(today), 1334.0);
+            rt.settle_all();
+            rt.frame(0.0);
+            if chrono::Local::now().date_naive() == today {
+                return rt;
+            }
+        }
+    }
+
+    /// Asserts one rail stat reads exactly `value` over `label`, so swapped stats fail.
+    fn assert_stat(rt: &rune::Runtime<State>, key: &str, value: &str, label: &str) {
+        let elements = rt.elements();
+        let stat = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("the {key} stat"));
+        let prefix = format!("{}/", stat.path);
+        let texts: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .filter_map(|e| e.text.as_deref())
+            .collect();
+        assert_eq!(texts, [value, label], "{key}");
+    }
+
+    #[test]
+    fn week_rail_counts_meetings_hours_and_open_tasks() {
+        crate::test_paths::isolate();
+        let rt = render_this_week(|today| {
+            let monday = today.week(chrono::Weekday::Mon).first_day();
+            let before = monday - chrono::Days::new(7);
+            let mut state = home_state(vec![
+                week_meeting("1793955600000-1", monday, Some(60)),
+                week_meeting("1793955600000-2", today, Some(30)),
+                week_meeting("1793955600000-3", before, Some(600)),
+            ]);
+            state.tasks.all = vec![
+                week_task("1793955600000-1", 0, false),
+                week_task("1793955600000-1", 1, false),
+                week_task("1793955600000-1", 2, true),
+                week_task("1793955600000-2", 0, false),
+                week_task("1793955600000-3", 0, false),
+                week_task("1793955600000-3", 1, false),
+            ];
+            state
+        });
+        assert_stat(&rt, "week-meetings", "2", "meetings");
+        assert_stat(&rt, "week-recorded", "1.5 h", "recorded");
+        assert_stat(&rt, "week-open-tasks", "3", "open tasks");
+    }
+
+    #[test]
+    fn week_rail_excludes_other_weeks_and_done_tasks() {
+        crate::test_paths::isolate();
+        let rt = render_this_week(|today| {
+            let monday = today.week(chrono::Weekday::Mon).first_day();
+            let before = monday - chrono::Days::new(1);
+            let mut state = home_state(vec![
+                week_meeting("1793955600000-1", monday, Some(60)),
+                week_meeting("1793955600000-2", before, Some(120)),
+            ]);
+            state.tasks.all = vec![
+                week_task("1793955600000-1", 0, true),
+                week_task("1793955600000-2", 0, false),
+            ];
+            state
+        });
+        assert_stat(&rt, "week-meetings", "1", "meetings");
+        assert_stat(&rt, "week-recorded", "1 h", "recorded");
+        assert_stat(&rt, "week-open-tasks", "0", "open tasks");
+    }
+
+    #[test]
+    fn week_stats_run_monday_to_today_and_count_a_copied_meeting_once() {
+        crate::test_paths::isolate();
+        let day = |d| chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+        // Wednesday 25 November 2026; the week starts Monday 23.
+        let today = day(25);
+        let mut state = home_state(vec![
+            week_meeting_at("1793955600000-1", day(22), (23, 30), Some(500)),
+            week_meeting_at("1793955600000-2", day(23), (0, 0), Some(60)),
+            week_meeting_at("1793955600000-2", day(23), (0, 0), Some(60)),
+            week_meeting("1793955600000-3", today, Some(30)),
+            week_meeting("1793955600000-4", day(26), Some(45)),
+            week_meeting("1793955600000-5", today, Some(u64::MAX)),
+        ]);
+        state.tasks.all = vec![
+            week_task("1793955600000-1", 0, false),
+            week_task("1793955600000-2", 0, false),
+            week_task("1793955600000-2", 0, false),
+            week_task("1793955600000-2", 1, true),
+            week_task("1793955600000-3", 0, false),
+            week_task("1793955600000-4", 0, false),
+        ];
+        assert_eq!(this_week_stats(&state, today), (3, u64::MAX, 2));
+        state.meetings.pop();
+        assert_eq!(this_week_stats(&state, today), (2, 90, 2));
+    }
+
+    #[test]
+    fn week_rail_hides_below_900px() {
+        crate::test_paths::isolate();
+        let mut narrow_rt = render_home(home_state(solo_meeting()), 800.0);
+        narrow_rt.settle_all();
+        narrow_rt.frame(0.0);
+        assert!(narrow_rt.find("meetings-week-rail").is_none());
+        let mut wide_rt = render_home(home_state(solo_meeting()), 1200.0);
+        wide_rt.settle_all();
+        wide_rt.frame(0.0);
+        assert!(wide_rt.find("meetings-week-rail").is_some());
     }
 
     /// Renders the home list and returns its elements. Asserts one title row (new):

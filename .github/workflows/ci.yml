@@ -325,6 +325,7 @@ jobs:
             ui::list::tests::writing_ \
             ui::list::tests::failed_ \
             ui::list::tests::row_ \
+            ui::list::tests::week_ \
             ui::list::tests::today_strip_ \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
             ui::tasks::tests::empty_tasks_page_offers_to_add_a_task \
