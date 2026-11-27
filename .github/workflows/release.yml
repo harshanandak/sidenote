@@ -38,6 +38,11 @@ on:
 permissions:
   contents: read
 
+# Only a PR's newest head needs its proof; tag pushes and manual runs never cancel.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   package:
     name: ${{ matrix.task == 'package' && 'Package Windows release artifacts' || 'Prove clean Windows install and update' }}
