@@ -408,12 +408,22 @@ fn save_status(status: &Status) -> io::Result<()> {
     if !installed() {
         return Ok(());
     }
-    let path = local("updates.json");
-    fs::create_dir_all(path.parent().unwrap())?;
-    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    fs::write(&temp, serde_json::to_vec_pretty(status)?)?;
-    crate::platform::replace_file(&temp, &path)?;
-    write_report(status).map(|_| ())
+    save_status_at(&directory(), status, report)
+}
+fn save_status_at(
+    directory: &Path,
+    status: &Status,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
+) -> io::Result<()> {
+    write_json(&directory.join("updates.json"), status)?;
+    write_json(&directory.join("update-report.json"), &make_report(status))
+}
+fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
+    let directory = path.parent().unwrap();
+    fs::create_dir_all(directory)?;
+    let mut temp = tempfile::NamedTempFile::new_in(directory)?;
+    serde_json::to_writer_pretty(&mut temp, value)?;
+    crate::platform::replace_file(&temp.into_temp_path(), path)
 }
 pub fn feed() -> Option<PathBuf> {
     crate::env_var("SIDENOTE_UPDATE_FEED").map(PathBuf::from)
@@ -567,14 +577,17 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
     Ok(status)
 }
 pub fn exclusive(name: &str) -> io::Result<File> {
-    fs::create_dir_all(local(""))?;
+    exclusive_at(&local(name))
+}
+fn exclusive_at(path: &Path) -> io::Result<File> {
+    fs::create_dir_all(path.parent().unwrap())?;
     OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
         .share_mode(0)
-        .open(local(name))
+        .open(path)
 }
 /// Shared readers represent work. Apply needs an exclusive writer of the same file.
 pub fn activity() -> io::Result<Option<File>> {
@@ -1243,25 +1256,24 @@ fn pipeline_script_result(code: Option<i32>) -> Result<(), String> {
 }
 
 fn complete_pipeline_install() -> Result<(), String> {
-    complete_pipeline_install_until(None)
+    complete_pipeline_install_at(&directory(), || install_pipeline_scripts(None))
 }
-fn complete_pipeline_install_until(deadline: Option<Instant>) -> Result<(), String> {
-    install_pending_pipeline(
-        &local("pipeline-install.pending"),
-        || install_pipeline_scripts(deadline),
-        || {
-            let mut status = read_saved_status(&directory());
-            if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
-                if status.phase == Phase::Error {
-                    status.phase = Phase::Idle;
-                }
-                status.error = None;
-                // Persist success before retiring the marker that makes cleanup retryable.
-                save_status(&status).map_err(|_| PIPELINE_INSTALL_ERROR)?;
+fn complete_pipeline_install_at(
+    directory: &Path,
+    install: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    install_pending_pipeline(&directory.join("pipeline-install.pending"), install, || {
+        let mut status = read_saved_status(directory);
+        if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
+            if status.phase == Phase::Error {
+                status.phase = Phase::Idle;
             }
-            Ok(())
-        },
-    )
+            status.error = None;
+            // Persist success before retiring the marker that makes cleanup retryable.
+            save_status_at(directory, &status, report).map_err(|_| PIPELINE_INSTALL_ERROR)?;
+        }
+        Ok(())
+    })
     .map(|_| ())
 }
 fn install_pending_pipeline(
@@ -1398,6 +1410,53 @@ const INSTALL_HOOK_WORK_LIMIT: Duration = Duration::from_secs(25);
 const UPDATE_HOOK_WORK_LIMIT: Duration = Duration::from_secs(11);
 const INSTALL_HOOK_RECOVERY_RESERVE: Duration = Duration::from_secs(4);
 
+#[derive(Debug)]
+enum InstallAdmission {
+    Busy,
+    Io(io::Error),
+}
+
+impl From<io::Error> for InstallAdmission {
+    fn from(error: io::Error) -> Self {
+        if error.raw_os_error() == Some(32) {
+            Self::Busy
+        } else {
+            Self::Io(error)
+        }
+    }
+}
+
+impl InstallAdmission {
+    fn message(self) -> String {
+        match self {
+            Self::Busy => "Another install hook is reconciling Sidenote. Try again.".into(),
+            Self::Io(error) => format!("Could not open the Sidenote install lock: {error}"),
+        }
+    }
+}
+
+struct InstallGuard<'a> {
+    _lock: File,
+    directory: &'a Path,
+}
+
+impl<'a> InstallGuard<'a> {
+    fn acquire(directory: &'a Path) -> Result<Self, InstallAdmission> {
+        Ok(Self {
+            _lock: exclusive_at(&directory.join("install-hook.lock"))?,
+            directory,
+        })
+    }
+
+    fn save(
+        &self,
+        status: &Status,
+        make_report: impl FnOnce(&Status) -> serde_json::Value,
+    ) -> io::Result<()> {
+        save_status_at(self.directory, status, make_report)
+    }
+}
+
 enum ReconciliationBudget {
     InstallOrRecovery,
     FastUpdate,
@@ -1420,28 +1479,20 @@ fn run_install_hook(budget: ReconciliationBudget) -> Result<(), String> {
     if !installed() {
         return Ok(());
     }
-    let result = reconcile_installed(
+    reconcile_installed(
         &directory(),
         started,
         budget,
         listener_task,
-        |deadline| complete_pipeline_install_until(Some(deadline)),
+        |guard, deadline| {
+            complete_pipeline_install_at(guard.directory, || {
+                install_pipeline_scripts(Some(deadline))
+            })
+        },
         recover_listener_until,
-    );
-    if let Err(error) = result {
-        let _ = save(&Status {
-            phase: Phase::Error,
-            version: VERSION.into(),
-            error: Some(error.clone()),
-            ..load()
-        });
-        return Err(error);
-    }
-    save(&after_update_status(
-        load(),
-        &local("pipeline-install.pending"),
-    ))
-    .map_err(|_| "Could not save installation status.".into())
+        report,
+    )
+    .map(|_| ())
 }
 
 fn reconcile_installed(
@@ -1449,21 +1500,31 @@ fn reconcile_installed(
     started: Instant,
     budget: ReconciliationBudget,
     task: impl Fn(ListenerTaskMode, Instant) -> Result<(), ListenerTaskError>,
-    pipeline: impl FnOnce(Instant) -> Result<(), String>,
+    pipeline: impl FnOnce(&InstallGuard<'_>, Instant) -> Result<(), String>,
     listener: impl FnOnce(Instant) -> Result<(), String>,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<bool, String> {
+    let (pipeline_deadline, deadline) = reconciliation_deadlines(started, budget);
+    let preflight =
+        || task(ListenerTaskMode::Preflight, pipeline_deadline).map_err(ListenerTaskError::message);
+    preflight()?;
+    let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
+    reconcile_and_save(
+        &guard,
+        preflight,
+        || pipeline(&guard, pipeline_deadline),
+        || listener(deadline),
+        make_report,
+    )
+}
+
+fn reconciliation_deadlines(started: Instant, budget: ReconciliationBudget) -> (Instant, Instant) {
     let deadline = started
         + match budget {
             ReconciliationBudget::InstallOrRecovery => INSTALL_HOOK_WORK_LIMIT,
             ReconciliationBudget::FastUpdate => UPDATE_HOOK_WORK_LIMIT,
         };
-    let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
-    reconcile_install(
-        directory,
-        || task(ListenerTaskMode::Preflight, pipeline_deadline).map_err(ListenerTaskError::message),
-        || pipeline(pipeline_deadline),
-        || listener(deadline),
-    )
+    (deadline - INSTALL_HOOK_RECOVERY_RESERVE, deadline)
 }
 
 fn recover_listener() -> Result<(), String> {
@@ -1486,23 +1547,38 @@ fn recover_listener_until(deadline: Instant) -> Result<(), String> {
         std::thread::sleep,
     )
 }
+fn reconcile_and_save(
+    guard: &InstallGuard<'_>,
+    preflight: impl FnOnce() -> Result<(), String>,
+    pipeline: impl FnOnce() -> Result<(), String>,
+    listener: impl FnOnce() -> Result<(), String>,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
+) -> Result<bool, String> {
+    let result = preflight().and_then(|()| reconcile_install(guard, pipeline, listener));
+    let directory = guard.directory;
+    let status = read_status(directory);
+    let pending = directory.join("pipeline-install.pending");
+    let status = match &result {
+        Err(error) => Status {
+            phase: Phase::Error,
+            version: VERSION.into(),
+            error: Some(error.clone()),
+            ..status
+        },
+        Ok(_) => after_update_status(status, &pending),
+    };
+    let saved = guard
+        .save(&status, make_report)
+        .map_err(|_| "Could not save installation status.".into());
+    result.and_then(|changed| saved.map(|()| changed))
+}
+
 fn reconcile_install(
-    directory: &Path,
-    preflight: impl Fn() -> Result<(), String>,
+    guard: &InstallGuard<'_>,
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
 ) -> Result<bool, String> {
-    preflight()?;
-    fs::create_dir_all(directory).map_err(|_| PIPELINE_INSTALL_ERROR)?;
-    // Hooks run in separate processes; serialize them before checking the receipt.
-    let _lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .share_mode(0)
-        .open(directory.join("install-hook.lock"))
-        .map_err(|_| "Another install hook is reconciling Sidenote. Try again.")?;
-    preflight()?;
+    let directory = guard.directory;
     let receipt = directory.join("install-hook.complete");
     let pending = directory.join("pipeline-install.pending");
     let current =
@@ -1631,20 +1707,18 @@ fn report(status: &Status) -> serde_json::Value {
 fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     let report = report(status);
     if installed() {
-        let path = local("update-report.json");
-        fs::create_dir_all(directory())?;
-        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-        fs::write(&temp, serde_json::to_vec_pretty(&report)?)?;
-        crate::platform::replace_file(&temp, &path)?;
+        write_json(&local("update-report.json"), &report)?;
     }
     Ok(report)
 }
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
+    let apply_requested = args.iter().any(|a| a == "--update-apply");
+    let mut refresh_report = apply_requested;
     let result = if args.iter().any(|a| a == "--update-window-start") {
         window_start(|_| {}).map(|_| load())
     } else if args.iter().any(|a| a == "--update-probe") {
         recording_idle().map(|_| load())
-    } else if args.iter().any(|a| a == "--update-apply") {
+    } else if apply_requested {
         apply(false, vec!["--update-status".into()], |phase| {
             let _ = save(&Status { phase, ..load() });
         })
@@ -1652,6 +1726,7 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     } else if args.iter().any(|a| a == "--update-check") {
         check(|_| {})
     } else {
+        refresh_report = true;
         Ok(load())
     };
     let status = match result {
@@ -1662,11 +1737,23 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             ..load()
         },
     };
-    let _ = save(&status);
-    let report = write_report(&status).unwrap_or_else(|_| report(&status));
-    println!("{report}");
+    let mut output = report(&status);
+    if refresh_report && installed() {
+        let directory = directory();
+        if let Ok(_guard) = InstallGuard::acquire(&directory) {
+            if !apply_requested {
+                output = report(&read_status(&directory));
+            }
+            let _ = write_json(&directory.join("update-report.json"), &output);
+        }
+    }
+    println!("{output}");
     i32::from(status.phase == Phase::Error)
 }
+
+#[cfg(test)]
+#[path = "updates_windows/reconcile_tests.rs"]
+mod reconcile_tests;
 
 #[cfg(test)]
 mod window_lock_tests {
@@ -1734,6 +1821,18 @@ mod window_lock_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reconcile_install(
+        directory: &Path,
+        preflight: impl Fn() -> Result<(), String>,
+        pipeline: impl FnOnce() -> Result<(), String>,
+        listener: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
+        preflight()?;
+        let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
+        preflight()?;
+        super::reconcile_install(&guard, pipeline, listener)
+    }
 
     #[test]
     fn channel_switch_selects_its_feed_and_only_offers_newer_versions() {
@@ -2056,6 +2155,17 @@ mod tests {
     #[test]
     fn overlapping_hook_does_no_work_and_can_retry() {
         let root = tempfile::tempdir().unwrap();
+        let files = [
+            "install-hook.complete",
+            "pipeline-install.pending",
+            "update-listener.resume",
+            "update-listener.stop",
+            "updates.json",
+            "update-report.json",
+        ];
+        for name in files {
+            fs::write(root.path().join(name), name).unwrap();
+        }
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -2064,14 +2174,20 @@ mod tests {
             .open(root.path().join("install-hook.lock"))
             .unwrap();
         assert!(
-            reconcile_install(
+            reconcile_installed(
                 root.path(),
-                || Ok(()),
-                || panic!("overlapping pipeline"),
-                || panic!("overlapping listener")
+                Instant::now(),
+                ReconciliationBudget::InstallOrRecovery,
+                |_, _| Ok(()),
+                |_, _| panic!("overlapping pipeline"),
+                |_| panic!("overlapping listener"),
+                |_| panic!("overlapping persist"),
             )
             .is_err()
         );
+        for name in files {
+            assert_eq!(fs::read(root.path().join(name)).unwrap(), name.as_bytes());
+        }
         drop(lock);
         assert!(
             reconcile_install(
@@ -2511,15 +2627,26 @@ $script:migrated = $false
                     };
                     mock_install_task(root.path(), task, mode)
                 },
-                |_| panic!("unexpected pipeline call for {scenario}"),
+                |_, _| panic!("unexpected pipeline call for {scenario}"),
                 |_| panic!("unexpected listener recovery for {scenario}"),
+                |status| serde_json::json!({"status":status}),
             );
-            assert_eq!(result.unwrap_err(), error.message(), "{scenario}");
+            let message = error.message();
+            assert_eq!(result.unwrap_err(), message, "{scenario}");
             for file in files {
                 assert_eq!(fs::read_to_string(root.path().join(file)).unwrap(), file);
             }
             assert_eq!(lock.exists(), scenario == "changed-under-lock");
             assert!(!root.path().join("task-operations").exists(), "{scenario}");
+            if scenario == "changed-under-lock" {
+                assert_eq!(read_saved_status(root.path()).error, Some(message));
+            } else {
+                assert!(!root.path().join("updates.json").exists(), "{scenario}");
+                assert!(
+                    !root.path().join("update-report.json").exists(),
+                    "{scenario}"
+                );
+            }
         }
     }
 
@@ -2545,7 +2672,7 @@ $script:migrated = $false
                         probes.set(probes.get() + 1);
                         mock_install_task(root.path(), scenario, mode)
                     },
-                    |_| {
+                    |_, _| {
                         assert_eq!(probes.get(), 2);
                         assert!(!log.exists(), "preflight touched the task: {scenario}");
                         assert_eq!(fs::read_to_string(&pending).unwrap(), VERSION);
@@ -2561,6 +2688,7 @@ $script:migrated = $false
                         },
                     )
                     .map_err(ListenerTaskError::message),
+                    |status| serde_json::json!({"status":status}),
                 )
                 .unwrap_or_else(|error| panic!("{scenario}: {error}")),
                 "{scenario}"
@@ -2616,7 +2744,7 @@ $script:migrated = $false
                 spend(TASK_COMMAND_TIMEOUT, deadline);
                 Ok(())
             },
-            |deadline| {
+            |_, deadline| {
                 spend(Duration::from_secs(7), deadline);
                 Err(PIPELINE_INSTALL_ERROR.into())
             },
@@ -2625,6 +2753,7 @@ $script:migrated = $false
                 spend(TASK_COMMAND_TIMEOUT + Duration::from_secs(8), deadline);
                 Err(INSTALL_LISTENER_ERROR.into())
             },
+            |status| serde_json::json!({"status":status}),
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
         assert_eq!(clock.get() - started, Duration::from_secs(work_seconds));
