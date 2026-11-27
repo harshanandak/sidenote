@@ -246,6 +246,12 @@ function Install-ProofFixture($Fixture, [string]$SetupFeed, [string]$Version) {
     return @{ Listener = $listener; Pointer = $initialPointer }
 }
 
+function Assert-UpdatedStatus($Status) {
+    if ($Status.phase -cne 'Idle' -or $null -ne $Status.error) {
+        throw "Updated app reported phase '$($Status.phase)'. $($Status.error)"
+    }
+}
+
 function Invoke-SelfTest([string]$Root, [string]$Source) {
     $fixture = New-ProofFixture $Root $Source
     if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates) -or
@@ -279,6 +285,10 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         throw 'Version substitution changed more than the Sidenote version.'
     }
     Assert-ChecksumRefusal 1 @{ phase = 'Error'; error = $checksumError }
+    Assert-UpdatedStatus @{ phase = 'Idle'; error = $null }
+    $unexpected = 'Synthetic listener refusal.'
+    try { Assert-UpdatedStatus @{ phase = 'Error'; error = $unexpected }; throw 'Expected an update error.' }
+    catch { if ($_.Exception.Message -cne "Updated app reported phase 'Error'. $unexpected") { throw } }
     foreach ($case in @(@(0, $checksumError), @(1, 'A different failure.'))) {
         try { Assert-ChecksumRefusal $case[0] @{ phase = 'Error'; error = $case[1] } }
         catch {
@@ -451,7 +461,7 @@ try {
         if ($report.current_version -ceq $next -and $report.peers_dir -ieq $fixture.Peers) { $report }
     } "The restarted app did not report $next."
     Assert-Report $fixture $updated $next
-    if ($updated.status.phase -cne 'Idle' -or $null -ne $updated.status.error) { throw 'Updated app reported an error.' }
+    Assert-UpdatedStatus $updated.status
     $newListener = Wait-Proof {
         Get-Listener $fixture | Where-Object { $_.ProcessId -ne $listener.ProcessId -and $_.CreationDate -ge $applyStarted }
     } 'The update did not restart the isolated listener.'

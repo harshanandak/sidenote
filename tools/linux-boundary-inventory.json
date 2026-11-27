@@ -425,7 +425,7 @@
 
   "src/ui/hex/connection/stop_tests/api.rs": "45bddb1e6b8530e183bfed0afba4032d7789bf2581002d5c1a427d945f8c259b",
 
-  "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
+  "src/ui/hex/connection/stop_tests/readiness.rs": "f602446d98114226eb807ad043fe0fef85b4ec4b532e2c52838f4b9f67e95da6",
 
   "src/ui/hex/settings.rs": "c82273ff2ca1423a1edb5433ed8de5f5acf92444bfe6e372ae7ff0b20664b39f",
 
@@ -469,5 +469,5 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "fd65f34562fe9511fe7b83f5a1382f815dd18122d7c1c72c303ad3499e1465e5"
+  "src/updates_windows.rs": "c3a53246a8e5c99d23969b996b38cad2512ba8a7fe4914f1655401c09e1f59fc"
 }
