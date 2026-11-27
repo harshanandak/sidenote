@@ -96,15 +96,25 @@ impl Page {
         Self::Meetings,
         Self::Prompts,
         Self::Experimental,
-        Self::Hex,
         Self::Helpers,
         Self::ConnectedApps,
+        Self::Hex,
         Self::Appearance,
         Self::Sync,
         Self::Privacy,
         Self::Updates,
         Self::Diagnostics,
     ];
+    fn group(self) -> &'static str {
+        match self {
+            Self::General | Self::Meetings | Self::Prompts | Self::Experimental | Self::People => {
+                "You and meetings"
+            }
+            Self::Helpers | Self::ConnectedApps => "Ask and agents",
+            Self::Hex | Self::Appearance | Self::Sync => "This PC",
+            Self::Privacy | Self::Updates | Self::Diagnostics => "Data and maintenance",
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Self::General => "General",
@@ -1507,18 +1517,21 @@ fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
         }
     } else {
         let (active, _) = active(s);
+        let mut previous_group: Option<&'static str> = None;
         for page in Page::ALL.into_iter().filter(|page| page.visible(CHANNEL)) {
-            if matches!(page, Page::General | Page::Hex | Page::Privacy) {
-                list = list.child(row().h(28.0).px(8.0).items_center().mt(12.0).child(
-                    roles::META.line(
-                        match page {
-                            Page::General => "You and meetings",
-                            Page::Hex => "This PC",
-                            _ => "Data and maintenance",
-                        },
-                        p.faint,
-                    ),
-                ));
+            let group = page.group();
+            if previous_group != Some(group) {
+                let slug = group.to_ascii_lowercase().replace(' ', "-");
+                list = list.child(
+                    row()
+                        .h(28.0)
+                        .px(8.0)
+                        .items_center()
+                        .mt(12.0)
+                        .child(roles::META.line(group, p.faint))
+                        .key(format!("settings-heading-{slug}")),
+                );
+                previous_group = Some(group);
             }
             let button = list_row(page.icon(), page.name(), active == page, p)
                 .key(format!("settings-page-{}", page.name()))
@@ -3835,25 +3848,290 @@ mod tests {
     #[test]
     fn settings_navigation_resolves_to_solar_at_every_weight() {
         let expected = [
-            "solar-user",
-            "solar-document",
-            "solar-notebook-minimalistic",
-            "solar-flask",
-            "solar-microphone-3",
-            "solar-four-point-star",
-            "solar-link",
-            "solar-sun",
-            "solar-monitor-smartphone",
-            "solar-lock-keyhole-minimalistic",
-            "solar-download-minimalistic",
-            "solar-pulse",
+            (Page::General, "solar-user"),
+            (Page::Meetings, "solar-document"),
+            (Page::Prompts, "solar-notebook-minimalistic"),
+            (Page::Experimental, "solar-flask"),
+            (Page::Helpers, "solar-four-point-star"),
+            (Page::ConnectedApps, "solar-link"),
+            (Page::Hex, "solar-microphone-3"),
+            (Page::Appearance, "solar-sun"),
+            (Page::Sync, "solar-monitor-smartphone"),
+            (Page::Privacy, "solar-lock-keyhole-minimalistic"),
+            (Page::Updates, "solar-download-minimalistic"),
+            (Page::Diagnostics, "solar-pulse"),
         ];
-        for (page, glyph) in Page::ALL.into_iter().zip(expected) {
+        for (page, glyph) in expected {
             icons::assert_solar_weights(page.icon(), glyph);
         }
         icons::assert_solar_weights(Page::People.icon(), "solar-users-group-rounded");
         let mic = row_icon("meetings.record_my_microphone");
         icons::assert_solar_weights(mic, "solar-microphone-3");
+    }
+
+    #[test]
+    fn groups_headings_follow_spec_order() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.open_hex();
+        let mut rt = rune::Runtime::with_text(
+            state,
+            crate::ui::view,
+            (1334.0, 900.0),
+            rune::Env::default(),
+            rune::text::TextSystem::new(
+                crate::ui::theme::fonts(),
+                (crate::ui::theme::SANS, "Inter"),
+            ),
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let mut ordered: Vec<(&str, f32)> = elements
+            .iter()
+            .filter_map(|element| {
+                let key = element.key.as_deref()?;
+                if key.starts_with("settings-heading-") || key.starts_with("settings-page-") {
+                    Some((key, element.rect[1]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        ordered.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let actual: Vec<&str> = ordered.iter().map(|(key, _)| *key).collect();
+        // Spec section 2 order. PR1 has no "Your work" page yet (PR2 adds
+        // Tasks), so the plan's "five-group order" is four groups here.
+        let groups: [(&str, &[Page]); 4] = [
+            (
+                "settings-heading-you-and-meetings",
+                &[
+                    Page::General,
+                    Page::Meetings,
+                    Page::Prompts,
+                    Page::Experimental,
+                ],
+            ),
+            (
+                "settings-heading-ask-and-agents",
+                &[Page::Helpers, Page::ConnectedApps],
+            ),
+            (
+                "settings-heading-this-pc",
+                &[Page::Hex, Page::Appearance, Page::Sync],
+            ),
+            (
+                "settings-heading-data-and-maintenance",
+                &[Page::Privacy, Page::Updates, Page::Diagnostics],
+            ),
+        ];
+        let mut expected: Vec<String> = Vec::new();
+        for (heading, pages) in groups {
+            let visible: Vec<Page> = pages
+                .iter()
+                .copied()
+                .filter(|page| page.visible(CHANNEL))
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
+            expected.push(heading.to_owned());
+            for page in visible {
+                expected.push(format!("settings-page-{}", page.name()));
+            }
+        }
+        assert_eq!(actual, expected);
+        for (heading, label) in [
+            ("settings-heading-you-and-meetings", "You and meetings"),
+            ("settings-heading-ask-and-agents", "Ask and agents"),
+            ("settings-heading-this-pc", "This PC"),
+            (
+                "settings-heading-data-and-maintenance",
+                "Data and maintenance",
+            ),
+        ] {
+            if expected.iter().any(|key| key == heading) {
+                let elements = rt.elements();
+                let text = elements
+                    .iter()
+                    .find(|element| element.key.as_deref() == Some(heading))
+                    .and_then(|element| element.text.clone())
+                    .unwrap_or_else(|| panic!("missing {heading}"));
+                assert_eq!(text, label);
+            }
+        }
+    }
+
+    #[test]
+    fn groups_headings_fit_in_the_drawer_at_phone_width() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.open_hex();
+        let mut rt = rune::Runtime::with_text(
+            state,
+            crate::ui::view,
+            (390.0, 844.0),
+            rune::Env::default(),
+            rune::text::TextSystem::new(
+                crate::ui::theme::fonts(),
+                (crate::ui::theme::SANS, "Inter"),
+            ),
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        let (x, y) = rt
+            .find("settings-navigation")
+            .unwrap_or_else(|| panic!("missing settings-navigation"));
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.2);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let rect = |key: &str| {
+            elements
+                .iter()
+                .find(|element| element.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .rect
+        };
+        let drawer = rect("settings-drawer");
+        assert!(drawer[3] > 0.0);
+        let headings: Vec<[f32; 4]> = elements
+            .iter()
+            .filter(|element| {
+                element
+                    .key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("settings-heading-"))
+            })
+            .map(|element| element.rect)
+            .collect();
+        assert!(!headings.is_empty());
+        let rows: Vec<[f32; 4]> = elements
+            .iter()
+            .filter(|element| {
+                element
+                    .key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("settings-page-"))
+            })
+            .map(|element| element.rect)
+            .collect();
+        assert!(!rows.is_empty());
+        for heading in &headings {
+            assert!(
+                heading[0] >= drawer[0] - 1.0
+                    && heading[1] >= drawer[1] - 1.0
+                    && heading[0] + heading[2] <= drawer[0] + drawer[2] + 1.0
+                    && heading[1] + heading[3] <= drawer[1] + drawer[3] + 1.0,
+                "heading {heading:?} outside drawer {drawer:?}"
+            );
+            for row in &rows {
+                let overlap = heading[0] < row[0] + row[2]
+                    && row[0] < heading[0] + heading[2]
+                    && heading[1] < row[1] + row[3]
+                    && row[1] < heading[1] + heading[3];
+                assert!(!overlap, "heading {heading:?} overlaps row {row:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn groups_no_heading_without_a_visible_page() {
+        for channel in [Channel::Stable, Channel::Dev] {
+            let visible: Vec<Page> = Page::ALL
+                .into_iter()
+                .filter(|page| page.visible(channel))
+                .collect();
+            assert_eq!(visible.len(), if channel == Channel::Dev { 12 } else { 10 });
+            let groups: HashSet<&str> = visible.iter().map(|page| page.group()).collect();
+            for group in groups {
+                assert!(visible.iter().any(|page| page.group() == group));
+            }
+            if channel == Channel::Stable {
+                assert!(!visible.contains(&Page::Sync));
+                assert!(!visible.contains(&Page::ConnectedApps));
+                assert!(visible.iter().any(|page| page.group() == "This PC"));
+                assert!(visible.iter().any(|page| page.group() == "Ask and agents"));
+            }
+        }
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.open_hex();
+        let mut rt = rune::Runtime::with_text(
+            state,
+            crate::ui::view,
+            (1334.0, 900.0),
+            rune::Env::default(),
+            rune::text::TextSystem::new(
+                crate::ui::theme::fonts(),
+                (crate::ui::theme::SANS, "Inter"),
+            ),
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let headings: Vec<&str> = elements
+            .iter()
+            .filter_map(|element| element.key.as_deref())
+            .filter(|key| key.starts_with("settings-heading-"))
+            .collect();
+        let distinct: HashSet<&str> = Page::ALL
+            .into_iter()
+            .filter(|page| page.visible(CHANNEL))
+            .map(|page| page.group())
+            .collect();
+        assert_eq!(headings.len(), distinct.len());
+        for heading in &headings {
+            let slug = heading
+                .strip_prefix("settings-heading-")
+                .unwrap_or_else(|| panic!("bad heading key {heading}"));
+            assert!(
+                Page::ALL
+                    .into_iter()
+                    .filter(|page| page.visible(CHANNEL))
+                    .any(|page| page.group().to_ascii_lowercase().replace(' ', "-") == *slug),
+                "{heading} has no visible page"
+            );
+        }
+    }
+
+    #[test]
+    fn groups_search_hides_headings() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.open_hex();
+        state.hex.filter = TextEdit::new("sound");
+        let mut rt = rune::Runtime::with_text(
+            state,
+            crate::ui::view,
+            (1334.0, 900.0),
+            rune::Env::default(),
+            rune::text::TextSystem::new(
+                crate::ui::theme::fonts(),
+                (crate::ui::theme::SANS, "Inter"),
+            ),
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .filter_map(|element| element.key.as_deref())
+                .all(|key| !key.starts_with("settings-heading-")
+                    && !key.starts_with("settings-page-")),
+            "search results replaced the grouped list"
+        );
+        assert!(
+            elements.iter().any(|element| element
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("find-setting-"))),
+            "expected search results for \"sound\""
+        );
     }
 
     #[test]
