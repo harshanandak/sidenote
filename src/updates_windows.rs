@@ -2247,13 +2247,13 @@ mod tests {
     // Shadow the scheduler and process commands so tests cannot reach a real task or listener.
     const MOCK_LISTENER_TASK: &str = r#"
 function Get-MockListenerIdentity {
-    if ($env:SIDENOTE_TEST_MISMATCH -eq 'default-owner') {
-        return [PSCustomObject]@{
-            User = [Security.Principal.SecurityIdentifier]'S-1-5-18'
-            Owner = [Security.Principal.SecurityIdentifier]'S-1-5-32-544'
-        }
+    $groupOwner = $env:SIDENOTE_TEST_MISMATCH -eq 'default-owner'
+    $user = if ($groupOwner) { 'S-1-5-18' } else { 'S-1-5-19' }
+    $owner = if ($groupOwner) { 'S-1-5-32-544' } else { $user }
+    [PSCustomObject]@{
+        User = [Security.Principal.SecurityIdentifier]$user
+        Owner = [Security.Principal.SecurityIdentifier]$owner
     }
-    [Security.Principal.WindowsIdentity]::GetCurrent()
 }
 function New-Object {
     param([string]$ComObject)
@@ -2361,13 +2361,8 @@ $script:started = $false
 $script:migrated = $false
 "#;
 
-    fn mock_install_task(
-        root: &Path,
-        scenario: &str,
-        mode: ListenerTaskMode,
-        deadline: Instant,
-    ) -> Result<(), ListenerTaskError> {
-        let script = LISTENER_TASK_SCRIPT
+    fn mock_task_script() -> String {
+        LISTENER_TASK_SCRIPT
             .replace(
                 "[Diagnostics.Stopwatch]::StartNew()",
                 "(New-ListenerTestStopwatch)",
@@ -2375,17 +2370,25 @@ $script:migrated = $false
             .replace(
                 "[Security.Principal.WindowsIdentity]::GetCurrent()",
                 "(Get-MockListenerIdentity)",
-            );
+            )
+    }
+
+    fn mock_install_task(
+        root: &Path,
+        scenario: &str,
+        mode: ListenerTaskMode,
+    ) -> Result<(), ListenerTaskError> {
         run_listener_task(
             windows_powershell()
                 .env("SIDENOTE_TEST_MISMATCH", scenario)
                 .env("SIDENOTE_TEST_OPERATIONS", root.join("task-operations")),
-            &format!("{MOCK_LISTENER_TASK}\n{script}"),
+            &format!("{MOCK_LISTENER_TASK}\n{}", mock_task_script()),
             mode,
             "Sidenote mock listener",
             &root.join("current/sidenote.exe"),
             "--listen",
-            deadline,
+            // The deadline test uses a simulated clock to isolate it from PowerShell startup.
+            Instant::now() + Duration::from_secs(60),
         )
     }
 
@@ -2419,7 +2422,7 @@ $script:migrated = $false
             let result = reconcile_installed(
                 root.path(),
                 Instant::now(),
-                |mode, deadline| {
+                |mode, _| {
                     let task = if scenario == "changed-under-lock" {
                         if lock.exists() {
                             "foreign-owner"
@@ -2429,7 +2432,7 @@ $script:migrated = $false
                     } else {
                         scenario
                     };
-                    mock_install_task(root.path(), task, mode, deadline)
+                    mock_install_task(root.path(), task, mode)
                 },
                 |_| panic!("unexpected pipeline call for {scenario}"),
                 |_| panic!("unexpected listener recovery for {scenario}"),
@@ -2459,9 +2462,9 @@ $script:migrated = $false
                 reconcile_installed(
                     root.path(),
                     Instant::now(),
-                    |mode, deadline| {
+                    |mode, _| {
                         probes.set(probes.get() + 1);
-                        mock_install_task(root.path(), scenario, mode, deadline)
+                        mock_install_task(root.path(), scenario, mode)
                     },
                     |_| {
                         assert_eq!(probes.get(), 2);
@@ -2470,14 +2473,13 @@ $script:migrated = $false
                         fs::remove_file(&pending).unwrap();
                         Ok(())
                     },
-                    |deadline| mock_install_task(
+                    |_| mock_install_task(
                         root.path(),
                         scenario,
                         ListenerTaskMode::Recover {
                             run: true,
                             register: true
                         },
-                        deadline,
                     )
                     .map_err(ListenerTaskError::message),
                 )
@@ -2502,7 +2504,6 @@ $script:migrated = $false
                 run: true,
                 register: true,
             },
-            Instant::now() + Duration::from_secs(20),
         );
         assert!(refused.is_err());
         assert!(!root.path().join("task-operations").exists());
@@ -2513,7 +2514,10 @@ $script:migrated = $false
         let root = tempfile::tempdir().unwrap();
         let started = Instant::now();
         let clock = std::cell::Cell::new(started);
-        let spend = |maximum, deadline| clock.set((clock.get() + maximum).min(deadline));
+        let spend = |maximum: Duration, deadline: Instant| {
+            let now = clock.get();
+            clock.set(now + maximum.min(deadline.saturating_duration_since(now)));
+        };
         let result = reconcile_installed(
             root.path(),
             started,
@@ -2532,7 +2536,7 @@ $script:migrated = $false
             },
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
-        assert!(clock.get() - started <= Duration::from_secs(25));
+        assert_eq!(clock.get() - started, Duration::from_secs(25));
         assert!(!root.path().join("install-hook.complete").exists());
     }
 
@@ -2544,7 +2548,7 @@ if ($script:started) { exit 0 }; exit 3
 "#;
         let real_clock = "[Diagnostics.Stopwatch]::StartNew()";
         assert_eq!(LISTENER_TASK_SCRIPT.matches(real_clock).count(), 1);
-        let script = LISTENER_TASK_SCRIPT.replace(real_clock, "(New-ListenerTestStopwatch)");
+        let script = mock_task_script();
         for mismatch in [
             "none",
             "exe",
