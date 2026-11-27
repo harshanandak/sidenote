@@ -341,7 +341,8 @@ fn recording_clock_stays_visible_on_the_live_page() {
     rt.frame(0.2);
     tap(&mut rt, "nav-new-menu");
     assert!(rt.find("new-meeting").is_some());
-    assert!(rt.find("search").is_none());
+    // The toolbar search is persistent (new); it used to hide unless focused (old).
+    assert!(rt.find("search").is_some());
     for place in [
         "nav-meetings",
         "view-tasks",
