@@ -1406,6 +1406,14 @@ mod tests {
         }
     }
 
+    /// A toggle saves the sidebar preference, which every other test's `State::new` reads from
+    /// the shared folder. A test that toggles keeps its own folder.
+    fn own_prefs(rt: &mut rune::Runtime<State>) {
+        let name = format!("sidenote-nav-{:?}", std::thread::current().id());
+        rt.state.store.root = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&rt.state.store.root).unwrap();
+    }
+
     fn ctrl_backslash(rt: &mut rune::Runtime<State>) {
         rt.update(|s, tx| {
             let mods = rune::Mods {
@@ -1422,6 +1430,7 @@ mod tests {
     fn the_toggles_and_ctrl_backslash_open_and_close_the_sidebar() {
         // Open: the toggle is in the sidebar. Closed: one toggle and one search at the top left.
         let mut rt = new_meeting_runtime(1334.0, false);
+        own_prefs(&mut rt);
         let keys = ["nav-collapse", "sidebar-toggle", "top-bar", "nav-search"];
         let shown = |rt: &rune::Runtime<State>| keys.map(|k| count(rt, k));
         assert_eq!(shown(&rt), [1, 0, 0, 1]);
@@ -1455,6 +1464,7 @@ mod tests {
     #[test]
     fn focus_follows_the_toggle_that_unmounts() {
         let mut rt = new_meeting_runtime(1334.0, false);
+        own_prefs(&mut rt);
         rt.update(|_, tx| tx.focus("nav-collapse", true));
         rt.frame(0.0);
         rt.update(press_toggle);
