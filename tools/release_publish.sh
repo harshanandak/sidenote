@@ -113,6 +113,71 @@ remote_tag_sha() {
     printf '%s\n' "$object_sha"
 }
 
+refresh_latest_release() {
+    local staging asset name id inventory previous i
+    local -a ordered=() pending=() promoted=()
+    local -A ids=() wanted=()
+    local asset_api="repos/$repo/releases/assets"
+    staging=$(mktemp -d "$runner_temp/latest-assets.XXXXXXXX")
+    # Keep the live feed pointing to its old packages until the new payload is ready.
+    for asset in "$asset_dir/"*.nupkg "$asset_dir/sidenote-latest-Setup.exe" \
+        "$asset_dir/SHA256SUMS" "$asset_dir/releases.latest.json"; do
+        name=${asset##*/}
+        ordered+=("$name")
+        wanted[$name]=1
+        cp -- "$asset" "$staging/$name.pending"
+        pending+=("$staging/$name.pending")
+    done
+    run_write gh release upload latest-main "${pending[@]}" --repo "$repo" --clobber
+    if [[ $DRY_RUN == 1 ]]; then return; fi
+    inventory=$(read_or_fail 'Failed to list staged Latest assets.' gh release view latest-main --repo "$repo" \
+        --json assets --jq '.assets[] | [.name, (.apiUrl | split("/") | last)] | @tsv') || exit 1
+    while IFS=$'\t' read -r name id; do
+        if [[ -n $name && $id =~ ^[0-9]+$ ]]; then ids[$name]=$id; fi
+    done <<< "$inventory"
+    for name in "${ordered[@]}"; do
+        [[ -n ${ids[$name.pending]+x} ]] || { echo "Missing staged asset $name." >&2; exit 1; }
+    done
+    for name in "${ordered[@]}"; do
+        previous=${ids[$name]:-}
+        if [[ -n $previous ]] && ! run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name.previous-$previous" --silent; then
+            run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || exit 1
+            break
+        fi
+        if ! run_write gh api -X PATCH "$asset_api/${ids[$name.pending]}" -f "name=$name" --silent; then
+            if [[ -n $previous ]]; then
+                # If the index rename took effect but returned an error, keep the packages it may now reference.
+                run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || exit 1
+            elif [[ $name == releases.latest.json ]]; then
+                exit 1
+            fi
+            break
+        fi
+        promoted+=("$name")
+    done
+    if (( ${#promoted[@]} != ${#ordered[@]} )); then
+        for ((i = ${#promoted[@]} - 1; i >= 0; i--)); do
+            name=${promoted[i]}
+            previous=${ids[$name]:-}
+            if run_write gh api -X PATCH "$asset_api/${ids[$name.pending]}" -f "name=$name.pending" --silent && [[ -n $previous ]]; then
+                run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || echo "Could not restore $name." >&2
+            fi
+        done
+        exit 1
+    fi
+    if [[ $rolling_draft == false ]]; then
+        run_write gh api -X PATCH "repos/$repo/git/refs/tags/latest-main" -f "sha=$sha" -F force=true --silent
+    fi
+    inventory=$(read_or_fail 'Failed to list current Latest assets.' gh release view latest-main --repo "$repo" --json assets --jq '.assets[].name') || exit 1
+    while IFS= read -r name; do
+        if [[ -n $name && -z ${wanted[$name]+x} ]]; then
+            run_write gh release delete-asset latest-main "$name" --repo "$repo" --yes
+        fi
+    done <<< "$inventory"
+    run_write gh release edit latest-main --repo "$repo" --target "$sha" --title "Sidenote latest $tag" \
+        --notes-file "$notes_file" --draft=false --prerelease --latest=false
+}
+
 stable_latest=true
 if [[ $channel == stable ]]; then
     stable_tags=$(read_or_fail 'Failed to list published stable releases.' gh api "repos/$repo/releases" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name') || exit 1
@@ -229,7 +294,9 @@ if [[ $channel == dev || $channel == latest ]]; then
             echo "Rolling $rolling_tag release name '$rolling_name' has no readable $channel version; treating it as older."
         fi
     fi
-    if (( rolling_replace )); then
+    if (( rolling_replace )) && [[ $channel == latest && $rolling_state == exists ]]; then
+        refresh_latest_release
+    elif (( rolling_replace )); then
         # The feed returns 404 between delete and create; the app treats that as a failed check, never a wrong package.
         if [[ $rolling_state == exists ]]; then
             run_write "${rolling_delete[@]}"

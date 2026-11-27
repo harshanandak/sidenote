@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 
 function Resolve-ReleaseIdentity {
     param([string]$Manifest, [string]$EventName, [string]$Ref,
-        [string]$RequestedTag, [string]$RequestedChannel, [string]$RunNumber)
+        [string]$RequestedTag, [string]$RequestedChannel, [string]$RunNumber, [string[]]$ShippedTags)
 
     $package = [regex]::Match($Manifest, '(?ms)^\[package\][ \t]*\r?\n(.*?)(?=^\[|\z)').Groups[1].Value
     $version = [regex]::Match($package, '(?m)^version = "([^"]+)"\r?$').Groups[1].Value
@@ -32,8 +32,15 @@ function Resolve-ReleaseIdentity {
             if ($Ref -cne 'refs/heads/main' -or $RunNumber -cnotmatch '\A[1-9][0-9]*\z') {
                 throw 'Expected a main workflow run with a positive run number.'
             }
-            if ($channel -cne 'dev') { throw 'Latest requires a Dev prerelease version in Cargo.toml.' }
-            $version = "$version.main.$RunNumber"
+            $shipped = $ShippedTags |
+                Where-Object { $_ -cmatch "\Av$semver(?:-dev\.$number)?\z" } |
+                ForEach-Object { [System.Management.Automation.SemanticVersion]$_.Substring(1) } |
+                Sort-Object -Descending | Select-Object -First 1
+            if ($null -eq $shipped) { throw 'Latest requires a shipped Stable or Dev release tag.' }
+            $base = if ($shipped.PreReleaseLabel) { $shipped.ToString() } else {
+                "$($shipped.Major).$($shipped.Minor).$($shipped.Patch + 1)-dev.0"
+            }
+            $version = "$base.main.$RunNumber"
             $tag = "v$version"
             $channel = 'latest'
         }
@@ -152,13 +159,27 @@ function Invoke-SelfTest {
     }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $stable push 'refs/tags/v0.1.1' }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $dev push 'refs/tags/dev' }
-    $latest = Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/main' -RunNumber 7
-    if ($latest.Channel -cne 'latest' -or $latest.Tag -cne 'v0.1.1-dev.2.main.7' -or $latest.Version -cne '0.1.1-dev.2.main.7') {
-        throw 'Latest release identity did not match the expected version and channel.'
+    $nextDev = $stable.Replace('0.1.0', '0.1.1-dev.3')
+    $latest = Resolve-ReleaseIdentity $nextDev workflow_run 'refs/heads/main' -RunNumber 7 -ShippedTags @(
+        'v0.1.1-dev.1', 'v0.1.1-dev.2', 'latest-main', 'v0.1.0', 'v0.1.0-dev.12')
+    $stableLatest = Resolve-ReleaseIdentity $stable workflow_run 'refs/heads/main' -RunNumber 19 -ShippedTags @(
+        'v0.1.0-dev.12', 'v0.1.0', 'v0.0.12')
+    $devLatest = Resolve-ReleaseIdentity $nextDev workflow_run 'refs/heads/main' -RunNumber 20 -ShippedTags @(
+        'v0.1.0', 'v0.1.1-dev.1')
+    $doubleDigit = Resolve-ReleaseIdentity $nextDev workflow_run 'refs/heads/main' -RunNumber 21 -ShippedTags @(
+        'v0.1.1-dev.12', 'v0.1.1-dev.2')
+    if ($latest.Channel -cne 'latest' -or $latest.Tag -cne 'v0.1.1-dev.2.main.7' -or $latest.Version -cne '0.1.1-dev.2.main.7' -or
+        $stableLatest.Version -cne '0.1.1-dev.0.main.19' -or $devLatest.Version -cne '0.1.1-dev.1.main.20' -or
+        $doubleDigit.Version -cne '0.1.1-dev.12.main.21') {
+        throw 'Latest must use the highest shipped version, even when Cargo.toml has moved ahead.'
+    }
+    if ([semver]$stableLatest.Version -le [semver]'0.1.0' -or [semver]$stableLatest.Version -ge [semver]'0.1.1-dev.1' -or
+        [semver]$stableLatest.Version -ge [semver]$devLatest.Version) {
+        throw 'A Stable-based Latest must sort below the next Dev release and its Latest builds.'
     }
     Assert-Rejected 'Expected a main workflow run' { Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/topic' -RunNumber 7 }
     Assert-Rejected 'Expected a main workflow run' { Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/main' -RunNumber '07' }
-    Assert-Rejected 'Latest requires a Dev prerelease' { Resolve-ReleaseIdentity $stable workflow_run 'refs/heads/main' -RunNumber 7 }
+    Assert-Rejected 'Latest requires a shipped' { Resolve-ReleaseIdentity $stable workflow_run 'refs/heads/main' -RunNumber 7 }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $stable push 'refs/heads/v0.1.0' }
     Assert-Rejected 'Requested tag must match' { Resolve-ReleaseIdentity $dev workflow_dispatch 'refs/heads/main' 'v0.1.1' dev }
     Assert-Rejected 'Selected tag ref must match' {
@@ -267,7 +288,10 @@ if ($SelfTest) {
 
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw
-$build = Resolve-ReleaseIdentity $manifest $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:RELEASE_TAG $env:RELEASE_CHANNEL $env:GITHUB_RUN_NUMBER
+$shippedTags = if ($env:GITHUB_EVENT_NAME -ceq 'workflow_run') {
+    Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'sidenote-shipped-tags')
+}
+$build = Resolve-ReleaseIdentity $manifest $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:RELEASE_TAG $env:RELEASE_CHANNEL $env:GITHUB_RUN_NUMBER $shippedTags
 Write-Output "Validated $($build.Tag) for the $($build.Channel) channel."
 if ($env:GITHUB_OUTPUT) {
     "tag=$($build.Tag)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8

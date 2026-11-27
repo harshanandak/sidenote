@@ -40,20 +40,16 @@ on:
         type: boolean
         default: false
 
+env:
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 permissions:
   contents: read
 
+# Only a PR's newest head needs its proof; tag pushes and manual runs never cancel.
 concurrency:
-  # A rerun against an older main commit must not cancel current packaging.
-  group: >-
-    ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.head_sha == github.sha && 'release-latest-main' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
-
-env:
-  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  group: ${{ github.event_name == 'pull_request' && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   package:
@@ -64,6 +60,11 @@ jobs:
        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.head_sha == github.sha))
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 && 'release-latest-package' ||
+            format('release-package-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.task) }}
+      cancel-in-progress: ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 }}
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
@@ -72,6 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Latest uses the exact-package proof below as its only install/update job.
         task: ${{ fromJSON(github.event_name == 'pull_request' && '["package","update-proof"]' || '["package"]') }}
     env:
       RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
@@ -83,6 +85,15 @@ jobs:
         with:
           ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
+      - name: Snapshot shipped release tags
+        if: github.event_name == 'workflow_run'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tags = gh api "repos/$env:GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list shipped releases.' }
+          $tags | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'sidenote-shipped-tags')
       - name: Resolve release identity
         id: identity
         shell: pwsh
@@ -165,6 +176,11 @@ jobs:
     if: >-
       ${{ !cancelled() &&
       (inputs.prove_published || (github.event_name != 'workflow_dispatch' && needs.package.result == 'success')) }}
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 && 'release-latest-exact-proof' ||
+            format('release-exact-proof-{0}-{1}', github.run_id, github.run_attempt) }}
+      cancel-in-progress: ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 }}
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:

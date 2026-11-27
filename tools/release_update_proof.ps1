@@ -365,6 +365,15 @@ try {
         $fixture = New-ProofFixture (Join-Path $root.FullName 'clean') $source $feed
         [void](Install-ProofFixture $fixture $feed $next)
         Assert-PackageExecutable $fixture $release
+        if ($channel -ceq 'latest') {
+            $checkExit = Invoke-UpdateCommand $fixture '--update-check'
+            $report = Read-Json (Join-Path $fixture.Updates 'update-report.json')
+            Assert-Report $fixture $report $next
+            if ($checkExit -ne 0 -or $report.status.channel -cne 'latest' -or $report.status.phase -cne 'Idle') {
+                throw 'The clean install did not successfully check its Latest feed.'
+            }
+            Write-Output 'The clean install selected and checked the Latest feed.'
+        }
         Remove-ProofFixture $fixture
         $fixture = $null
     }
