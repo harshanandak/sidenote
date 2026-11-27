@@ -1138,11 +1138,16 @@ mod tests {
                     .find(|e| e.key.as_deref() == Some(key))
                     .unwrap_or_else(|| panic!("missing {key} at width {width}"))
             };
-            let bar = find("top-bar");
+            // Home owns the window chrome: no `top-bar` row, and the sidebar's first row sits
+            // beside the page header, so the menu opens below that row, not below a bar.
+            assert!(elements.iter().all(|e| e.key.as_deref() != Some("top-bar")));
+            let header = find("page-header");
+            let workspace = find("nav-workspace");
             let button = find("new-meeting");
-            assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
-            assert!(!button.path.starts_with(&bar.path));
-            assert!(button.rect[1] >= bar.rect[1] + bar.rect[3]);
+            assert_eq!(header.rect[1], 0.0);
+            assert!(header.rect[3] >= crate::ui::TITLEBAR_H);
+            assert!(!button.path.starts_with(&header.path));
+            assert!(button.rect[1] >= workspace.rect[1] + workspace.rect[3]);
             assert_eq!(button.label.as_deref(), Some(label.as_str()));
             assert!(!button.focusable);
             let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
@@ -1151,7 +1156,7 @@ mod tests {
             } else {
                 let status = status.expect("visible start-blocked reason");
                 assert!(status.path.starts_with(&button.path));
-                assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
+                assert!(status.rect[1] >= workspace.rect[1] + workspace.rect[3]);
             }
         }
     }
@@ -1265,7 +1270,8 @@ mod tests {
     fn sidebar_top_row_geometry() {
         // S1a sizes, rendered: the open sidebar is 204 wide (width adds the divider; old
         // 230), nav rows are 30 high (old 34), and the first top row is 48 high with the
-        // collapse and search buttons inside the sidebar rather than the top bar.
+        // collapse and search buttons inside the sidebar rather than the page header. Home
+        // draws no bar above the sidebar, so the sidebar starts at the top of the window.
         let rt = new_meeting_runtime(1334.0, false);
         let elements = rt.elements();
         let find = |key| {
@@ -1274,8 +1280,9 @@ mod tests {
                 .find(|e| e.key.as_deref() == Some(key))
                 .unwrap_or_else(|| panic!("missing {key}"))
         };
-        let bar = find("top-bar");
+        let header = find("page-header");
         let nav = find("nav");
+        assert_eq!(nav.rect[1], 0.0);
         assert_eq!(nav.rect[2], 204.0);
         assert_eq!(width(&rt.state), 204.0 + 1.0);
         assert_eq!(find("nav-meetings").rect[3], 30.0);
@@ -1284,10 +1291,127 @@ mod tests {
             let control = find(key);
             assert!(control.path.starts_with(&nav.path), "{key} is inside nav");
             assert!(
-                !control.path.starts_with(&bar.path),
-                "{key} is not in top-bar"
+                !control.path.starts_with(&header.path),
+                "{key} is not in the page header"
             );
         }
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some("sidebar-toggle")),
+            "the open sidebar's header has no toggle"
+        );
+    }
+
+    /// A page that carries the window chrome, with the key of the title the header holds.
+    fn chrome_page(name: &str) -> (rune::Runtime<State>, &'static str) {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        let title = match name {
+            "home" => "home-greeting",
+            "tasks" => "tasks-header",
+            _ => "meetings-title-row",
+        };
+        rt.update(|s, _| match name {
+            "home" => s.go_home(),
+            "tasks" => s.set_view(View::Tasks),
+            _ => s.go_meetings(),
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        (rt, title)
+    }
+
+    #[test]
+    fn page_title_is_first_row_without_an_empty_top_bar() {
+        for name in ["home", "tasks", "meetings"] {
+            let (rt, title) = chrome_page(name);
+            let elements = rt.elements();
+            let find = |key| {
+                elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("{name}: missing {key}"))
+            };
+            assert!(
+                elements.iter().all(|e| e.key.as_deref() != Some("top-bar")),
+                "{name} draws no top-bar row"
+            );
+            let header = find("page-header");
+            let title = find(title);
+            assert_eq!(header.rect[1], 0.0, "{name}: the header is the first row");
+            assert!(title.path.starts_with(&header.path), "{name}");
+            assert!(
+                title.rect[1] < crate::ui::TITLEBAR_H,
+                "{name}: the title starts inside the first 48 px"
+            );
+            assert!(header.rect[3] >= crate::ui::TITLEBAR_H);
+        }
+    }
+
+    #[test]
+    fn header_row_keeps_window_drag_and_caption_inset() {
+        const CAPTION: f32 = 138.0;
+        for name in ["home", "tasks", "meetings"] {
+            let (mut rt, _) = chrome_page(name);
+            let mut insets = rune::ChromeInsets::default();
+            insets.trailing = CAPTION;
+            rt.set_chrome_insets(insets);
+            rt.settle_all();
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let header = elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some("page-header"))
+                .expect("page header");
+            let prefix = format!("{}/", header.path);
+            for e in elements.iter().filter(|e| e.path.starts_with(&prefix)) {
+                assert!(
+                    e.rect[0] + e.rect[2] <= 1334.0 - CAPTION + 0.5,
+                    "{name}: {:?} reaches the caption buttons",
+                    e.key
+                );
+            }
+            // A press in the header's bare left padding moves the window.
+            let (x, y) = (header.rect[0] + 4.0, header.rect[1] + 4.0);
+            rt.pointer_move(x, y);
+            rt.pointer_down(x, y);
+            assert_eq!(
+                rt.take_titlebar_action(),
+                Some(rune::TitlebarAction::Drag),
+                "{name}"
+            );
+            rt.pointer_up(x, y);
+        }
+    }
+
+    #[test]
+    fn an_unconverted_page_keeps_the_top_bar_toggle_and_search() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| {
+            s.config.features.people = true;
+            s.sidebar_open.set(false);
+            s.open_people();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let bar = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("top-bar"))
+            .expect("People still draws the top bar");
+        assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
+        for key in ["sidebar-toggle", "nav-search"] {
+            let control = elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing {key}"));
+            assert!(control.path.starts_with(&bar.path), "{key} is in the bar");
+        }
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some("page-header"))
+        );
     }
 
     #[test]

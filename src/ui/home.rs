@@ -191,7 +191,7 @@ fn task_card(key: &str, title: &str, tasks: &[&TaskItem], today: NaiveDate, p: P
     )
 }
 
-fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) -> El {
+fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate) -> El {
     let owner = your_name(s);
     let (open, late) = task_counts(s, today);
     let recent: Vec<_> = recent_meetings(&s.meetings, today).collect();
@@ -203,8 +203,6 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
     let t = &s.tasks;
     let (needs, waiting) = task_sections(&t.all, owner, &t.teams, t.cutoff, today);
     let tiles = if narrow { col() } else { row() };
-    let hello = list::text_title(&greeting(hour, owner), PAGE_TITLE, p).key("home-greeting");
-    let date = roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft);
     // Task tiles and cards follow the Tasks feature switch, like the sidebar row.
     let on = s.config.features.tasks;
     let tasks = on.then(|| {
@@ -220,9 +218,9 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
         .w_full()
         .max_w(860.0)
         .px(if narrow { 16.0 } else { 40.0 })
-        .py(24.0)
+        .pt(8.0)
+        .pb(24.0)
         .gap(16.0)
-        .child(col().gap(4.0).child(hello).child(date))
         .child(tiles.gap(12.0).children(tasks).child(meetings))
         .child(daily_brief(&recent, summary.map(String::as_str), p))
         .children(on.then(|| task_card("home-needs-you", "Needs you", &needs, today, p)))
@@ -231,13 +229,20 @@ fn document(s: &State, p: Palette, narrow: bool, today: NaiveDate, hour: u32) ->
 
 pub(super) fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let now = Local::now();
-    let doc = document(s, p, narrow, now.date_naive(), now.hour());
+    let today = now.date_naive();
+    let hello =
+        list::text_title(&greeting(now.hour(), your_name(s)), PAGE_TITLE, p).key("home-greeting");
+    let date = roles::META.wrap(today.format("%A %-d %B").to_string(), p.soft);
+    let title = col().gap(4.0).child(hello).child(date);
+    let side = if narrow { 16.0 } else { 40.0 };
+    let doc = document(s, p, narrow, today);
     let body = col().w_full().items_center().child(doc);
     col()
         .key("meeting-pane")
         .grow(1.0)
         .min_h(0.0)
         .min_w(0.0)
+        .child(super::page_header(s, p, side, 860.0, title))
         .children(s.notice.as_deref().map(|note| notice_bar(note, p)))
         .child(scroll(body, "home-scroll"))
         .child(ask::overlay(s, k, p, narrow, layer))
@@ -368,7 +373,7 @@ mod tests {
 
         let mut rt = Runtime::with_text(
             state,
-            |s, _| document(s, theme::palette(false), false, TODAY, 9),
+            |s, _| document(s, theme::palette(false), false, TODAY),
             (1200.0, 1200.0),
             Env::default(),
             TextSystem::new(theme::fonts(), (theme::SANS, "Inter")),

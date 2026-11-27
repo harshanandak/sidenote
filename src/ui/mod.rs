@@ -380,6 +380,9 @@ pub struct State {
     pub viewport_h: Cell<f32>,
     /// The window's width, as last laid out; the Tasks page sizes its panel from it.
     pub app_w: Cell<f32>,
+    /// What the window's own controls take at the leading and trailing edge, as the view last
+    /// read it (`Cx::chrome_insets`); the page headers keep clear of it.
+    pub chrome: Cell<(f32, f32)>,
     pub app_h: Cell<f32>,
     /// Height of the whole meeting pane; the Ask thread takes a share of it.
     pub pane_h: Cell<f32>,
@@ -616,6 +619,7 @@ impl State {
             narrow: Cell::new(false),
             viewport_h: Cell::new(600.0),
             app_w: Cell::new(DEFAULT_SIZE.0),
+            chrome: Cell::new((0.0, 0.0)),
             app_h: Cell::new(DEFAULT_SIZE.1),
             pane_h: Cell::new(800.0),
             live_document_h: Cell::new(340.0),
@@ -2445,9 +2449,51 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 
 const TITLEBAR_H: f32 = 48.0;
 
+/// The page header row for the pages that own the window chrome. The page's title row is its
+/// first row, with no bar above it. It drags the window, keeps `side` from the edges and the
+/// Windows caption buttons clear on the trailing side (`State::chrome`), and carries what
+/// `titlebar()` holds on the other pages: the logo on Hex, the sidebar toggle and search while
+/// the sidebar is closed, then the recording pill and the page's action. `max_w` is the width
+/// of the page body, so the title lines up with it.
+fn page_header(s: &State, p: theme::Palette, side: f32, max_w: f32, title: El) -> El {
+    let (leading, trailing) = s.chrome.get();
+    let (pill, action) = if s.on_hex() {
+        (None, None)
+    } else {
+        nav::actions(s, p, s.narrow.get())
+    };
+    let closed = !s.sidebar_is_open();
+    let tools = row()
+        .gap(4.0)
+        .items_center()
+        .children(s.on_hex().then(nav::logo))
+        .children((!s.on_hex() && closed).then(|| nav::toggle(s, p)))
+        .children((s.on_hex() || closed).then(|| nav::search(p)));
+    row()
+        .key("page-header")
+        .w_full()
+        .min_h(TITLEBAR_H)
+        .pl(side.max(leading))
+        .pr(side.max(trailing))
+        .items_center()
+        .justify_center()
+        .window_drag()
+        .child(
+            row()
+                .w_full()
+                .max_w(max_w)
+                .min_w(0.0)
+                .gap(8.0)
+                .items_center()
+                .children((s.on_hex() || closed).then_some(tools))
+                .child(title.grow(1.0).min_w(0.0))
+                .children(pill)
+                .children(action),
+        )
+}
+
 fn titlebar(s: &State, cx: &mut Cx<State>, p: theme::Palette, narrow: bool) -> El {
     let insets = cx.chrome_insets();
-    cx.caption_color(p.ink);
     let gutter = if narrow {
         0.0
     } else {
@@ -2504,6 +2550,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return widgets::button_sheet(p).fill(p.bg).w_full().h_full();
     }
     let k = theme::kit(&p);
+    cx.caption_color(p.ink);
+    let insets = cx.chrome_insets();
+    s.chrome.set((insets.leading, insets.trailing));
     let narrow = cx
         .layout_with("app", |r| u8::from(r[2] < NARROW))
         .unwrap_or(0)
@@ -2587,9 +2636,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         response_time::view(mask);
     }
+    // The pages that carry the window chrome in their header row (`page_header`); every other
+    // page keeps the `top-bar` row until it is converted.
+    let mut owns_chrome = false;
     let content = if s.companies.open {
         companies::pane(s, &k, p, narrow, &mut layer)
     } else if tasks_view {
+        owns_chrome = true;
         tasks::pane(s, &k, p, narrow, &mut layer)
     } else if people_view {
         people::pane(s, &k, p, narrow, &mut layer)
@@ -2604,6 +2657,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else if on_live {
         live::pane(s, &k, p, narrow, &mut layer)
     } else if on_home {
+        owns_chrome = true;
         home::pane(s, &k, p, narrow, &mut layer)
     } else if home
         && s.config.features.projects
@@ -2611,11 +2665,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     {
         area::pane(s, &k, p, narrow, &mut layer)
     } else if home {
+        owns_chrome = list::has_title_row(s);
         list::home(s, &k, p, narrow, &mut layer)
     } else {
         meeting::pane(s, &k, p, narrow, &mut layer)
     };
-    let bar = titlebar(s, cx, p, window_narrow);
+    let bar = (!owns_chrome).then(|| titlebar(s, cx, p, window_narrow));
     let mut main = col()
         .key("main")
         .grow(1.0)
@@ -2696,7 +2751,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             // A lost focus is not a hide: a window on another monitor still shows the indicator.
             s.hex_visibility(focused || hex::window_shown());
         });
-    app = app.child(bar);
+    app = app.children(bar);
     let open = s.sidebar_is_open();
     let sidebar = theme::sidebar_palette(cx.system_dark(), p);
     let mut body = row()
