@@ -60,7 +60,8 @@ fn watcher_deadline(exited: bool) {
     let job = Arc::new(ProcessJob::new().unwrap());
     let mut command = Command::new("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
     command.env("SystemRoot", "C:/Windows");
-    command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
+    // Exit normally if the watcher fails to kill the fixture, so the wait has a fallback.
+    command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30; exit 0"]);
     let helper = job.spawn(&command).unwrap();
     let (started, rx) = mpsc::channel();
     let (timed_out, result) = mpsc::channel();
@@ -79,17 +80,15 @@ fn watcher_deadline(exited: bool) {
     let start = Instant::now();
     let active = watch.finish();
     let elapsed = start.elapsed();
-    let helper_exited = helper.wait_for(500).unwrap().is_some();
-    eprintln!(
-        "status fixture exited={exited}; watcher finish={elapsed:?}; helper exited={helper_exited}"
-    );
     assert!(
         elapsed < Duration::from_secs(3),
         "owner watcher blocked for {elapsed:?}"
     );
     assert!(active);
-    assert!(
-        helper_exited,
+    // A job kill starts termination asynchronously. The process handle signals completion.
+    assert_eq!(
+        helper.wait().unwrap().code(),
+        Some(1),
         "owner watcher must terminate the private helper"
     );
     assert!(
