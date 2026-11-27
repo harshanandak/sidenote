@@ -950,14 +950,11 @@ impl State {
                         let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
                         let deleted = meeting_delete::suppressed_ids(&self.store.root);
                         let suppressed = deleted.is_ok_and(|ids| ids.contains(&id));
-                        // A folder this refresh could not read proves nothing about absence.
-                        let source = sidenote::core::meetings_dir().join(&id);
-                        let unread = failed
-                            .iter()
-                            .any(|p| source.starts_with(p) || p.starts_with(&source));
+                        // A source can live under several roots (Hex folders, meeting parts),
+                        // so only a refresh that read everything proves it is gone.
                         (live.source_seen || self.meetings.iter().any(in_catalog) || suppressed)
                             && !incoming.iter().any(in_catalog)
-                            && !unread
+                            && failed.is_empty()
                     }))
         });
         if !missing {
@@ -2635,7 +2632,7 @@ mod writer_tests {
             "a source listed before Stop and lost during a failed read must cancel the wait"
         );
 
-        // A good read that could not open the source folder does not cancel a seen source.
+        // A good read that failed to open any folder does not cancel a seen source.
         let mut unread = waiting_state(store_root.path(), id);
         unread.live.as_mut().unwrap().source_seen = true;
         let folder = sidenote::core::meetings_dir().join(id);
@@ -2644,10 +2641,10 @@ mod writer_tests {
             unread.live.is_some(),
             "a source folder the refresh could not read must not cancel the wait"
         );
-        unread.cancel_missing_summary(true, &[], &[sidenote::core::meetings_dir()]);
+        unread.cancel_missing_summary(true, &[], &[PathBuf::from("local/meeting-parts")]);
         assert!(
             unread.live.is_some(),
-            "an unreadable meetings folder must not cancel the wait"
+            "an unreadable meeting-parts folder must not cancel the wait"
         );
     }
 }
