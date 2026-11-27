@@ -51,7 +51,6 @@ mod sync_scene;
 mod tasks;
 mod teams;
 mod theme;
-mod today;
 mod todo;
 mod updates;
 mod widgets;
@@ -3057,39 +3056,6 @@ fn scene_screens_home(s: &mut State) {
     scene_agents(s, ALL_AGENTS);
 }
 
-/// One late to-do, two due today and one due tomorrow, set through the real edit path, so the
-/// Today strip counts the same on any day. Only against the isolated state folder.
-fn scene_screens_due(s: &mut State) {
-    if !isolated() {
-        return;
-    }
-    let today = s.tasks.today;
-    let days = [-1_i64, 0, 0, 1];
-    for (index, offset) in days.into_iter().enumerate() {
-        if let Some(day) = today.checked_add_signed(chrono::Duration::days(offset)) {
-            s.set_task_due(SCREENS_MEETING, index, tasks::DueChoice::Date(day));
-        }
-    }
-}
-
-/// Home with all three Today lines: a meeting still being made into notes, to-dos due, and the
-/// newest daily check (tools/prepare_check_fixture.py writes a synthetic one).
-fn scene_screens_today(s: &mut State) {
-    scene_screens_home(s);
-    scene_screens_due(s);
-    s.live = Some(live::Live::scene(
-        live::Phase::Making,
-        Some("Pricing review with Maya"),
-    ));
-}
-
-/// Home with nothing to say: no meeting in progress, no to-do due and no check report, so the
-/// Today strip is gone.
-fn scene_screens_quiet(s: &mut State) {
-    scene_screens_home(s);
-    s.tasks.items.clear();
-}
-
 pub fn spec() -> AppSpec<State> {
     AppSpec {
         min_size: Some((360.0, 480.0)),
@@ -3697,17 +3663,11 @@ pub fn spec() -> AppSpec<State> {
                     Instant::now() + Duration::from_secs(600),
                 ));
             }),
-            // Home with a row's "..." menu open, the Today strip, and the strip hidden.
+            // Home with a row's "..." menu open.
             ("screens-home-more", |s| {
                 scene_screens_home(s);
                 s.more_menu = Some(format!("more-row-{SCREENS_MEETING}"));
             }),
-            ("screens-today", scene_screens_today),
-            ("screens-today-tasks", |s| {
-                scene_screens_home(s);
-                scene_screens_due(s);
-            }),
-            ("screens-today-quiet", scene_screens_quiet),
             // The Ctrl+K palette: empty, with a query, and the query handed to Ask with Tab.
             ("screens-finder", |s| {
                 scene_screens_home(s);
