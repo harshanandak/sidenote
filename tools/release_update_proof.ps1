@@ -3,12 +3,16 @@
 param(
     [Parameter(Mandatory, ParameterSetName = 'Test')][switch]$SelfTest,
     [Parameter(Mandatory, ParameterSetName = 'Package')][string]$PackageDirectory,
-    [Parameter(Mandatory, ParameterSetName = 'Package')][string]$ExpectedTag
+    [Parameter(Mandatory, ParameterSetName = 'Package')][string]$ExpectedTag,
+    [Parameter(ParameterSetName = 'Source')]
+    [Parameter(ParameterSetName = 'Package')][string]$DiagnosticsDirectory
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $checksumError = 'The update checksum does not match. Try again.'
+$strictTaskError = 'The meeting listener task does not target this Sidenote installation with the expected arguments.'
+$installMarkers = @('update-listener.stop', 'update-listener.resume', 'pipeline-install.pending', 'install-hook.complete')
 
 function Read-Json([string]$Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
@@ -124,7 +128,7 @@ function New-ProofFixture([string]$Root, [string]$Source, [string]$Feed = (Join-
     }
 }
 
-function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture) {
+function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture, [switch]$Quiet) {
     $start = [Diagnostics.ProcessStartInfo]::new($Exe)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
@@ -144,7 +148,7 @@ function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [swit
             $process.WaitForExit()
             throw "Timed out running $([IO.Path]::GetFileName($Exe))."
         }
-        if ($Capture -and $process.ExitCode -ne 0) {
+        if ($Capture -and -not $Quiet -and $process.ExitCode -ne 0) {
             Write-Host "$($Arguments[0]) exited with code $($process.ExitCode)."
             Write-Host ($stdout.GetAwaiter().GetResult())
             Write-Host ($stderr.GetAwaiter().GetResult())
@@ -213,37 +217,266 @@ function Assert-Fixture($Fixture, [string]$Version) {
     $pointer
 }
 
-function Install-ProofFixture($Fixture, [string]$SetupFeed, [string]$Version) {
-    if ((Test-Path -LiteralPath $Fixture.Install) -or (Test-Path -LiteralPath $Fixture.Updates)) {
-        throw 'The isolated install is not clean.'
-    }
-    if (Get-CimInstance Win32_Process -Filter "Name = 'hex.exe' OR Name = 'hex.com' OR Name = 'sidenote.exe' OR Name = 'hex-meetings.exe'") {
+function Assert-SetupPreflight($Fixture, $OldListener) {
+    if (Test-Path -LiteralPath $Fixture.Install) { throw 'The isolated target install is not fresh.' }
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'hex.exe' OR Name = 'hex.com' OR Name = 'sidenote.exe' OR Name = 'hex-meetings.exe'")
+    if ($OldListener) {
+        if ($processes.Count -ne 1 -or $processes[0].ProcessId -ne $OldListener.ProcessId -or
+            $processes[0].CreationDate -ne $OldListener.CreationDate -or $processes[0].ExecutablePath -ine $OldListener.ExecutablePath) {
+            throw 'Expected only the recorded old fixture listener before Setup.'
+        }
+    } elseif ($processes.Count) {
         throw 'The runner already has a Hex or Sidenote process.'
     }
-    [void](Get-ScheduledTask -TaskPath '\')
+}
+
+function Read-SetupHookLog([string[]]$Lines) {
+    $result = @{ Starts = 0; Successes = 0; Failures = 0; HookExit = $null; Timeouts = 0; Milliseconds = -1 }
+    foreach ($line in $Lines) {
+        switch -Regex -CaseSensitive ($line) {
+            'Running --veloapp-install hook\.\.\.$' { $result.Starts++ }
+            'Hook executed successfully \(took (\d+(?:\.\d+)?)ms\)$' {
+                if ($result.Starts) {
+                    $result.Successes++
+                    $result.Milliseconds = [double]$Matches[1]
+                }
+            }
+            'Hook exited with non-zero exit code: (\d+)$' {
+                $result.Failures++
+                $result.HookExit = [int]$Matches[1]
+            }
+            'Failed to start hook --veloapp-install:|Error waiting for process to finish:' { $result.Failures++ }
+            'Process timed out after \d+s$' { $result.Timeouts++ }
+        }
+    }
+    $result
+}
+
+function Assert-SetupHookSucceeded($Setup) {
+    if ($Setup.Exit -ne 0 -or $Setup.Starts -ne 1 -or $Setup.Successes -ne 1 -or
+        $Setup.Failures -or $Setup.Timeouts -or $Setup.Milliseconds -lt 0 -or $Setup.Milliseconds -ge 30000) {
+        throw 'Raw Setup did not log one successful install hook below 30 seconds.'
+    }
+}
+
+function Invoke-RawSetup($Fixture, [string]$SetupFeed, [string]$Version, [string]$Case, $OldListener) {
+    Assert-SetupPreflight $Fixture $OldListener
     $setupLog = $Fixture.Install + '-setup.log'
     $installer = Join-Path $PSScriptRoot 'install_release.ps1'
-    $setupExit = Invoke-ProofProcess $Fixture (Join-Path $PSHOME 'pwsh.exe') -Capture -Arguments @(
+    $setupExit = Invoke-ProofProcess $Fixture (Join-Path $PSHOME 'pwsh.exe') -Capture -Quiet -Arguments @(
         '-NoProfile', '-File', $installer, '-Feed', $SetupFeed, '-Version', $Version, '-Log', $setupLog,
         '-ProofInstallDirectory', $Fixture.Install)
+    $lines = @()
     if (Test-Path -LiteralPath $setupLog) {
-        Select-String -LiteralPath $setupLog -Pattern 'hook| WARN | ERROR ' | ForEach-Object { Write-Host $_.Line }
+        $lines = @(Get-Content -LiteralPath $setupLog)
     }
-    if ($setupExit -ne 0) { throw "Setup exited with code $setupExit." }
+    $result = Read-SetupHookLog $lines
+    $result.Exit = $setupExit
+    $result.Case = $Case
+    $result.ExecutablePresent = Test-Path -LiteralPath $Fixture.Exe -PathType Leaf
+    $result.ReceiptPresent = Test-Path -LiteralPath (Join-Path $Fixture.Updates 'install-hook.complete')
+    Write-Host (ConvertTo-Json -InputObject $result -Compress)
+    if ($DiagnosticsDirectory) {
+        [void][IO.Directory]::CreateDirectory($DiagnosticsDirectory)
+        ConvertTo-Json -InputObject $result | Set-Content -LiteralPath (Join-Path $DiagnosticsDirectory "$Case.json")
+    }
+    $result
+}
+
+function Install-ProofFixture($Fixture, [string]$SetupFeed, [string]$Version, [string]$Case) {
+    if (Test-Path -LiteralPath $Fixture.Updates) { throw 'The isolated update directory is not clean.' }
+    [void](Get-ScheduledTask -TaskPath '\')
+    $setup = Invoke-RawSetup $Fixture $SetupFeed $Version $Case $null
+    if ($setup.Exit -ne 0) { throw "Setup exited with code $($setup.Exit)." }
+    return Start-ProofFixture $Fixture $Version
+}
+
+function Start-ProofFixture($Fixture, [string]$Version) {
     $reportPath = Join-Path $Fixture.Updates 'update-report.json'
-    if (Test-Path -LiteralPath $reportPath) {
-        $hookStatus = (Read-Json $reportPath).status
-        Write-Host "Setup hook reported $($hookStatus.phase). $($hookStatus.error)"
-    }
     # Setup runs the fast hook, then stops app processes. Let normal startup reconcile its listener.
-    if ((Invoke-UpdateCommand $Fixture '--update-window-start') -ne 0) { throw 'Clean install startup failed.' }
-    $listener = Wait-Proof { Get-Listener $Fixture } 'The clean installation did not start its isolated listener.'
-    if ((Invoke-UpdateCommand $Fixture '--update-status') -ne 0) { throw 'Clean install status failed.' }
+    if ((Invoke-UpdateCommand $Fixture '--update-window-start') -ne 0) { throw 'Installed fixture startup failed.' }
+    $listener = Wait-Proof { Get-Listener $Fixture } 'The installed fixture did not start its isolated listener.'
+    if ((Invoke-UpdateCommand $Fixture '--update-status') -ne 0) { throw 'Installed fixture status failed.' }
     Assert-Report $Fixture (Read-Json $reportPath) $Version
     $initialPointer = Assert-Fixture $Fixture $Version
-    Write-Host "Verified the clean $Version install, listener and pipeline."
+    Write-Host "Verified the $Version install, listener and pipeline."
 
     return @{ Listener = $listener; Pointer = $initialPointer }
+}
+
+function Resolve-TaskSid([string]$User) {
+    if ($User -match '^S-1-') { return $User }
+    ([Security.Principal.NTAccount]$User).Translate([Security.Principal.SecurityIdentifier]).Value
+}
+
+function Register-PreviousInstallFixture($Fixture, [string]$SeedInstall, [string]$Kind) {
+    $old = $Fixture.Clone()
+    $old.Install = $Fixture.OldInstall
+    $old.Exe = Join-Path $old.Install 'current/sidenote.exe'
+    Copy-Item -LiteralPath $SeedInstall -Destination $old.Install -Recurse
+    $oldSentinel = Join-Path $old.Install 'proof-data.txt'
+    [IO.File]::WriteAllText($oldSentinel, 'Synthetic previous-install fixture.')
+    foreach ($path in @($oldSentinel, $old.Exe)) { $Fixture.Sentinels[$path] = (Get-FileHash -LiteralPath $path).Hash }
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $arguments = '--listen --listener-isolated --data-dir "{0}" --listener-localappdata "{1}"' -f
+        $Fixture.Env.SIDENOTE_DATA_DIR, $Fixture.Env.LOCALAPPDATA
+    $action = New-ScheduledTaskAction -Execute $old.Exe -Argument $arguments -WorkingDirectory (Split-Path -Parent $old.Exe)
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
+    $retry = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(30) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $level = if ($Kind -eq 'elevated') { 'Highest' } else { 'Limited' }
+    $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel $level
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Disable:($Kind -eq 'disabled')
+    Register-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task -Action $action -Trigger @($logon, $retry) `
+        -Principal $principal -Settings $settings | Out-Null
+    # Set the fixture owner explicitly if the elevated runner token assigned it to Administrators.
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $registered = $service.GetFolder('\').GetTask($Fixture.Task)
+    $security = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(7))
+    $owner = [Security.Principal.SecurityIdentifier]$sid
+    if ($security.Owner -ne $owner) {
+        $security.Owner = $owner
+        [void]$registered.SetSecurityDescriptor($security.GetSddlForm('Owner, Group, Access'), 16)
+    }
+    $old
+}
+
+function Get-ProofTaskXml($Fixture) {
+    Export-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task
+}
+
+function Assert-HandoffTask($Fixture, [string]$Arguments) {
+    $task = Get-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task
+    $actions = @($task.Actions)
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($actions.Count -ne 1 -or $actions[0].Execute -ine $Fixture.Exe -or $actions[0].Arguments -cne $Arguments -or
+        $actions[0].WorkingDirectory -ine (Split-Path -Parent $Fixture.Exe) -or
+        (Resolve-TaskSid $task.Principal.UserId) -ne $sid -or $task.Principal.LogonType -ne 'Interactive' -or
+        $task.Principal.RunLevel -ne 'Limited' -or -not $task.Settings.Enabled) {
+        throw 'Setup did not transfer the expected task action and principal.'
+    }
+    $logon = @($task.Triggers | Where-Object {
+        $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $_.Enabled -and (Resolve-TaskSid $_.UserId) -eq $sid
+    })
+    $retry = @($task.Triggers | Where-Object {
+        $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' -and $_.Enabled -and
+        $_.Repetition.Interval -eq 'PT5M' -and -not $_.Repetition.Duration
+    })
+    if ($logon.Count -ne 1 -or $retry.Count -ne 1 -or @($task.Triggers).Count -ne 2 -or
+        [string]$task.Settings.MultipleInstances -notin @('IgnoreNew', '2') -or $task.Settings.ExecutionTimeLimit -ne 'PT0S') {
+        throw 'The transferred task does not have the required restart schedule.'
+    }
+}
+
+function Assert-HandoffRecord($Record, $Expected, [string]$Version, [bool]$WasRunning) {
+    if ($Record.schema -ne 1 -or $Record.phase -cne 'Complete' -or $Record.version -cne $Version) {
+        throw 'The handoff record is incomplete or for a different version.'
+    }
+    $prior = $Record.plan.prior
+    if ($prior.exe -ine $Expected.Command -or $prior.args -cne $Expected.Arguments -or
+        $prior.working_dir -ine $Expected.WorkingDirectory -or $prior.enabled -ne $true -or $prior.running -ne $WasRunning) {
+        throw 'The handoff record lost part of the previous task action.'
+    }
+}
+
+function Get-ProofState($Fixture) {
+    $paths = @((Join-Path $Fixture.Scripts '.pipeline-current.json'))
+    $paths += $installMarkers | ForEach-Object { Join-Path $Fixture.Updates $_ }
+    $paths += $Fixture.Sentinels.Keys | Sort-Object
+    foreach ($path in $paths) {
+        if (Test-Path -LiteralPath $path) { (Get-FileHash -LiteralPath $path).Hash } else { 'absent' }
+    }
+}
+
+function Invoke-SetupHandoffCases([string]$Root, [string]$Source, [string]$Feed, [string]$Version, [string]$SeedInstall, $Release) {
+    $cases = @{
+        registered = 'setup_adopts_registered_previous_install'
+        running = 'setup_hands_off_running_previous_listener'
+        disabled = 'setup_refuses_disabled_or_elevated_task-disabled'
+        elevated = 'setup_refuses_disabled_or_elevated_task-elevated'
+    }
+    $refusals = @{
+        disabled = 'The meeting listener task is disabled.'
+        elevated = 'The meeting listener task is configured to run with elevated privileges.'
+    }
+    foreach ($kind in @('registered', 'running', 'disabled', 'elevated')) {
+        $case = $cases[$kind]
+        Write-Host "Running $case."
+        $fixture = New-ProofFixture (Join-Path $Root $case) $Source $Feed
+        $fixture.OldInstall = $fixture.Install + '-previous'
+        try {
+            $old = Register-PreviousInstallFixture $fixture $SeedInstall $kind
+            $priorXml = Get-ProofTaskXml $fixture
+            $priorAction = ([xml]$priorXml).Task.Actions.Exec
+            if ($priorAction.WorkingDirectory -ine (Split-Path -Parent $old.Exe)) {
+                throw 'The previous fixture task needs its WorkingDirectory.'
+            }
+            $before = @(Get-ProofState $fixture) -join ','
+            $oldListener = $null
+            if ($kind -eq 'running') {
+                Start-ScheduledTask -TaskPath '\' -TaskName $fixture.Task
+                $listenerLock = Join-Path $fixture.Updates 'update-listener.lock'
+                $oldListener = Wait-Proof {
+                    $listener = Get-Listener $old
+                    if ($listener -and (Test-Path -LiteralPath $listenerLock)) {
+                        try { [IO.File]::Open($listenerLock, 'Open', 'Read', 'None').Dispose() }
+                        catch [IO.IOException] {
+                            if (($_.Exception.GetBaseException().HResult -band 0xffff) -ne 32) { throw }
+                            $listener
+                        }
+                    }
+                } 'The old listener did not acquire its shared lock.'
+            }
+            $setup = Invoke-RawSetup $fixture $Feed $Version $case $oldListener
+            $statusPath = Join-Path $fixture.Updates 'updates.json'
+            if ($refusals.ContainsKey($kind)) {
+                $status = Read-Json $statusPath
+                if ($setup.Exit -ne 0 -or $setup.Starts -ne 1 -or -not $setup.ExecutablePresent -or
+                    $setup.Successes -or $setup.Failures -ne 1 -or $setup.HookExit -ne 1 -or $setup.Timeouts -or
+                    $status.phase -cne 'Error' -or $status.error -cne $refusals[$kind]) {
+                    throw "$case did not report its expected refusal."
+                }
+                if ((Get-ProofTaskXml $fixture) -cne $priorXml -or (@(Get-ProofState $fixture) -join ',') -cne $before) {
+                    throw "$case changed the task, pipeline, markers or synthetic data."
+                }
+                Write-Host "Verified $case."
+                continue
+            }
+
+            Assert-SetupHookSucceeded $setup
+            $status = Read-Json $statusPath
+            if ($status.phase -cne 'Idle' -or $null -ne $status.error) { throw 'Raw Setup left an installation error.' }
+            [void](Assert-Fixture $fixture $Version)
+            if ($Release) { Assert-PackageExecutable $fixture $Release }
+            Assert-HandoffTask $fixture $priorAction.Arguments
+            $records = @(Get-ChildItem -LiteralPath $fixture.Updates -File -Filter 'listener-handoff-*.json' | ForEach-Object {
+                $record = Read-Json $_.FullName
+                if ($record.task -ceq $fixture.Task -and $record.target -ieq $fixture.Exe) {
+                    @{ Path = $_.FullName; Data = $record }
+                }
+            })
+            if ($records.Count -ne 1) { throw 'Expected one durable handoff record.' }
+            Assert-HandoffRecord $records[0].Data $priorAction $Version ($kind -eq 'running')
+            if ($oldListener -and (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldListener.ProcessId)" |
+                Where-Object CreationDate -EQ $oldListener.CreationDate)) { throw 'The recorded old process survived Setup.' }
+            if (Get-Listener $old) { throw 'A previous-root listener survived Setup.' }
+            $taskXml = Get-ProofTaskXml $fixture
+            $recordHash = (Get-FileHash -LiteralPath $records[0].Path).Hash
+            [void](Start-ProofFixture $fixture $Version)
+            [void](Start-ProofFixture $fixture $Version)
+            $strictExit = Invoke-ProofProcess $old $old.Exe @('--update-window-start', '--peers-dir', $old.Peers) -Capture -Quiet
+            $strictStatus = (Read-Json (Join-Path $old.Updates 'update-report.json')).status
+            if ($strictExit -ne 1 -or $strictStatus.phase -cne 'Error' -or $strictStatus.error -cne $strictTaskError -or
+                (Get-Listener $old) -or -not (Get-Listener $fixture) -or (Get-ProofTaskXml $fixture) -cne $taskXml -or
+                @(Get-ChildItem -LiteralPath $fixture.Updates -File -Filter 'listener-handoff-*.json').Count -ne 1 -or
+                (Get-FileHash -LiteralPath $records[0].Path).Hash -cne $recordHash) {
+                throw 'startup_cannot_take_back_listener failed.'
+            }
+            [void](Assert-Fixture $fixture $Version)
+            Write-Host "Verified $case and startup_cannot_take_back_listener."
+        } finally { Remove-ProofFixture $fixture }
+    }
 }
 
 function Invoke-SelfTest([string]$Root, [string]$Source) {
@@ -310,16 +543,47 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         }
         if (-not $rejected) { throw 'Package checksum verification accepted invalid input.' }
     }
-    Write-Output 'Release update fixture, report and refusal self-test passed.'
-    Write-Output 'Release package checksum self-test passed.'
+    $start = 'Running --veloapp-install hook...'
+    $success = 'Hook executed successfully (took 1234ms)'
+    $setup = Read-SetupHookLog @($start, $success)
+    $setup.Exit = 0
+    Assert-SetupHookSucceeded $setup
+    foreach ($lines in @(@($start, 'Hook exited with non-zero exit code: 1'), @($start, $success, 'Process timed out after 30s'),
+        @($start, $success.Replace('1234', '30000')), @($success, $start))) {
+        $setup = Read-SetupHookLog $lines
+        $setup.Exit = 0
+        try { Assert-SetupHookSucceeded $setup }
+        catch {
+            if ($_.Exception.Message -cne 'Raw Setup did not log one successful install hook below 30 seconds.') { throw }
+            continue
+        }
+        throw 'Setup assertion accepted an invalid hook log.'
+    }
+    $prior = @{ Command = 'old.exe'; Arguments = '--listen'; WorkingDirectory = 'previous' }
+    $record = @{ schema = 1; phase = 'Complete'; version = '0.1.0'; plan = @{
+        prior = @{ exe = 'old.exe'; args = '--listen'; working_dir = 'previous'; enabled = $true; running = $false }
+    } }
+    Assert-HandoffRecord $record $prior '0.1.0' $false
+    $record.plan.prior.working_dir = ''
+    try { Assert-HandoffRecord $record $prior '0.1.0' $false }
+    catch {
+        if ($_.Exception.Message -cne 'The handoff record lost part of the previous task action.') { throw }
+        Write-Output 'Release fixture, package checksum, Setup hook and previous-action self-tests passed.'
+        return
+    }
+    throw 'Handoff assertion accepted a dropped working directory.'
 }
 
 function Remove-ProofFixture($Fixture) {
     if (Get-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task -Confirm:$false
     }
-    $processes = @(Get-Process -Name sidenote,Update -ErrorAction SilentlyContinue | Where-Object {
-        $_.Path -and $_.Path.StartsWith($Fixture.Install + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    $roots = @($Fixture.Install, $Fixture['OldInstall']) | Where-Object { $_ }
+    $processes = @(Get-Process | Where-Object {
+        $path = $_.Path
+        $path -and ($roots | Where-Object {
+            $path.StartsWith($_ + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+        })
     })
     $processes | Stop-Process -Force
     $processes | Wait-Process -Timeout 10
@@ -359,8 +623,9 @@ try {
     if ($LASTEXITCODE) { throw 'Could not extract the source for the proof builds.' }
     if ($release) {
         $fixture = New-ProofFixture (Join-Path $root.FullName 'clean') $source $feed
-        [void](Install-ProofFixture $fixture $feed $next)
+        [void](Install-ProofFixture $fixture $feed $next 'clean-exact')
         Assert-PackageExecutable $fixture $release
+        $seedInstall = $fixture.Install
         Remove-ProofFixture $fixture
         $fixture = $null
     }
@@ -403,7 +668,15 @@ try {
         Write-Output 'Verified both full packages and the delta in the isolated feed.'
     }
 
-    $installed = Install-ProofFixture $fixture $baselineSetup $n
+    if ($release) {
+        Invoke-SetupHandoffCases $root.FullName $source $feed $next $seedInstall $release
+        $installed = Install-ProofFixture $fixture $baselineSetup $n 'clean-baseline'
+    } else {
+        [void](Install-ProofFixture $fixture $baselineSetup $n 'clean-baseline')
+        Remove-ProofFixture $fixture
+        Invoke-SetupHandoffCases $root.FullName $source $feed $next $fixture.Install $null
+        $installed = Start-ProofFixture $fixture $n
+    }
     $listener = $installed.Listener
     $initialPointer = $installed.Pointer
     $reportPath = Join-Path $fixture.Updates 'update-report.json'

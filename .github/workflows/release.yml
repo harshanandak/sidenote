@@ -119,13 +119,22 @@ jobs:
           compression-level: 0
       - name: Prove installed updates against an isolated feed
         if: matrix.task == 'update-proof'
+        id: source-proof
         shell: pwsh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
         run: |
           pwsh -NoProfile -File tools/release_update_proof.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Update proof self-test failed.' }
-          ./tools/release_update_proof.ps1
+          ./tools/release_update_proof.ps1 -DiagnosticsDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-source-proof-diagnostics')
+      - name: Upload source proof diagnostics
+        if: failure() && steps.source-proof.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sidenote-source-proof-diagnostics
+          path: ${{ runner.temp }}/sidenote-source-proof-diagnostics
+          overwrite: true
+          retention-days: 7
 
   exact-package-proof:
     name: Prove clean install and update on the exact release packages
@@ -177,8 +186,17 @@ jobs:
         run: |
           pwsh -NoProfile -File tools/release_update_proof.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Update proof self-test failed.' }
-          ./tools/release_update_proof.ps1 -PackageDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-release') -ExpectedTag $env:RELEASE_TAG
+          ./tools/release_update_proof.ps1 -PackageDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-release') -ExpectedTag $env:RELEASE_TAG `
+            -DiagnosticsDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-exact-proof-diagnostics')
           "artifact-id=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Upload exact package proof diagnostics
+        if: failure() && steps.prove.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sidenote-exact-proof-diagnostics
+          path: ${{ runner.temp }}/sidenote-exact-proof-diagnostics
+          overwrite: true
+          retention-days: 7
 
   publish-dry-run:
     name: Dry-run Windows release publish
