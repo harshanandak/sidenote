@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
-  "src/ui/ask_switch_tests.rs": "c7f45bf52caa9543e183a49db5191de6e41bab6f06cd5c7028674500d200c158",
+  "src/ui/ask_switch_tests.rs": "a6cc03873be6bbb460bc977a6688d3f3796291bbbc228e38b942667eb40b664a",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
-  "src/ui/hex/settings.rs": "003e10a30569824e2daff7d12248c19c35a6514bb6be1ea883ffb2f96891f753",
+  "src/ui/hex/settings.rs": "2c4a7d1016165d0795c1a3b8c2805e0cbb04436353d2b925042161b75b9c9e13",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "766f7958cae0c795609ea6deba11050ef4294f0d9aaa96bca6fa43c5b2f957ac",
+  "src/ui/mod.rs": "98d6636671c0f9a2dc42aab2d376f12596c46d249f7193066918075895801d57",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

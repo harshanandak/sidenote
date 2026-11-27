@@ -2404,6 +2404,93 @@ fn ask_on_every_page_leaves_the_last_task_clear() {
     assert!(last_top >= scroll_top && last_top + last_h <= scroll_top + scroll_h);
 }
 
+/// Ask answers carry meeting citations; opening one and pressing back returns to the page
+/// the answer was asked on, with the answer showing.
+#[test]
+fn citation_back_returns_to_origin() {
+    if in_parent("citation_back_returns_to_origin") {
+        return;
+    }
+    const QUESTION: &str = "What did we decide?";
+    const ANSWER: &str = "The beta ships on Friday.";
+    let pages: [(&str, fn(&mut State), nav::Page, Option<nav::Filter>); 9] = [
+        ("home", |s| s.go_home(), nav::Page::Home, None),
+        (
+            "meetings",
+            |s| s.go_meetings(),
+            nav::Page::Meetings,
+            Some(nav::Filter::All),
+        ),
+        (
+            "tasks",
+            |s| s.set_view(tasks::View::Tasks),
+            nav::Page::Tasks,
+            None,
+        ),
+        ("people", State::open_people, nav::Page::People, None),
+        ("memory", State::open_memory, nav::Page::Memory, None),
+        ("check", State::open_check, nav::Page::Check, None),
+        ("settings", State::open_hex, nav::Page::Hex, None),
+        (
+            "annotations",
+            State::open_annotations,
+            nav::Page::Annotations,
+            None,
+        ),
+        (
+            "areas",
+            |s| s.set_filter(nav::Filter::Areas),
+            nav::Page::Meetings,
+            Some(nav::Filter::Areas),
+        ),
+    ];
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    for (name, open, want, filter) in pages {
+        let cite = format!("cite:{MEETING}");
+        rt.update(|s, _| {
+            open(s);
+            s.saved.messages = vec![
+                Message {
+                    role: "user".into(),
+                    text: QUESTION.into(),
+                    ..Default::default()
+                },
+                Message {
+                    role: "assistant".into(),
+                    text: format!("{ANSWER} [[{MEETING}]]"),
+                    ..Default::default()
+                },
+            ];
+            s.store.save(core::ALL_KEY, &s.saved).unwrap();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.scroll_to_bottom_instant("thread-scroll"));
+        rt.settle_all();
+        rt.frame(0.0);
+        tap(&mut rt, &cite);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(rt.state.selected.as_deref(), Some(MEETING), "{name}");
+        tap(&mut rt, "back-to-summary");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.state.page() == want, "{name}");
+        assert!(rt.state.selected.is_none(), "{name}");
+        assert!(!rt.state.thread_hidden, "{name}");
+        if let Some(filter) = filter {
+            assert!(rt.state.filter == filter, "{name}");
+        }
+        let texts: Vec<_> = rt
+            .elements()
+            .iter()
+            .filter_map(|e| e.text.as_deref())
+            .collect();
+        assert!(texts.contains(&QUESTION), "{name}");
+        assert!(rt.find(&cite).is_some(), "{name}");
+    }
+}
+
 #[test]
 fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks") {
