@@ -16,6 +16,23 @@ use windows_sys::Win32::{
 fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
     s.encode_wide().chain(Some(0)).collect()
 }
+
+/// Windows PowerShell must use its own module path; a PSModulePath inherited from
+/// PowerShell 7 hides built-in script-module commands such as Get-FileHash.
+pub fn windows_powershell_at(exe: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new(exe);
+    command
+        .env_remove("PSModulePath")
+        .creation_flags(0x08000000);
+    command
+}
+
+/// Windows PowerShell must use its own module path; a PSModulePath inherited from
+/// PowerShell 7 hides built-in script-module commands such as Get-FileHash.
+pub fn windows_powershell() -> std::process::Command {
+    windows_powershell_at("powershell.exe")
+}
 #[cfg(feature = "desktop")]
 pub fn show_error(message: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
@@ -455,6 +472,20 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Read;
+
+    #[test]
+    fn powershell_children_drop_the_inherited_module_path() {
+        let command = windows_powershell();
+        assert_eq!(command.get_program(), "powershell.exe");
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
+        }));
+        let command = windows_powershell_at("powershell.exe");
+        assert_eq!(command.get_program(), "powershell.exe");
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
+        }));
+    }
 
     #[test]
     fn fallback_errors_surface_and_sharing_retries_remain_bounded() {
