@@ -374,8 +374,7 @@ fn home_row(
     }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
-    let mut r: El;
-    if narrow && action.is_some() {
+    let mut r = if narrow && action.is_some() {
         // At phone width the action would squeeze the title to about 40px, so it
         // sits under the row text, left-aligned with the title. The top row keeps
         // the title plus the time/More column where they were.
@@ -386,7 +385,7 @@ fn home_row(
             .items_start()
             .child(main)
             .child(col().items_end().child(more).child(time));
-        r = col()
+        col()
             .w_full()
             .gap(8.0)
             .px(10.0)
@@ -394,7 +393,7 @@ fn home_row(
             .radius(10.0)
             .hover(p.chip)
             .child(top)
-            .child(row().w_full().child(button));
+            .child(row().w_full().child(button))
     } else {
         let mut row_el = row()
             .w_full()
@@ -419,8 +418,8 @@ fn home_row(
                 .child(row().w(44.0).justify_end().child(time))
                 .child(more)
         };
-        r = row_el;
-    }
+        row_el
+    };
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
         r = r.fill(p.chip);
@@ -1156,10 +1155,17 @@ mod tests {
             "the row keeps its action key and label"
         );
         let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
+        // The pressable title area grows into the free width, so it shows the squeeze;
+        // the title text itself is only as wide as its words.
+        let title_area = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row's title area")
+            .rect;
         assert!(
-            title_rect[2] >= 200.0,
-            "the title keeps its width, got {}",
-            title_rect[2]
+            title_area[2] >= 200.0,
+            "the title area keeps its width, got {}",
+            title_area[2]
         );
         assert!(
             action_rect[1] >= title_rect[1] + title_rect[3],
