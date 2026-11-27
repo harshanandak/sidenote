@@ -1504,7 +1504,12 @@ fn reconcile_installed(
     listener: impl FnOnce(Instant) -> Result<(), String>,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<bool, String> {
-    let (pipeline_deadline, deadline) = reconciliation_deadlines(started, budget);
+    let deadline = started
+        + match budget {
+            ReconciliationBudget::InstallOrRecovery => INSTALL_HOOK_WORK_LIMIT,
+            ReconciliationBudget::FastUpdate => UPDATE_HOOK_WORK_LIMIT,
+        };
+    let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
     let preflight =
         || task(ListenerTaskMode::Preflight, pipeline_deadline).map_err(ListenerTaskError::message);
     preflight()?;
@@ -1516,15 +1521,6 @@ fn reconcile_installed(
         || listener(deadline),
         make_report,
     )
-}
-
-fn reconciliation_deadlines(started: Instant, budget: ReconciliationBudget) -> (Instant, Instant) {
-    let deadline = started
-        + match budget {
-            ReconciliationBudget::InstallOrRecovery => INSTALL_HOOK_WORK_LIMIT,
-            ReconciliationBudget::FastUpdate => UPDATE_HOOK_WORK_LIMIT,
-        };
-    (deadline - INSTALL_HOOK_RECOVERY_RESERVE, deadline)
 }
 
 fn recover_listener() -> Result<(), String> {
@@ -1628,16 +1624,11 @@ fn restart_listener() {
 pub fn apply(
     from_window: bool,
     mut restart_args: Vec<String>,
-    mut publish: impl FnMut(Phase),
+    publish: impl FnMut(Phase),
 ) -> Result<(), String> {
-    let _check = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
     if !installed() {
         return Ok(());
     }
-    if listener_stopping() {
-        return Err("An update is already being installed.".into());
-    }
-    publish(Phase::Preparing);
     let args: Vec<_> = std::env::args().skip(1).collect();
     for pair in args.windows(2).filter(|pair| {
         matches!(
@@ -1659,6 +1650,29 @@ pub fn apply(
     };
     let _gate = exclusive("update-activity.lock")
         .map_err(|_| "Wait for Ask, routing and notes jobs to finish before installing.")?;
+    let directory = directory();
+    let guard = if from_window {
+        None
+    } else {
+        Some(InstallGuard::acquire(&directory).map_err(InstallAdmission::message)?)
+    };
+    let _listener = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
+    if listener_stopping() {
+        return Err("An update is already being installed.".into());
+    }
+    let result = apply_ready(restart_args, publish);
+    if let (Some(guard), Err(error)) = (&guard, &result) {
+        let status = Status {
+            phase: Phase::Error,
+            error: Some(error.clone()),
+            ..read_status(&directory)
+        };
+        let _ = guard.save(&status, report);
+    }
+    result
+}
+fn apply_ready(restart_args: Vec<String>, mut publish: impl FnMut(Phase)) -> Result<(), String> {
+    publish(Phase::Preparing);
     let channel = channel();
     let mgr = manager(channel)?;
     let asset = pending_asset(&mgr, channel).ok_or("Check for updates before installing.")?;
@@ -1712,13 +1726,11 @@ fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     Ok(report)
 }
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
-    let apply_requested = args.iter().any(|a| a == "--update-apply");
-    let mut refresh_report = apply_requested;
     let result = if args.iter().any(|a| a == "--update-window-start") {
         window_start(|_| {}).map(|_| load())
     } else if args.iter().any(|a| a == "--update-probe") {
         recording_idle().map(|_| load())
-    } else if apply_requested {
+    } else if args.iter().any(|a| a == "--update-apply") {
         apply(false, vec!["--update-status".into()], |phase| {
             let _ = save(&Status { phase, ..load() });
         })
@@ -1726,8 +1738,16 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     } else if args.iter().any(|a| a == "--update-check") {
         check(|_| {})
     } else {
-        refresh_report = true;
-        Ok(load())
+        let directory = directory();
+        if installed()
+            && let Ok(_guard) = InstallGuard::acquire(&directory)
+        {
+            let status = read_status(&directory);
+            let _ = write_report(&status);
+            Ok(status)
+        } else {
+            Ok(load())
+        }
     };
     let status = match result {
         Ok(s) => s,
@@ -1737,17 +1757,7 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             ..load()
         },
     };
-    let mut output = report(&status);
-    if refresh_report && installed() {
-        let directory = directory();
-        if let Ok(_guard) = InstallGuard::acquire(&directory) {
-            if !apply_requested {
-                output = report(&read_status(&directory));
-            }
-            let _ = write_json(&directory.join("update-report.json"), &output);
-        }
-    }
-    println!("{output}");
+    println!("{}", report(&status));
     i32::from(status.phase == Phase::Error)
 }
 

@@ -242,6 +242,12 @@ function Assert-UpdatedStatus($Status) {
     }
 }
 
+function Assert-PersistedChecksumRefusal($Fixture, [string]$ReportPath, [int]$ApplyExitCode) {
+    Assert-ChecksumRefusal $ApplyExitCode (Read-Json (Join-Path $Fixture.Updates 'updates.json'))
+    $exitCode = Invoke-UpdateCommand $Fixture '--update-status'
+    Assert-ChecksumRefusal $exitCode (Read-Json $ReportPath).status
+}
+
 function Invoke-SelfTest([string]$Root, [string]$Source) {
     $fixture = New-ProofFixture $Root $Source
     if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates) -or
@@ -460,6 +466,7 @@ try {
         $refusal = Read-Json $reportPath
         Assert-Report $fixture $refusal $n
         Assert-ChecksumRefusal $exitCode $refusal.status
+        Assert-PersistedChecksumRefusal $fixture $reportPath $exitCode
         if ((Get-Listener $fixture).ProcessId -ne $listener.ProcessId) { throw 'Checksum refusal disturbed the listener.' }
         [void](Assert-Fixture $fixture $n)
     } finally { [IO.File]::WriteAllBytes($readyPath, $original) }
