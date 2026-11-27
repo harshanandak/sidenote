@@ -332,6 +332,8 @@ pub struct State {
     pub drawer_open: Cell<bool>,
     /// What the home list shows, and the per-meeting lookups the sidebar's counts need.
     pub filter: nav::Filter,
+    /// The meetings list's own All / With tasks / With decisions view.
+    pub meetings_view: list::MeetingsView,
     pub nav: nav::NavCache,
     pub areas: area::AreaUi,
     pub ai_notes: ai_notes::AiNotes,
@@ -581,6 +583,7 @@ impl State {
             sidebar_sized: Cell::new(false),
             drawer_open: Cell::new(false),
             filter: nav::Filter::All,
+            meetings_view: list::MeetingsView::default(),
             nav: nav::NavCache::default(),
             areas: area::AreaUi::default(),
             ai_notes: ai_notes::AiNotes::default(),
@@ -743,6 +746,7 @@ impl State {
                     .meeting_indices
                     .into_iter()
                     .filter(|i| self.matches_filter(&self.meetings[*i]))
+                    .filter(|i| self.matches_meetings_view(&self.meetings[*i]))
                     .filter(|i| query.is_empty() || hits.contains_key(&self.meetings[*i].id))
                     .map(|index| ListItem {
                         hit: hits.get(&self.meetings[index].id).cloned(),

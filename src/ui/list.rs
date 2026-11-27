@@ -7,7 +7,7 @@ use super::{
     theme::{Palette, display},
     widgets::{
         highlighted, icon_button, link, menu_row, menu_surface, menu_trigger, notice_bar,
-        pressable, scroll,
+        pressable, row_button, scroll,
     },
 };
 use rune::{Align, El, Key, Side, TextEdit, col, el, row};
@@ -66,8 +66,14 @@ pub(super) fn snippet(hit: &SearchHit, p: Palette) -> El {
 
 fn search_key(s: &mut State, e: &rune::KeyEvent, tx: &mut rune::Tx) -> bool {
     match e.key {
-        Key::Up => s.move_cursor(-1, tx),
-        Key::Down => s.move_cursor(1, tx),
+        Key::Up => {
+            s.keyboard = true;
+            s.move_cursor(-1, tx)
+        }
+        Key::Down => {
+            s.keyboard = true;
+            s.move_cursor(1, tx)
+        }
         Key::Enter => s.open_cursor(tx),
         Key::Escape => {
             s.search = TextEdit::new("");
@@ -99,14 +105,47 @@ fn search_box(s: &State, k: &Kit, height: f32, placeholder: &str, p: Palette) ->
 fn empty_text(s: &State) -> &'static str {
     if s.meetings.is_empty() {
         "Choose New meeting to start a recording. It will appear here when it is ready."
-    } else if s.filter != Filter::All && s.search.text.trim().is_empty() {
+    } else if s.filter != Filter::All
+        && s.meetings_view == MeetingsView::All
+        && s.search.text.trim().is_empty()
+    {
         "No meetings here yet."
+    } else if s.meetings_view != MeetingsView::All && s.search.text.trim().is_empty() {
+        "No meetings match this view. Try the All view."
     } else {
         "No meetings match. Try a different search or clear the search field."
     }
 }
 
 // ---- home --------------------------------------------------------------------------------
+
+/// The meetings list's own view filter. It is orthogonal to the sidebar's project and
+/// device filters, which narrow the same rows through `matches_filter`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum MeetingsView {
+    #[default]
+    All,
+    WithTasks,
+    WithDecisions,
+}
+
+impl State {
+    pub(super) fn matches_meetings_view(&self, meeting: &Meeting) -> bool {
+        match self.meetings_view {
+            MeetingsView::All => true,
+            MeetingsView::WithTasks => !meeting.summary.todo.is_empty(),
+            MeetingsView::WithDecisions => meeting.points().any(|p| p.kind == "decided"),
+        }
+    }
+
+    pub(super) fn set_meetings_view(&mut self, view: MeetingsView) {
+        if self.meetings_view != view {
+            self.meetings_view = view;
+            self.cursor = 0;
+            self.refresh_list();
+        }
+    }
+}
 
 fn home_row(
     s: &State,
@@ -256,7 +295,9 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     // Bare count `24`, or `shown of total` when filtered or searched (old: `24 meetings`).
     let total = s.meetings.len();
     let shown = s.row_count();
-    let filtered = s.filter != Filter::All || !s.search.text.trim().is_empty();
+    let filtered = s.filter != Filter::All
+        || s.meetings_view != MeetingsView::All
+        || !s.search.text.trim().is_empty();
     let count = if filtered {
         format!("{shown} of {total}")
     } else {
@@ -296,10 +337,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .children(super::today::strip(s, p))
         .children(super::project_merge::panel(s, k, p, layer))
         .children(super::area::project_tools(s, k, p, layer))
-        .children(
-            (s.search.focused || !s.search.text.is_empty())
-                .then(|| search_box(s, k, 34.0, "Filter meetings, tasks and transcripts", p)),
-        );
+        .child(toolbar(s, k, p, layer));
     let mut position = 0;
     for group in &s.groups {
         doc = doc.child(
@@ -397,6 +435,119 @@ fn title_more(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             (
                 TITLE_MENU,
                 "meetings-title-more",
+                Side::Bottom,
+                Align::End,
+                240.0,
+            ),
+            |s| s.more_menu = None,
+        );
+    }
+    trigger
+}
+
+/// The key of the open Filter popover, so only one menu is ever open.
+const FILTER_MENU: &str = "meetings-filter";
+
+/// One toolbar row under the title: the list-local view tabs, the persistent search
+/// field, and one Filter button whose popover lists only existing project filters.
+fn toolbar(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
+    row()
+        .key("meetings-toolbar")
+        .w_full()
+        .gap(8.0)
+        .items_center()
+        .flex_wrap()
+        .child(view_tab(
+            s,
+            "All",
+            "meetings-view-all",
+            MeetingsView::All,
+            p,
+        ))
+        .child(view_tab(
+            s,
+            "With tasks",
+            "meetings-view-with-tasks",
+            MeetingsView::WithTasks,
+            p,
+        ))
+        .child(view_tab(
+            s,
+            "With decisions",
+            "meetings-view-with-decisions",
+            MeetingsView::WithDecisions,
+            p,
+        ))
+        .child(el().grow(1.0))
+        .child(
+            el().w(200.0)
+                .child(search_box(s, k, 28.0, "Search meetings", p)),
+        )
+        .child(filter_button(s, k, p, layer))
+}
+
+fn view_tab(s: &State, label: &str, key: &str, view: MeetingsView, p: Palette) -> El {
+    super::widgets::quiet_button(label, key, p)
+        .fill(if s.meetings_view == view {
+            p.sel
+        } else {
+            rune::Color::TRANSPARENT
+        })
+        .on_press_tx(move |s: &mut State, tx| {
+            s.set_meetings_view(view);
+            // A clicked tab gives focus back to the page, so the arrows and Enter drive the list.
+            if !tx.by_keys() {
+                tx.blur();
+            }
+        })
+}
+
+fn filter_button(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
+    let open = s.more_menu.as_deref() == Some(FILTER_MENU);
+    let mut button = row_button(
+        "Filter",
+        "meetings-filter",
+        super::widgets::ButtonRole::Secondary,
+        p,
+    );
+    if s.filter != Filter::All {
+        button = button.fill(p.sel);
+    }
+    let trigger = menu_trigger(button, open, p, |s| {
+        let same = s.more_menu.as_deref() == Some(FILTER_MENU);
+        s.more_menu = (!same).then(|| FILTER_MENU.to_string());
+    });
+    if open {
+        let on = s.config.features.projects;
+        let mut names: Vec<&String> = s.nav.project_counts.keys().filter(|_| on).collect();
+        names.sort();
+        let mut menu = col().child(
+            menu_row("All meetings", p, None, None, None)
+                .key("meetings-filter-all")
+                .on_press(|s: &mut State| {
+                    s.more_menu = None;
+                    s.set_filter(Filter::All);
+                }),
+        );
+        for name in names {
+            let name = name.as_str().to_owned();
+            menu = menu.child(
+                menu_row(name.clone(), p, None, None, None)
+                    .key(format!("meetings-filter-project-{name}"))
+                    .on_press(move |s: &mut State| {
+                        s.more_menu = None;
+                        s.set_filter(Filter::Project(name.clone()));
+                    }),
+            );
+        }
+        menu_surface(
+            k,
+            p,
+            layer,
+            menu,
+            (
+                FILTER_MENU,
+                "meetings-filter",
                 Side::Bottom,
                 Align::End,
                 240.0,
@@ -578,6 +729,8 @@ mod tests {
             (width, 900.0),
             rune::Env::default(),
         );
+        // The app's key handler, as `spec()` installs it, so list keys reach the list.
+        rt.on_key = Some(super::super::on_key);
         rt.frame(0.0);
         rt
     }
@@ -616,6 +769,14 @@ mod tests {
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    fn key(rt: &mut rune::Runtime<State>, key: Key) {
+        rt.key(rune::KeyEvent {
+            key,
+            mods: rune::Mods::default(),
+        });
         rt.frame(0.0);
     }
 
@@ -718,6 +879,195 @@ mod tests {
                 .iter()
                 .all(|e| e.text.as_deref() != Some("Add to project"))
         );
+    }
+
+    #[test]
+    fn toolbar_holds_view_tabs_search_and_filter() {
+        let state = home_state(vec![synthetic_meeting(
+            "1793955600000-1",
+            "Invented blueberry standup",
+        )]);
+        let elements = render_home(state, 1334.0).elements();
+        let bar = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meetings-toolbar"))
+            .expect("toolbar row");
+        let prefix = format!("{}/", bar.path);
+        // The search field is persistent (new): it shows while empty and unfocused.
+        for key in [
+            "meetings-view-all",
+            "meetings-view-with-tasks",
+            "meetings-view-with-decisions",
+            "search",
+            "meetings-filter",
+        ] {
+            assert!(
+                elements
+                    .iter()
+                    .filter(|e| e.path.starts_with(&prefix))
+                    .any(|e| e.key.as_deref() == Some(key)),
+                "{key} is in the toolbar"
+            );
+        }
+    }
+
+    #[test]
+    fn toolbar_click_leaves_the_list_keys_live() {
+        let mut state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+        ]);
+        for meeting in &mut state.meetings {
+            meeting.summary.todo.push(core::Todo {
+                task: "Invented follow-up".into(),
+                ..Default::default()
+            });
+        }
+        let mut rt = render_home(state, 1334.0);
+        tap(&mut rt, "meetings-view-with-tasks");
+        key(&mut rt, Key::Down);
+        assert_eq!(rt.state.cursor, 1);
+        key(&mut rt, Key::Enter);
+        assert_eq!(rt.state.selected.as_deref(), Some("1793955600000-2"));
+    }
+
+    #[test]
+    fn toolbar_filter_keeps_enter_for_its_menu() {
+        let mut rt = render_home(home_state(trio_meetings()), 1334.0);
+        rt.update(|_, tx| tx.focus("meetings-filter", true));
+        key(&mut rt, Key::Enter);
+        assert_eq!(rt.state.more_menu.as_deref(), Some(FILTER_MENU));
+        assert!(rt.state.selected.is_none());
+    }
+
+    #[test]
+    fn with_empty_search_down_shows_the_cursor() {
+        let mut rt = render_home(home_state(trio_meetings()), 1334.0);
+        tap(&mut rt, "search");
+        assert!(rt.state.search.focused);
+        key(&mut rt, Key::Down);
+        assert_eq!(rt.state.cursor, 1);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-2"))
+            .expect("second row");
+        let parent = row.path.rsplit_once('/').unwrap().0;
+        assert!(
+            elements.iter().find(|e| e.path == parent).unwrap().fill != rune::Color::TRANSPARENT
+        );
+    }
+
+    #[test]
+    fn with_empty_view_offers_all_and_go_meetings_resets_the_view() {
+        let mut rt = render_home(home_state(solo_meeting()), 1334.0);
+        tap(&mut rt, "meetings-view-with-decisions");
+        assert!(rt.elements().iter().any(|e| {
+            e.text.as_deref() == Some("No meetings match this view. Try the All view.")
+        }));
+        rt.update(|s, _| s.go_meetings());
+        assert!(rt.state.meetings_view == MeetingsView::All);
+    }
+
+    #[test]
+    fn with_tasks_hides_meetings_without_todo() {
+        let mut state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+        ]);
+        state.meetings[1].summary.todo.push(core::Todo {
+            task: "Invented follow-up".into(),
+            ..Default::default()
+        });
+        let mut rt = render_home(state, 1334.0);
+        tap(&mut rt, "meetings-view-with-tasks");
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.key.as_deref() == Some("meeting-1793955600000-2"))
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some("meeting-1793955600000-1"))
+        );
+    }
+
+    #[test]
+    fn with_decisions_counts_only_decided_points() {
+        let mut state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+        ]);
+        state.meetings[0].summary.topics.push(core::Topic {
+            title: "Invented topic".into(),
+            points: vec![core::Point {
+                kind: "discussed".into(),
+                text: "Invented chatter".into(),
+                ..Default::default()
+            }],
+        });
+        state.meetings[1].summary.topics.push(core::Topic {
+            title: "Invented topic".into(),
+            points: vec![core::Point {
+                kind: "decided".into(),
+                text: "Invented decision".into(),
+                ..Default::default()
+            }],
+        });
+        let mut rt = render_home(state, 1334.0);
+        tap(&mut rt, "meetings-view-with-decisions");
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.key.as_deref() == Some("meeting-1793955600000-2"))
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some("meeting-1793955600000-1"))
+        );
+    }
+
+    #[test]
+    fn filter_popover_lists_existing_projects() {
+        let mut state = home_state(vec![
+            synthetic_meeting("1793955600000-1", "Invented blueberry standup"),
+            synthetic_meeting("1793955600000-2", "Invented clover review"),
+        ]);
+        state.config.features.projects = true;
+        state.nav.project_counts.insert("Invented Atlas".into(), 1);
+        state
+            .nav
+            .meeting_project
+            .insert("1793955600000-1".into(), "Invented Atlas".into());
+        let mut rt = render_home(state, 1334.0);
+        tap(&mut rt, "meetings-filter");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Invented Atlas")),
+            "the Filter popover lists the existing project filter"
+        );
+        tap(&mut rt, "meetings-filter-project-Invented Atlas");
+        assert!(
+            rt.state.filter == Filter::Project("Invented Atlas".into()),
+            "selecting it narrows the list to that project"
+        );
+        assert!(rt.find("meeting-1793955600000-1").is_some());
+        assert!(rt.find("meeting-1793955600000-2").is_none());
+        // With Projects off, set_filter rejects project filters, so none are offered.
+        rt.update(|s, _| s.config.features.projects = false);
+        tap(&mut rt, "meetings-filter");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.find("meetings-filter-project-Invented Atlas").is_none());
     }
 
     #[test]
