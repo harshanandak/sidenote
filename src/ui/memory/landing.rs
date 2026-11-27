@@ -30,10 +30,8 @@ fn search(s: &State, k: &Kit, p: Palette) -> El {
         .on_submit(|s: &mut State, _| {
             let q = s.memory.search.text.clone();
             if s.has_agent() {
+                // The answer shows under the Ask dock on this page.
                 s.send(&q);
-                if s.asks.contains_key(&s.ask_key()) {
-                    s.memory_open = false;
-                }
             } else {
                 s.memory.result = Some(
                     "Choose a helper in Settings to ask about memory. You can still search here."
