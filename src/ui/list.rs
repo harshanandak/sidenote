@@ -12,7 +12,10 @@ use super::{
 };
 use rune::{Align, El, Key, Side, TextEdit, col, el, row};
 use rune_kit::{Kit, TextInput};
-use sidenote::core::{self, Meeting, SearchHit, SearchSource, notes::JobState};
+use sidenote::core::{
+    self, Meeting, SearchHit, SearchSource,
+    notes::{JobState, Request},
+};
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -176,10 +179,15 @@ fn home_row(
                     }
             )
         });
-    let status = notes_job.as_ref().and_then(|job| match job.state {
-        JobState::Queued | JobState::Running => Some("Writing the summary now."),
-        _ if failed => Some("Summary failed."),
-        _ => super::notes_status::list_label(job),
+    let status = notes_job.as_ref().and_then(|job| {
+        // Task-only jobs leave the saved summary alone, so they keep their task wording.
+        let tasks_only = matches!(job.request, Some(Request::SortAgain | Request::RedoTasks));
+        match job.state {
+            _ if tasks_only => super::notes_status::list_label(job),
+            JobState::Queued | JobState::Running => Some("Writing the summary now."),
+            _ if failed => Some("Summary failed."),
+            _ => super::notes_status::list_label(job),
+        }
     });
     let mut text_col = col()
         .grow(1.0)
@@ -846,6 +854,22 @@ mod tests {
                 .any(|e| e.text.as_deref() == Some("Summary failed."))
         );
         assert!(rt.find("notes-list-action-1793955600000-1").is_some());
+    }
+
+    #[test]
+    fn failed_rows_keep_task_wording_for_task_only_jobs() {
+        let rt = summary_job_home(r#"{"state":"backend_error","request":"sort_again"}"#);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Task sorting failed"))
+        );
+        assert!(
+            !elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Summary failed."))
+        );
     }
 
     /// Renders the home list and returns its elements. Asserts one title row (new):
