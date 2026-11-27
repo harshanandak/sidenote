@@ -2665,6 +2665,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let panel = open_row.map(|(r, i)| finding_panel(s, k, r, i, overlay, p, layer));
     let list = list_column(s, k, p, narrow, list_w, layer);
     pane.child(list_and_panel(list, panel, panel_w, overlay, p))
+        .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 // ---- the keyboard ----------------------------------------------------------------------------

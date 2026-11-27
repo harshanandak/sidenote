@@ -535,10 +535,18 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
         ("What did I miss", SUGGESTIONS)
     } else if s.ask_meeting_id().is_some() {
         ("What did we decide?", SUGGESTIONS)
-    } else if s.page() == super::nav::Page::Home && !s.on_live() {
-        ("What's on my plate this week?", ask_all::SUGGESTIONS)
     } else {
-        ("List my tasks", ask_all::SUGGESTIONS)
+        use super::nav::Page;
+
+        let prompt = match s.page() {
+            Page::Home => "What's on my plate this week?",
+            Page::Tasks => "What is late this week?",
+            Page::People => "Who am I waiting on?",
+            Page::Memory => "What is in memory?",
+            Page::Check => "Draft my daily update",
+            _ => "List my tasks",
+        };
+        (prompt, ask_all::SUGGESTIONS)
     }
 }
 
