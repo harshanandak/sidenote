@@ -2246,6 +2246,15 @@ mod tests {
 
     // Shadow the scheduler and process commands so tests cannot reach a real task or listener.
     const MOCK_LISTENER_TASK: &str = r#"
+function Get-MockListenerIdentity {
+    if ($env:SIDENOTE_TEST_MISMATCH -eq 'default-owner') {
+        return [PSCustomObject]@{
+            User = [Security.Principal.SecurityIdentifier]'S-1-5-18'
+            Owner = [Security.Principal.SecurityIdentifier]'S-1-5-32-544'
+        }
+    }
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+}
 function New-Object {
     param([string]$ComObject)
     if ($ComObject -ne 'Schedule.Service') { throw 'Unexpected COM request' }
@@ -2255,12 +2264,13 @@ function New-Object {
         if ($Flags -notin @(1, 7) -or $env:SIDENOTE_TEST_MISMATCH -eq 'unreadable-owner') { throw 'Synthetic owner read error' }
         if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:SY' }
         if ($env:SIDENOTE_TEST_MISMATCH -eq 'default-owner' -and !$script:userOwned) { return 'O:BA' }
-        'O:' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        'O:' + (Get-MockListenerIdentity).User.Value
     }
     $task | Add-Member ScriptMethod SetSecurityDescriptor {
         param($Descriptor, $Flags)
+        $owner = [Security.AccessControl.RawSecurityDescriptor]::new($Descriptor).Owner.Value
         if ($env:SIDENOTE_TEST_MISMATCH -ne 'default-owner' -or !$script:registered -or $Flags -ne 16 -or
-            $Descriptor -ne ('O:' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) { throw 'Unexpected owner change' }
+            $owner -ne (Get-MockListenerIdentity).User.Value) { throw 'Unexpected owner change' }
         Write-TaskOperation 'set-owner'
         $script:userOwned = $true
     }
@@ -2280,7 +2290,7 @@ function Get-ScheduledTask {
     if ($env:SIDENOTE_TEST_MISMATCH -in @('absent', 'default-owner') -and !$script:registered) { return }
     $action = [PSCustomObject]@{ Execute = $env:SIDENOTE_TASK_EXE; Arguments = $env:SIDENOTE_TASK_ARGS }
     $actions = @($action)
-    $principal = [PSCustomObject]@{ UserId = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
+    $principal = [PSCustomObject]@{ UserId = (Get-MockListenerIdentity).User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
     $settings = [PSCustomObject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew'; ExecutionTimeLimit = 'PT0S' }
     $triggers = @(New-ScheduledTaskTrigger -AtLogOn -User $principal.UserId)
     if ($script:migrated -or $env:SIDENOTE_TEST_MISMATCH -notin @('legacy', 'unsaved', 'validate-only', 'foreign-owner')) { $triggers += New-ScheduledTaskTrigger }
@@ -2357,13 +2367,15 @@ $script:migrated = $false
         mode: ListenerTaskMode,
         deadline: Instant,
     ) -> Result<(), ListenerTaskError> {
-        let mut script = LISTENER_TASK_SCRIPT.replace(
-            "[Diagnostics.Stopwatch]::StartNew()",
-            "(New-ListenerTestStopwatch)",
-        );
-        if scenario == "default-owner" {
-            script = script.replace("$identity.Owner.Value", "'S-1-5-32-544'");
-        }
+        let script = LISTENER_TASK_SCRIPT
+            .replace(
+                "[Diagnostics.Stopwatch]::StartNew()",
+                "(New-ListenerTestStopwatch)",
+            )
+            .replace(
+                "[Security.Principal.WindowsIdentity]::GetCurrent()",
+                "(Get-MockListenerIdentity)",
+            );
         run_listener_task(
             windows_powershell()
                 .env("SIDENOTE_TEST_MISMATCH", scenario)
@@ -2469,7 +2481,7 @@ $script:migrated = $false
                     )
                     .map_err(ListenerTaskError::message),
                 )
-                .unwrap(),
+                .unwrap_or_else(|error| panic!("{scenario}: {error}")),
                 "{scenario}"
             );
             assert_eq!(fs::read_to_string(log).unwrap(), operations, "{scenario}");
