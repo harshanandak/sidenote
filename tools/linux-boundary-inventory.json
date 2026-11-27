@@ -469,9 +469,9 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "8007f0157e83b15fe21457406d06c41633740b6d1d1e80139ddd948d727b943f",
+  "src/updates_windows.rs": "b0e2affab0a5fe7d7c5097e783907d293b16662173da6f82bad5fd27acc8ff20",
 
-  "src/updates_windows/install_state.rs": "ff02b0806f5fd4cb65b7027ce6c16c3bcce1c88c0c3c71419123d436a9f23414",
+  "src/updates_windows/install_state.rs": "245648bea977fcfa6ec099cbba56ebf17d7e1754e1ea501a3448db4fe48dc5bb",
 
-  "src/updates_windows/reconcile_tests.rs": "c5d8a87ee206dddb02ed2c8b2a1a4a93f62050920a0c45a5ee516c85857f3b01"
+  "src/updates_windows/reconcile_tests.rs": "c1f2fa1e17c857ada5fe71ba96440c16fc7f2699995b761687856493efc94ebb"
 }

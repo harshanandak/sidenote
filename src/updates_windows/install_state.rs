@@ -37,7 +37,7 @@ impl InstallGuard<'_> {
         fs::write(self.directory.join(PIPELINE), VERSION).map_err(|_| PIPELINE_INSTALL_ERROR)?;
         self.mark_listener_pending()
             .map_err(|_| INSTALL_LISTENER_ERROR)?;
-        Ok(!current)
+        Ok(current)
     }
 
     pub(super) fn finish_reconciliation(&self) -> Result<(), String> {

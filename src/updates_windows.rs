@@ -503,8 +503,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
     if !installed() {
         return Ok(load());
     }
-    let directory = directory();
-    let mut publish = |status| publish(pipeline_status(status, &directory));
+    let mut publish = |status| publish(pipeline_status(status, &directory()));
     let _check = exclusive("update-check.lock").map_err(|_| "Another update check is running.")?;
     let channel = channel();
     let mut status = Status {
@@ -571,7 +570,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         status.phase = Phase::Error;
         status.error = Some(error);
     }
-    status = pipeline_status(status, &directory);
+    status = pipeline_status(status, &directory());
     publish(status.clone());
     save(&status).map_err(|_| "Could not save update status.")?;
     Ok(status)
@@ -1237,14 +1236,11 @@ pub fn window_start(publish: impl Fn(Phase)) -> Result<(), String> {
         report,
     )?;
     // Apply acquires the check lock first, so startup must release its guard.
-    if resume_apply {
-        apply(true, Vec::new(), publish).inspect_err(|error| {
-            if let Ok(guard) = InstallGuard::acquire(&directory()) {
-                save_apply_error(&guard, error);
-            }
-        })?;
-    }
-    Ok(())
+    apply_pending(resume_apply, || apply(true, Vec::new(), publish))
+}
+
+fn apply_pending(pending: bool, apply: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if pending { apply() } else { Ok(()) }
 }
 
 fn start_installed(
@@ -1678,7 +1674,7 @@ fn reconcile_install(
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
 ) -> Result<Reconciliation, String> {
-    let changed = guard.begin_reconciliation()?;
+    let current = guard.begin_reconciliation()?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = pipeline();
     let listener = listener();
@@ -1686,7 +1682,7 @@ fn reconcile_install(
         guard.finish_reconciliation()?;
     }
     Ok(Reconciliation {
-        changed,
+        changed: !current,
         pipeline,
         listener,
     })
@@ -1732,15 +1728,20 @@ pub fn apply(
     }) {
         restart_args.extend(pair.iter().cloned());
     }
-    apply_installed(&directory(), from_window, listener_stopping, |guard| {
-        apply_ready(guard, restart_args, publish)
-    })
+    apply_installed(
+        &directory(),
+        from_window,
+        listener_stopping,
+        report,
+        |guard| apply_ready(guard, restart_args, publish),
+    )
 }
 
 fn apply_installed(
     directory: &Path,
     from_window: bool,
     listener_stopping: impl FnOnce() -> bool,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
     apply_ready: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
 ) -> Result<(), String> {
     let _check = exclusive_at(&directory.join("update-check.lock"))
@@ -1760,17 +1761,12 @@ fn apply_installed(
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
-    let result = apply_ready(&guard);
-    if !from_window && let Err(error) = &result {
-        save_apply_error(&guard, error);
-    }
-    result
-}
-fn save_apply_error(guard: &InstallGuard<'_>, error: &str) {
-    let mut status = read_status(guard.directory);
-    status.phase = Phase::Error;
-    status.error = Some(error.into());
-    let _ = guard.save(&status, report);
+    apply_ready(&guard).inspect_err(|error| {
+        let mut status = read_status(directory);
+        status.phase = Phase::Error;
+        status.error = Some(error.clone());
+        let _ = guard.save(&status, make_report);
+    })
 }
 fn apply_ready(
     guard: &InstallGuard<'_>,

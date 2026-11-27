@@ -168,16 +168,20 @@ fn window_and_cli_apply_wait_for_install_admission_before_handoff() {
     let path = root.path();
     let _guard = InstallGuard::acquire(path).unwrap();
     for from_window in [true, false] {
-        let error = apply_installed(
-            path,
-            from_window,
-            || panic!("apply inspected the listener while the hook owned recovery"),
-            |_| panic!("apply reached handoff while the hook owned recovery"),
-        )
-        .unwrap_err();
+        let error = apply_during_hook(path, from_window).unwrap_err();
         assert_eq!(error, InstallAdmission::Busy.message());
         assert!(!path.join("update-listener.resume").exists());
     }
+}
+
+fn apply_during_hook(path: &Path, from_window: bool) -> Result<(), String> {
+    apply_installed(
+        path,
+        from_window,
+        || panic!("apply inspected the listener while the hook owned recovery"),
+        |_| panic!("rejected apply wrote a report"),
+        |_| panic!("apply reached handoff while the hook owned recovery"),
+    )
 }
 
 #[test]
@@ -193,6 +197,7 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
         path,
         true,
         || false,
+        |status| serde_json::json!(status),
         |guard| {
             guard.mark_listener_pending().unwrap();
             fs::write(&stop, "synthetic stop request").unwrap();
@@ -209,8 +214,44 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
         },
     );
 
-    assert_eq!(result.unwrap_err(), "synthetic handoff failure");
+    assert_eq!(result.as_ref().unwrap_err(), "synthetic handoff failure");
+    assert_eq!(read_saved_status(path).error, result.err());
     assert!(!resume.exists());
     assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
     assert!(InstallGuard::acquire(path).is_ok());
+}
+
+#[test]
+fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let snapshot =
+        || ["updates.json", "update-report.json"].map(|name| fs::read(path.join(name)).unwrap());
+    let startup = start_installed(
+        path,
+        Instant::now(),
+        |_, _| panic!("no recovery pending"),
+        |_| Ok(()),
+        || panic!("no pipeline pending"),
+        || true,
+        |_| panic!("startup wrote a report before apply"),
+    )
+    .unwrap();
+    let mut hook_files = None;
+    let result = apply_pending(startup, || {
+        let mut rejected = Ok(());
+        hook(
+            path,
+            |_| {
+                rejected = apply_during_hook(path, true);
+                Ok(())
+            },
+            |status| serde_json::json!({"hook": status}),
+        )
+        .unwrap();
+        hook_files = Some(snapshot());
+        rejected
+    });
+    assert_eq!(result.unwrap_err(), InstallAdmission::Busy.message());
+    assert_eq!(snapshot(), hook_files.unwrap());
 }
