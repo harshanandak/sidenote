@@ -1236,16 +1236,27 @@ mod tests {
                 && e.label.as_deref() == Some("Turn on Meeting summary")),
             "the row keeps its action key and label"
         );
-        let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
-        let title_bottom = title_rect[1] + title_rect[3];
+        let (_, action_rect) = title_and_action(&elements, &title, action_key);
+        // The wide row centres the action on the whole text column (title, status and
+        // people lines), so compare against the title area, not the title's own line.
+        let main = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row's title area")
+            .rect;
+        let main_bottom = main[1] + main[3];
         let action_bottom = action_rect[1] + action_rect[3];
         assert!(
-            action_rect[1] < title_bottom && action_bottom > title_rect[1],
-            "the action stays on the title's line when wide (action {}..{}, title {}..{})",
+            action_rect[1] < main_bottom && action_bottom > main[1],
+            "the action stays on the title area's line when wide (action {}..{}, title area {}..{})",
             action_rect[1],
             action_bottom,
-            title_rect[1],
-            title_bottom
+            main[1],
+            main_bottom
+        );
+        assert!(
+            action_rect[0] >= main[0] + main[2],
+            "the action sits to the right of the title area"
         );
     }
 
@@ -1819,10 +1830,10 @@ mod tests {
             .iter()
             .find(|e| e.key.as_deref() == Some("meeting-1793955600000-2"))
             .expect("second row");
-        let parent = row.path.rsplit_once('/').unwrap().0;
-        assert!(
-            elements.iter().find(|e| e.path == parent).unwrap().fill != rune::Color::TRANSPARENT
-        );
+        // The cursor fills the row's card: the title's row sits inside it.
+        let top = row.path.rsplit_once('/').unwrap().0;
+        let card = top.rsplit_once('/').unwrap().0;
+        assert!(elements.iter().find(|e| e.path == card).unwrap().fill != rune::Color::TRANSPARENT);
     }
 
     #[test]
