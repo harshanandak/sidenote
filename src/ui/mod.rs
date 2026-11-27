@@ -1773,7 +1773,7 @@ impl State {
                 if !known && let Some(handle) = &self.scan_tx {
                     handle.invalidate();
                 }
-                self.cancel_missing_summary(known, &meetings);
+                self.cancel_missing_summary(known, &meetings, &retained);
                 for meeting in &meetings {
                     if meeting.has_summary()
                         && meeting
