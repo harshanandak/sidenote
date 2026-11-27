@@ -536,7 +536,7 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
     } else if s.ask_meeting_id().is_some() {
         ("What did we decide?", SUGGESTIONS)
     } else {
-        use super::nav::Page;
+        use super::nav::{Filter, Page};
 
         let prompt = match s.page() {
             Page::Home => "What's on my plate this week?",
@@ -544,6 +544,14 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
             Page::People => "Who am I waiting on?",
             Page::Memory => "What is in memory?",
             Page::Check => "Draft my daily update",
+            Page::Annotations => "Find my notes about a project",
+            Page::Hex => "Turn on live captions",
+            Page::Meetings
+                if s.config.features.projects
+                    && matches!(s.filter, Filter::Area(_) | Filter::Areas) =>
+            {
+                "Which projects went quiet?"
+            }
             _ => "List my tasks",
         };
         (prompt, ask_all::SUGGESTIONS)

@@ -1166,6 +1166,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             col().w_full().items_center().child(doc),
             "area-scroll",
         ))
+        .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 #[cfg(test)]

@@ -2517,7 +2517,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else if people_view {
         people::pane(s, &k, p, narrow, &mut layer)
     } else if s.annotations.open {
-        annotations::pane(s, p, narrow)
+        annotations::pane(s, &k, p, narrow, &mut layer)
     } else if on_check {
         check::pane(s, &k, p, narrow, &mut layer)
     } else if on_memory {

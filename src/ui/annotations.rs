@@ -8,7 +8,7 @@ use super::{
     widgets::{link, pressable, scroll},
 };
 use rune::{Color, El, Image, ImageCache, Key, Span, TextEdit, col, el, row};
-use rune_kit::{Menu, MenuItem, Placement, TextArea};
+use rune_kit::{Kit, Menu, MenuItem, Placement, TextArea};
 use sidenote::{
     core::{
         annotations::{
@@ -975,10 +975,10 @@ fn step_details(c: &Capture, index: usize, frame: &Keyframe, p: Palette, filmstr
     details
 }
 
-pub fn pane(s: &State, p: Palette, narrow: bool) -> El {
+pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     let width = (s.app_w.get() - nav::width(s) - 1.0 - if narrow { 32.0 } else { 64.0 })
         .clamp(240.0, 1040.0);
-    let mut layer = Vec::new();
+    let mut menus = Vec::new();
     let mut content = if s.annotations.notebooks.shared.is_some() {
         notebooks::confirmation(s, p)
     } else if s.annotations.notebooks.picker.is_some() {
@@ -991,7 +991,7 @@ pub fn pane(s: &State, p: Palette, narrow: bool) -> El {
         .iter()
         .find(|c| Some(&c.folder) == s.annotations.selected.as_ref())
     {
-        capture_page(s, c, width, p, &mut layer)
+        capture_page(s, c, width, p, &mut menus)
     } else {
         let mut list = col()
             .w_full()
@@ -1104,7 +1104,14 @@ pub fn pane(s: &State, p: Palette, narrow: bool) -> El {
         "annotations-scroll",
     )
     .key("annotations-pane");
-    rune_kit::root(viewport, layer)
+    let page = col()
+        .grow(1.0)
+        .w_full()
+        .min_w(0.0)
+        .min_h(0.0)
+        .child(viewport)
+        .child(super::ask::overlay(s, k, p, narrow, layer));
+    rune_kit::root(page, menus)
         .key("annotation-menu-root")
         .grow(1.0)
         .min_h(0.0)

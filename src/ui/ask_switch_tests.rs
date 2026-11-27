@@ -2192,7 +2192,7 @@ fn the_ask_bar_is_centered_at_the_default_width() {
 
 type AskPage = (fn(&mut State), &'static str, &'static str);
 
-const ASK_PAGES: [AskPage; 4] = [
+const ASK_PAGES: [AskPage; 7] = [
     (
         |s| s.set_view(tasks::View::Tasks),
         "tasks-scroll",
@@ -2201,6 +2201,17 @@ const ASK_PAGES: [AskPage; 4] = [
     (State::open_people, "people-scroll", "Who am I waiting on?"),
     (State::open_memory, "memory-scroll", "What is in memory?"),
     (State::open_check, "check-scroll", "Draft my daily update"),
+    (State::open_hex, "hex-scroll", "Turn on live captions"),
+    (
+        State::open_annotations,
+        "annotations-pane",
+        "Find my notes about a project",
+    ),
+    (
+        |s| s.set_filter(nav::Filter::Areas),
+        "area-scroll",
+        "Which projects went quiet?",
+    ),
 ];
 
 fn ask_page_fixture(size: (f32, f32)) -> Runtime<State> {
@@ -2212,7 +2223,10 @@ fn ask_page_fixture(size: (f32, f32)) -> Runtime<State> {
         s.config.features.people = true;
         s.config.features.memory = true;
         s.config.features.daily_check = true;
+        s.config.features.annotations = true;
+        s.config.features.projects = true;
         scene_agents(s, ALL_AGENTS);
+        s.ai_notes.scene = true;
     });
     rt
 }
@@ -2295,6 +2309,32 @@ fn ask_on_every_page_uses_the_all_meetings_scope() {
             "{scroll}"
         );
     }
+}
+
+#[test]
+fn ask_on_every_page_settings_drawer_keeps_the_dock() {
+    if in_parent("ask_on_every_page_settings_drawer_keeps_the_dock") {
+        return;
+    }
+    let mut rt = ask_page_fixture((390.0, 844.0));
+    rt.key(KeyEvent {
+        key: Key::Command(','),
+        mods: rune::Mods::default(),
+    });
+    rt.settle_all();
+    rt.frame(0.0);
+    tap(&mut rt, "settings-navigation");
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rect_of(&rt, "settings-drawer")[3] > 0.0);
+    let [_, scroll_y, _, scroll_h] = rect_of(&rt, "hex-scroll");
+    let [dock_x, dock_y, dock_w, _] = rect_of(&rt, "ask-overlay");
+    let [pill_x, pill_y, pill_w, pill_h] = rect_of(&rt, "ask-pill");
+    let [_, input_y, _, input_h] = rect_of(&rt, "ask-input");
+    assert!(scroll_y + scroll_h <= dock_y + 1.0);
+    assert_eq!(pill_h, 48.0);
+    assert!((pill_x + pill_w / 2.0 - dock_x - dock_w / 2.0).abs() <= 1.0);
+    assert!((input_y + input_h / 2.0 - pill_y - pill_h / 2.0).abs() <= 1.0);
 }
 
 #[test]
