@@ -513,9 +513,23 @@ pub fn suppressed_ids(state: &Path) -> io::Result<BTreeSet<String>> {
     Ok(ids.into_keys().collect())
 }
 
+pub struct MeetingClaim {
+    _file: fs::File,
+}
+
+#[cfg(unix)]
+impl Drop for MeetingClaim {
+    fn drop(&mut self) {
+        // A forked child can still hold a copy of the descriptor before exec.
+        let _ = self._file.unlock();
+    }
+}
+
 /// A writer must keep the returned claim until its last publication.
-pub(crate) fn claim_write(state: &Path, id: &str) -> io::Result<Option<fs::File>> {
-    let claim = store_io::shared_lock(&claim_path(state, id)?)?;
+pub(crate) fn claim_write(state: &Path, id: &str) -> io::Result<Option<MeetingClaim>> {
+    let claim = MeetingClaim {
+        _file: store_io::shared_lock(&claim_path(state, id)?)?,
+    };
     Ok((!read_suppression(state)?.contains_key(id)).then_some(claim))
 }
 
@@ -534,8 +548,10 @@ pub(super) fn lock_busy(path: &Path) -> io::Result<bool> {
     }
 }
 
-pub fn writer_claim(state: &Path, id: &str) -> io::Result<fs::File> {
-    store_io::try_lock(&claim_path(state, id)?)
+pub fn writer_claim(state: &Path, id: &str) -> io::Result<MeetingClaim> {
+    Ok(MeetingClaim {
+        _file: store_io::try_lock(&claim_path(state, id)?)?,
+    })
 }
 
 fn claim_path(state: &Path, id: &str) -> io::Result<PathBuf> {
@@ -676,7 +692,7 @@ impl Storage {
         })
     }
 
-    fn claims(&self, ids: &BTreeSet<String>) -> io::Result<Vec<fs::File>> {
+    fn claims(&self, ids: &BTreeSet<String>) -> io::Result<Vec<MeetingClaim>> {
         ids.iter().map(|id| writer_claim(&self.state, id)).collect()
     }
 
@@ -991,6 +1007,40 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn delete_can_proceed_after_a_writer_releases_a_duplicated_claim() {
+        use super::{DeleteError, Eligibility, Storage, claim_write, fs};
+
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        let meetings = root.path().join("meetings");
+        fs::create_dir(&state).unwrap();
+        fs::create_dir_all(meetings.join("100-1")).unwrap();
+        fs::write(meetings.join("100-1/manifest.json"), b"{}").unwrap();
+        let storage = Storage::new(&meetings, &state).unwrap();
+        let delete = || {
+            storage.delete(
+                "100-1",
+                String::new(),
+                0,
+                |_| Ok(Eligibility::Ready),
+                |_| Ok(()),
+            )
+        };
+
+        let claim = claim_write(&state, "100-1").unwrap().unwrap();
+        // Like fork, cloning the descriptor keeps the same open file description alive.
+        let inherited = claim._file.try_clone().unwrap();
+        assert!(matches!(
+            delete(),
+            Err(DeleteError::Refused(Eligibility::Processing))
+        ));
+        drop(claim);
+        delete().unwrap();
+        drop(inherited);
+    }
+
     #[test]
     fn different_volumes_refuse_before_a_move() {
         assert_eq!(

@@ -75,7 +75,7 @@ fn discover(root: &Path, status: &Value) -> Option<PathBuf> {
     let first = found.next()?;
     found.next().is_none().then_some(first)
 }
-fn evidence_claim(meeting: &Path) -> io::Result<Option<fs::File>> {
+fn evidence_claim(meeting: &Path) -> io::Result<Option<super::meeting_delete::MeetingClaim>> {
     let id = meeting
         .file_name()
         .and_then(|name| name.to_str())
