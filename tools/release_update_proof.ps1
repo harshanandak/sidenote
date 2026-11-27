@@ -42,7 +42,7 @@ function Copy-VerifiedPackageFiles([string]$Directory, [string]$Feed) {
 }
 
 function Get-ProofPackage([string]$Feed, [string]$Tag) {
-    . (Join-Path $PSScriptRoot 'release_ci.ps1') -ValidateOnly
+    . (Join-Path $PSScriptRoot 'release_ci.ps1') -LoadHelpers
     $full = @(Get-ChildItem -LiteralPath $Feed -File -Filter '*-full.nupkg')
     if ($full.Count -ne 1 -or $full[0].Name -cnotmatch
         '\Asidenote-(\d+\.\d+\.\d+(?:-dev\.(?:0|[1-9]\d*)(?:\.main\.[1-9]\d*)?)?)-(stable|dev|latest)-full\.nupkg\z') {

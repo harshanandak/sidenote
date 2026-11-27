@@ -5,6 +5,8 @@ param(
     [string]$OutputDirectory,
     [Parameter(Mandatory, ParameterSetName = 'Validate')]
     [switch]$ValidateOnly,
+    [Parameter(Mandatory, ParameterSetName = 'Helpers')]
+    [switch]$LoadHelpers,
     [Parameter(Mandatory, ParameterSetName = 'Test')]
     [switch]$SelfTest
 )
@@ -199,6 +201,16 @@ function Invoke-SelfTest {
 
     $temp = [IO.Directory]::CreateTempSubdirectory('sidenote-release-test-')
     try {
+        $previousEvent, $previousTemp = $env:GITHUB_EVENT_NAME, $env:RUNNER_TEMP
+        try {
+            $env:GITHUB_EVENT_NAME = 'workflow_run'
+            $env:RUNNER_TEMP = $temp.FullName
+            & $PSCommandPath -LoadHelpers
+        } finally {
+            $env:GITHUB_EVENT_NAME = $previousEvent
+            $env:RUNNER_TEMP = $previousTemp
+        }
+
         $setup = 'sidenote-dev-Setup.exe'
         $index = 'releases.dev.json'
         $full = 'sidenote-0.1.1-dev.2-dev-full.nupkg'
@@ -280,7 +292,7 @@ function Invoke-SelfTest {
     Write-Output 'Release identity, asset allow-list and checksum self-test passed.'
 }
 
-if ($MyInvocation.InvocationName -eq '.') { return }
+if ($LoadHelpers -or $MyInvocation.InvocationName -eq '.') { return }
 if ($SelfTest) {
     Invoke-SelfTest
     return
