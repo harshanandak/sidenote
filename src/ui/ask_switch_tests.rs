@@ -2503,6 +2503,23 @@ fn citation_back_returns_to_origin() {
     }
 }
 
+/// Back to a single Area keeps "Show all, including inactive" as the person left it.
+#[test]
+fn citation_back_keeps_the_area_inactive_toggle() {
+    if in_parent("citation_back_keeps_the_area_inactive_toggle") {
+        return;
+    }
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    let area = nav::Filter::Area("studio".into());
+    rt.update(|s, _| {
+        s.filter = area.clone();
+        s.areas.show_all = true;
+        s.restore_citation_origin(nav::Page::Meetings);
+    });
+    assert!(rt.state.filter == area);
+    assert!(rt.state.areas.show_all);
+}
+
 #[test]
 fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks") {

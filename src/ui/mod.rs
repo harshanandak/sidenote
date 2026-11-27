@@ -1058,7 +1058,11 @@ impl State {
                 self.go_home();
                 self.nav_done();
             }
-            nav::Page::Meetings => self.set_filter(self.filter.clone()),
+            // The filter is still set; reapplying it would reset an Area's inactive toggle.
+            nav::Page::Meetings => {
+                self.refresh_list();
+                self.nav_done();
+            }
             nav::Page::Tasks => {
                 self.set_view(tasks::View::Tasks);
                 self.nav_done();
