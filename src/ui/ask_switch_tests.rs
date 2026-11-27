@@ -2404,6 +2404,122 @@ fn ask_on_every_page_leaves_the_last_task_clear() {
     assert!(last_top >= scroll_top && last_top + last_h <= scroll_top + scroll_h);
 }
 
+/// One page Ask sits on: how to open it, and what Back must land on.
+struct CitationOrigin(&'static str, fn(&mut State), nav::Page, Option<nav::Filter>);
+
+/// Ask answers carry meeting citations; opening one and pressing back returns to the page
+/// the answer was asked on, with the answer showing.
+#[test]
+fn citation_back_returns_to_origin() {
+    if in_parent("citation_back_returns_to_origin") {
+        return;
+    }
+    const QUESTION: &str = "What did we decide?";
+    const ANSWER: &str = "The beta ships on Friday.";
+    let pages = [
+        CitationOrigin("home", |s| s.go_home(), nav::Page::Home, None),
+        CitationOrigin(
+            "meetings",
+            |s| s.go_meetings(),
+            nav::Page::Meetings,
+            Some(nav::Filter::All),
+        ),
+        CitationOrigin(
+            "tasks",
+            |s| s.set_view(tasks::View::Tasks),
+            nav::Page::Tasks,
+            None,
+        ),
+        CitationOrigin("people", State::open_people, nav::Page::People, None),
+        CitationOrigin("memory", State::open_memory, nav::Page::Memory, None),
+        CitationOrigin("check", State::open_check, nav::Page::Check, None),
+        CitationOrigin("settings", State::open_hex, nav::Page::Hex, None),
+        CitationOrigin(
+            "annotations",
+            State::open_annotations,
+            nav::Page::Annotations,
+            None,
+        ),
+        CitationOrigin(
+            "areas",
+            |s| s.set_filter(nav::Filter::Areas),
+            nav::Page::Meetings,
+            Some(nav::Filter::Areas),
+        ),
+    ];
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    for CitationOrigin(name, open, want, filter) in pages {
+        let cite = format!("cite:{MEETING}");
+        rt.update(|s, _| {
+            open(s);
+            s.saved.messages = vec![
+                Message {
+                    role: "user".into(),
+                    text: QUESTION.into(),
+                    ..Default::default()
+                },
+                Message {
+                    role: "assistant".into(),
+                    text: format!("{ANSWER} [[{MEETING}]]"),
+                    ..Default::default()
+                },
+            ];
+            s.store.save(core::ALL_KEY, &s.saved).unwrap();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.scroll_to_bottom_instant("thread-scroll"));
+        rt.settle_all();
+        rt.frame(0.0);
+        tap(&mut rt, &cite);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(rt.state.selected.as_deref(), Some(MEETING), "{name}");
+        tap(&mut rt, "back-to-summary");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.state.page() == want, "{name}");
+        assert!(rt.state.selected.is_none(), "{name}");
+        assert!(!rt.state.thread_hidden, "{name}");
+        if let Some(filter) = filter {
+            assert!(rt.state.filter == filter, "{name}");
+        }
+        // The answer must be on screen, not merely mounted under a clipped thread.
+        let [_, top, _, height] = rect_of(&rt, "thread-scroll");
+        let elements = rt.elements();
+        let question = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some(QUESTION))
+            .unwrap_or_else(|| panic!("{name}: question missing"))
+            .rect;
+        assert!(
+            question[1] >= top && question[1] + question[3] <= top + height,
+            "{name}"
+        );
+        let (_, cite_y) = rt
+            .find(&cite)
+            .unwrap_or_else(|| panic!("{name}: citation missing"));
+        assert!(cite_y >= top && cite_y <= top + height, "{name}");
+    }
+}
+
+/// Back to a single Area keeps "Show all, including inactive" as the person left it.
+#[test]
+fn citation_back_keeps_the_area_inactive_toggle() {
+    if in_parent("citation_back_keeps_the_area_inactive_toggle") {
+        return;
+    }
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    let area = nav::Filter::Area("studio".into());
+    rt.update(|s, _| {
+        s.filter = area.clone();
+        s.areas.show_all = true;
+        s.restore_citation_origin(nav::Page::Meetings);
+    });
+    assert!(rt.state.filter == area);
+    assert!(rt.state.areas.show_all);
+}
+
 #[test]
 fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks") {

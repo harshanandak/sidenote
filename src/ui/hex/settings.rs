@@ -73,6 +73,16 @@ pub(super) fn remember_back(s: &mut State) {
     });
 }
 
+/// Reopens Settings after an Ask citation detour, keeping the settings back button's
+/// address: `open_hex` remembers the current page, but the detour already reset to the list.
+pub(crate) fn reopen(s: &mut State) {
+    let back = s.hex.shell.back.take();
+    s.open_hex();
+    if let Some(back) = back {
+        s.hex.shell.back = Some(back);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     General,
