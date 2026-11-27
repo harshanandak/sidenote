@@ -335,6 +335,7 @@ jobs:
             ui::ask_switch_tests::the_ask_bar_is_centered_at_ \
             ui::ask_switch_tests::the_dock_leaves_the_last_notes_row_clear \
             ui::ask_switch_tests::ask_follows_the_open_meeting_and_only_shows_a_prompt_in_an_empty_editor \
+            ui::ask_switch_tests::ask_on_every_page_ \
             ui::ask_switch_tests::live_transcript_stays_above_the_dock_at_short_heights \
             ui::ask_switch_tests::the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat \
             ui::ask_switch_tests::tab_from_the_ask_editor_focuses_the_model_picker \

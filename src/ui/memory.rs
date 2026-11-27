@@ -2337,6 +2337,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         overlay,
         p,
     ))
+    .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 // ---- the keyboard --------------------------------------------------------------------------
