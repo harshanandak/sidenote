@@ -253,20 +253,23 @@ fn home_row(
         .map(|t| t.format("%H:%M").to_string())
         .unwrap_or_default();
     let notes_job = super::notes_status::job(s, m);
-    let failed = notes_job
-        .as_ref()
-        .is_some_and(|j| super::notes_status::is_failure(&j.state));
-    let problem = failed
-        || notes_job.as_ref().is_some_and(|j| {
-            matches!(
-                j.state,
-                JobState::NoHelper
-                    | JobState::Done {
-                        tasks_failed: true,
-                        ..
-                    }
-            )
-        });
+    let skipped = super::notes_status::skip(s, m);
+    let failed = skipped.is_none()
+        && notes_job
+            .as_ref()
+            .is_some_and(|j| super::notes_status::is_failure(&j.state));
+    let problem = skipped.is_none()
+        && (failed
+            || notes_job.as_ref().is_some_and(|j| {
+                matches!(
+                    j.state,
+                    JobState::NoHelper
+                        | JobState::Done {
+                            tasks_failed: true,
+                            ..
+                        }
+                )
+            }));
     let status = notes_job.as_ref().and_then(|job| {
         // Task-only jobs leave the saved summary alone, so they keep their task wording.
         // Other failures (sign-in, usage limit, too long, retry scheduled) keep their reason.
@@ -285,22 +288,26 @@ fn home_row(
         .min_w(0.0)
         .gap(2.0)
         .child(roles::TITLE.line(flat(&m.title), p.ink));
-    match status {
-        Some(status) => {
-            text_col = text_col.child(roles::META.wrap(
-                status.to_owned(),
-                if failed {
-                    p.warn
-                } else if problem {
-                    p.ink
-                } else {
-                    p.faint
-                },
-            ));
-        }
-        None => {
-            if let Some(first) = m.summary.context.iter().find(|s| !s.trim().is_empty()) {
-                text_col = text_col.child(roles::SMALL.line(flat(first), p.body));
+    if let Some(skipped) = &skipped {
+        text_col = text_col.child(roles::META.wrap(skipped.notice(), p.faint));
+    } else {
+        match status {
+            Some(status) => {
+                text_col = text_col.child(roles::META.wrap(
+                    status.to_owned(),
+                    if failed {
+                        p.warn
+                    } else if problem {
+                        p.ink
+                    } else {
+                        p.faint
+                    },
+                ));
+            }
+            None => {
+                if let Some(first) = m.summary.context.iter().find(|s| !s.trim().is_empty()) {
+                    text_col = text_col.child(roles::SMALL.line(flat(first), p.body));
+                }
             }
         }
     }
@@ -1091,6 +1098,70 @@ mod tests {
             elements
                 .iter()
                 .any(|e| e.text.as_deref() == Some("Meeting too long for a summary"))
+        );
+    }
+
+    #[test]
+    fn skipped_summary_row_says_no_speech() {
+        crate::test_paths::isolate();
+        let mut meeting = fixture();
+        meeting.summary_raw.clear();
+        meeting.device = None;
+        let id = meeting.id.clone();
+        let mut state = home_state(vec![meeting]);
+        state.ai_notes.jobs.insert(
+            id.clone(),
+            serde_json::from_str(r#"{"state":"empty"}"#).unwrap(),
+        );
+        let mut rt = render_home(state, 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let expected = core::notes::SummarySkip::Empty.notice();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some(expected.as_str())),
+            "the row shows {expected:?}"
+        );
+        let action_key = format!("notes-list-action-{id}");
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some(action_key.as_str())),
+            "no row action for a skipped meeting"
+        );
+    }
+
+    #[test]
+    fn skipped_summary_row_says_too_short() {
+        crate::test_paths::isolate();
+        let mut meeting = fixture();
+        meeting.summary_raw.clear();
+        meeting.device = None;
+        meeting.id = "1793955600006-6".into();
+        let id = meeting.id.clone();
+        let receipt = core::state_dir().join(format!("local/recording-guard/{id}.json"));
+        std::fs::create_dir_all(receipt.parent().unwrap()).unwrap();
+        std::fs::write(&receipt, r#"{"short":true,"kept":false}"#).unwrap();
+        let state = home_state(vec![meeting]);
+        let mut rt = render_home(state, 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let expected = core::notes::SummarySkip::Short.notice();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some(expected.as_str())),
+            "the row shows {expected:?}"
+        );
+        let action_key = format!("notes-list-action-{id}");
+        assert!(
+            elements
+                .iter()
+                .all(|e| e.key.as_deref() != Some(action_key.as_str())),
+            "no row action for a skipped meeting"
         );
     }
 

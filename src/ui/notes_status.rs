@@ -211,6 +211,20 @@ pub fn job(s: &State, m: &Meeting) -> Option<Job> {
             job
         })
 }
+/// Why the Meetings list shows a skipped summary instead of a status or an action.
+/// Mirrors `crate::meeting_icon::summary_skip`: peer meetings and meetings with a
+/// summary never skip; otherwise the guard receipt, the scripts policy and the
+/// queued job decide.
+pub fn skip(s: &State, m: &Meeting) -> Option<core::notes::SummarySkip> {
+    if m.device.is_some() || m.has_summary() {
+        return None;
+    }
+    core::notes::summary_skip(
+        core::recording_guard::receipt(&core::state_dir(), &m.id),
+        core::notes::scripts_policy() == "off",
+        s.ai_notes.jobs.get(&m.id).map(|j| &j.state),
+    )
+}
 pub fn list_label(job: &Job) -> Option<&'static str> {
     match job.state {
         JobState::Done { .. } => visible_copy(job, None, false).map(|(title, _)| title),
