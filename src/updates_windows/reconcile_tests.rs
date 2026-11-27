@@ -335,3 +335,57 @@ fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
     assert_eq!(result.unwrap_err(), InstallAdmission::Busy.message());
     assert_eq!(snapshot(), hook_files.unwrap());
 }
+
+#[test]
+fn corrupt_or_newer_record_never_admits_apply() {
+    let complete = |version: &str| {
+        serde_json::json!({
+            "schema_version": 1, "app_version": version,
+            "listener_work": "Complete", "pipeline_work": "Complete",
+        })
+        .to_string()
+    };
+    let current = complete(VERSION);
+    let older = complete("0.0.1");
+    let newer = complete("999.0.0");
+    let duplicate = current.replace(
+        r#""pipeline_work":"Complete""#,
+        r#""pipeline_work":"Pending","pipeline_work":"Complete""#,
+    );
+    let case_duplicate = duplicate.replacen("pipeline_work", "Pipeline_Work", 1);
+    let mut mismatches = Vec::new();
+    for (name, bytes, unreadable, should_admit) in [
+        ("corrupt", "{", false, false),
+        ("unreadable", current.as_str(), true, false),
+        ("newer", newer.as_str(), false, false),
+        ("duplicate", duplicate.as_str(), false, false),
+        ("case-only duplicate", case_duplicate.as_str(), false, false),
+        ("current", current.as_str(), false, true),
+        ("older", older.as_str(), false, true),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("install-state.json");
+        fs::write(&path, bytes).unwrap();
+        let lock = unreadable.then(|| exclusive_at(&path).unwrap());
+        let reached_handoff = std::cell::Cell::new(false);
+        let result = apply_installed(
+            root.path(),
+            true,
+            || false,
+            |_| serde_json::Value::Null,
+            |_| {
+                reached_handoff.set(true);
+                Ok(())
+            },
+        );
+        if result.is_ok() != should_admit || reached_handoff.get() != should_admit {
+            mismatches.push(name);
+        }
+        drop(lock);
+        assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes(), "{name}");
+    }
+    assert!(
+        mismatches.is_empty(),
+        "wrong apply admission: {mismatches:?}"
+    );
+}
