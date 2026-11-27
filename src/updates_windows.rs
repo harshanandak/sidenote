@@ -1302,7 +1302,7 @@ fn complete_pipeline_install(
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<(), String> {
     let directory = guard.directory;
-    install_pending_pipeline(guard, install, || {
+    let completed = install_pending_pipeline(guard, install, || {
         let mut status = read_saved_status(directory);
         if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
             if status.phase == Phase::Error {
@@ -1315,8 +1315,11 @@ fn complete_pipeline_install(
                 .map_err(|_| PIPELINE_INSTALL_ERROR)?;
         }
         Ok(())
-    })
-    .map(|_| ())
+    })?;
+    if completed && !guard.listener_pending() {
+        guard.publish_completion_receipt()?;
+    }
+    Ok(())
 }
 
 fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<PipelineCompletion, String> {
@@ -1677,7 +1680,12 @@ fn reconcile_install(
     let pipeline = pipeline();
     let listener = listener();
     if listener.is_ok() {
-        guard.finish_reconciliation()?;
+        if pipeline.is_ok() {
+            guard.publish_completion_receipt()?;
+        }
+        guard
+            .clear_listener_pending()
+            .map_err(|_| "Could not clear listener restart state.")?;
     }
     Ok(Reconciliation {
         changed: !current,
@@ -1758,6 +1766,12 @@ fn apply_installed(
     let _listener = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
     if listener_stopping() {
         return Err("An update is already being installed.".into());
+    }
+    if guard.listener_pending() {
+        return Err(
+            "Reopen Sidenote to finish restarting its meeting listener, then retry the update."
+                .into(),
+        );
     }
     apply_ready(&guard).inspect_err(|error| {
         let mut status = read_status(directory);
@@ -2126,7 +2140,7 @@ mod tests {
                 started.get(),
                 "pipeline failure must not leave the listener stopped"
             );
-            assert!(install_state::listener_completed_version(root.path()).is_none());
+            assert!(install_state::completion_receipt_version(root.path()).is_none());
             assert!(install_state::listener_pending(root.path()));
             assert_eq!(
                 install_state::pipeline_pending(root.path()),
@@ -2205,7 +2219,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(install_state::listener_completed_version(root.path()).is_none());
+        assert!(install_state::completion_receipt_version(root.path()).is_none());
         assert!(
             reconcile_install(
                 root.path(),
@@ -2235,7 +2249,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(install_state::listener_completed_version(root.path()).is_none());
+        assert!(install_state::completion_receipt_version(root.path()).is_none());
         assert_eq!(
             read_status(root.path()).error.as_deref(),
             Some(INSTALL_LISTENER_ERROR)
@@ -2791,7 +2805,7 @@ $script:migrated = $false
             );
             assert_eq!(fs::read_to_string(log).unwrap(), operations, "{scenario}");
             assert!(
-                install_state::listener_completed_version(root.path()).as_deref() == Some(VERSION),
+                install_state::completion_receipt_version(root.path()).as_deref() == Some(VERSION),
                 "{scenario}"
             );
         }
@@ -2853,7 +2867,7 @@ $script:migrated = $false
         );
         assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
         assert_eq!(clock.get() - started, Duration::from_secs(work_seconds));
-        assert!(install_state::listener_completed_version(root.path()).is_none());
+        assert!(install_state::completion_receipt_version(root.path()).is_none());
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub(super) fn listener_pending(directory: &Path) -> bool {
     directory.join(RESUME).exists()
 }
 
-pub(super) fn listener_completed_version(directory: &Path) -> Option<String> {
+pub(super) fn completion_receipt_version(directory: &Path) -> Option<String> {
     fs::read_to_string(directory.join(RECEIPT)).ok()
 }
 
@@ -44,7 +44,7 @@ impl InstallGuard<'_> {
 
     pub(super) fn begin_reconciliation(&self) -> Result<bool, String> {
         let receipt = self.directory.join(RECEIPT);
-        let current = listener_completed_version(self.directory).as_deref() == Some(VERSION)
+        let current = completion_receipt_version(self.directory).as_deref() == Some(VERSION)
             && !pipeline_pending(self.directory);
         if receipt.exists() {
             fs::remove_file(&receipt).map_err(|_| "Could not retire install hook completion.")?;
@@ -55,14 +55,9 @@ impl InstallGuard<'_> {
         Ok(current)
     }
 
-    pub(super) fn finish_reconciliation(&self) -> Result<(), String> {
+    pub(super) fn publish_completion_receipt(&self) -> Result<(), String> {
         fs::write(self.directory.join(RECEIPT), VERSION)
-            .map_err(|_| "Could not save install hook completion.")?;
-        if self.listener_pending() {
-            self.clear_listener_pending()
-                .map_err(|_| "Could not clear listener restart state.")?;
-        }
-        Ok(())
+            .map_err(|_| "Could not save install hook completion.".into())
     }
 }
 
