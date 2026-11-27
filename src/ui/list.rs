@@ -399,6 +399,73 @@ fn home_row(
     out
 }
 
+/// Meetings from the current calendar week (Monday to today, local time): how many there
+/// are, their recorded minutes, and the open tasks filed against them. `today` is a
+/// parameter so tests can pin the week without depending on the clock.
+fn this_week_stats(s: &State, today: chrono::NaiveDate) -> (usize, u64, usize) {
+    let week_start = today.week(chrono::Weekday::Mon).first_day();
+    let mut ids = std::collections::HashSet::new();
+    let mut minutes = 0u64;
+    for m in &s.meetings {
+        let in_week = m.started.as_ref().is_some_and(|t| {
+            let date = t.date_naive();
+            date >= week_start && date <= today
+        });
+        if in_week {
+            ids.insert(m.id.as_str());
+            minutes += m.minutes.unwrap_or(0);
+        }
+    }
+    let open = s
+        .tasks
+        .all
+        .iter()
+        .filter(|t| !t.done && ids.contains(t.meeting_id.as_str()))
+        .count();
+    (ids.len(), minutes, open)
+}
+
+/// Recorded minutes as the rail prints them: hours to one decimal, `.0` dropped.
+fn week_hours(minutes: u64) -> String {
+    let hours = format!("{:.1}", minutes as f64 / 60.0);
+    format!("{} h", hours.strip_suffix(".0").unwrap_or(&hours))
+}
+
+/// The "This week" rail card: the week's meeting count, recorded hours and open tasks.
+fn week_rail(meetings: usize, minutes: u64, open: usize, p: Palette) -> El {
+    let stat = |value: String, label: &str| {
+        col()
+            .grow(1.0)
+            .child(
+                text(value)
+                    .font(TextStyle::new(18.0, 600.0).lh(24.0))
+                    .color(p.ink),
+            )
+            .child(roles::META.line(label, p.faint))
+    };
+    col()
+        .key("meetings-week-rail")
+        .w(260.0)
+        .gap(12.0)
+        .mt(6.0)
+        .child(
+            col()
+                .radius(12.0)
+                .fill(p.card)
+                .px(14.0)
+                .py(13.0)
+                .gap(10.0)
+                .child(roles::NAV.bold().wrap("This week", p.ink))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .child(stat(meetings.to_string(), "meetings"))
+                        .child(stat(week_hours(minutes), "recorded"))
+                        .child(stat(open.to_string(), "open tasks")),
+                ),
+        )
+}
+
 /// The home page: saved and pending meetings, newest day first, with the Ask bar floating over
 /// it. Ask here covers all of them.
 pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
@@ -420,7 +487,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     let mut doc = col()
         .key("home")
         .w_full()
-        .max_w(860.0)
+        .max_w(1040.0)
         .px(side)
         .pt(if narrow { 8.0 } else { 20.0 })
         .pb(32.0)
@@ -453,6 +520,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .child(toolbar(s, k, p, layer));
     let mut position = 0;
     let today = chrono::Local::now().date_naive();
+    let mut list_col = col().grow(1.0).min_w(0.0);
     for group in &s.groups {
         let (day, date) = core::day_column(group.date, today);
         let key = group
@@ -470,7 +538,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             rows = rows.child(home_row(s, k, item, position, narrow, p, layer));
             position += 1;
         }
-        doc = doc.child(
+        list_col = list_col.child(
             row()
                 .items_start()
                 .gap(8.0)
@@ -480,8 +548,15 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         );
     }
     if position == 0 {
-        doc = doc.child(roles::SMALL.wrap(empty_text(s), p.soft).mt(24.0).px(10.0));
+        list_col = list_col.child(roles::SMALL.wrap(empty_text(s), p.soft).mt(24.0).px(10.0));
     }
+    let mut content = row().items_start().gap(28.0).mt(10.0).child(list_col);
+    // The rail reads the pane, not the window-width `narrow` flag, like tasks geometry does.
+    if s.app_w.get() - super::nav::width(s) >= 900.0 {
+        let (week_meetings, week_minutes, week_open) = this_week_stats(s, today);
+        content = content.child(week_rail(week_meetings, week_minutes, week_open, p));
+    }
+    doc = doc.child(content);
     // "meeting-pane" is the key the Ask thread measures to size itself.
     let mut pane = col()
         .key("meeting-pane")
@@ -1176,6 +1251,142 @@ mod tests {
                 .iter()
                 .any(|e| e.text.as_deref() == Some("from Pixel 9"))
         );
+    }
+
+    /// A meeting on `date` at noon with recorded `minutes`, so the week rail can count it.
+    /// Saved (not "No summary yet"), so its row renders content like a real meeting's.
+    fn week_meeting(id: &str, date: chrono::NaiveDate, minutes: Option<u64>) -> Meeting {
+        let mut meeting = summarised_meeting("Invented standup");
+        meeting.id = id.into();
+        meeting.started = date
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .single();
+        meeting.minutes = minutes;
+        meeting
+    }
+
+    fn week_task(meeting_id: &str, index: usize, done: bool) -> core::TaskItem {
+        core::TaskItem {
+            meeting_id: meeting_id.into(),
+            meeting_title: "Invented standup".into(),
+            meeting_date: None,
+            meeting_rank: 1,
+            index,
+            task: format!("Invented task {index}"),
+            stable_id: format!("task-{index}"),
+            title: format!("Invented task {index}"),
+            description: String::new(),
+            status: Default::default(),
+            waiting_on: None,
+            waiting_label: None,
+            subtasks: Vec::new(),
+            team: String::new(),
+            owner: None,
+            due: None,
+            due_date: None,
+            due_default: false,
+            stamp: None,
+            project: core::UNSORTED.into(),
+            area_id: None,
+            mine: None,
+            done,
+            edited: false,
+            manual: false,
+        }
+    }
+
+    /// The texts inside the week rail, so value assertions cannot collide with sidebar text.
+    fn rail_texts(rt: &rune::Runtime<State>) -> Vec<String> {
+        let elements = rt.elements();
+        let rail = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meetings-week-rail"))
+            .expect("the week rail")
+            .path
+            .clone();
+        let prefix = format!("{rail}/");
+        elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .filter_map(|e| e.text.clone())
+            .collect()
+    }
+
+    fn assert_rail_shows(texts: &[String], expected: &[&str]) {
+        for expected in expected {
+            assert!(
+                texts.iter().any(|t| t == expected),
+                "the rail shows {expected}; got {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn week_rail_counts_meetings_hours_and_open_tasks() {
+        crate::test_paths::isolate();
+        let today = chrono::Local::now().date_naive();
+        let monday = today.week(chrono::Weekday::Mon).first_day();
+        let before = monday - chrono::Days::new(7);
+        let meetings = vec![
+            week_meeting("1793955600000-1", monday, Some(60)),
+            week_meeting("1793955600000-2", today, Some(30)),
+            week_meeting("1793955600000-3", before, Some(600)),
+        ];
+        let mut state = home_state(meetings);
+        state.tasks.all = vec![
+            week_task("1793955600000-1", 0, false),
+            week_task("1793955600000-1", 1, false),
+            week_task("1793955600000-1", 2, true),
+            week_task("1793955600000-2", 0, false),
+            week_task("1793955600000-3", 0, false),
+            week_task("1793955600000-3", 1, false),
+        ];
+        let mut rt = render_home(state, 1334.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_rail_shows(
+            &rail_texts(&rt),
+            &["2", "1.5 h", "3", "meetings", "recorded", "open tasks"],
+        );
+    }
+
+    #[test]
+    fn week_rail_excludes_other_weeks_and_done_tasks() {
+        crate::test_paths::isolate();
+        let today = chrono::Local::now().date_naive();
+        let monday = today.week(chrono::Weekday::Mon).first_day();
+        let before = monday - chrono::Days::new(1);
+        let meetings = vec![
+            week_meeting("1793955600000-1", monday, Some(60)),
+            week_meeting("1793955600000-2", before, Some(120)),
+        ];
+        let mut state = home_state(meetings);
+        state.tasks.all = vec![
+            week_task("1793955600000-1", 0, true),
+            week_task("1793955600000-2", 0, false),
+        ];
+        let mut rt = render_home(state, 1334.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_rail_shows(
+            &rail_texts(&rt),
+            &["1", "1 h", "0", "meetings", "recorded", "open tasks"],
+        );
+    }
+
+    #[test]
+    fn week_rail_hides_below_900px() {
+        crate::test_paths::isolate();
+        let mut narrow_rt = render_home(home_state(solo_meeting()), 800.0);
+        narrow_rt.settle_all();
+        narrow_rt.frame(0.0);
+        assert!(narrow_rt.find("meetings-week-rail").is_none());
+        let mut wide_rt = render_home(home_state(solo_meeting()), 1200.0);
+        wide_rt.settle_all();
+        wide_rt.frame(0.0);
+        assert!(wide_rt.find("meetings-week-rail").is_some());
     }
 
     /// Renders the home list and returns its elements. Asserts one title row (new):
