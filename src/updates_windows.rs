@@ -697,6 +697,7 @@ const LISTENER_TASK_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $sid = $identity.User.Value
+$adminsSid = 'S-1-5-32-544'
 function Open-ListenerTask([switch]$AllowMissing) {
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
@@ -708,7 +709,7 @@ function Open-ListenerTask([switch]$AllowMissing) {
         throw
     }
 }
-function Read-ListenerTask([switch]$AllowMissing, [string]$NewTaskDefaultOwner = $sid) {
+function Read-ListenerTask([switch]$AllowMissing) {
     $registered = Open-ListenerTask -AllowMissing:$AllowMissing
     if ($null -eq $registered) { return }
     $t = Get-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME
@@ -722,7 +723,12 @@ function Read-ListenerTask([switch]$AllowMissing, [string]$NewTaskDefaultOwner =
     if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
     $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
     if (!$owner) { throw 'permission_denied' }
-    if ($owner.Value -ne $sid -and $owner.Value -ne $NewTaskDefaultOwner) { throw 'other_user' }
+    # UAC can mark the group deny-only in an administrator's filtered token.
+    $legacyOwner = $owner.Value -eq $adminsSid -and ($identity.UserClaims | Where-Object {
+        $_.Value -eq $adminsSid -and $_.Type -in @([Security.Claims.ClaimTypes]::GroupSid, [Security.Claims.ClaimTypes]::DenyOnlySid) -and
+            $_.Properties.ContainsKey([Security.Claims.ClaimTypes]::WindowsSubAuthority)
+    })
+    if ($owner.Value -ne $sid -and !$legacyOwner) { throw 'other_user' }
     return $t
 }
 if ($env:SIDENOTE_TASK_REGISTER -eq 'inspect') {
@@ -765,8 +771,8 @@ if (!$t -and $register) {
     $registered = Open-ListenerTask
     $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
     # Elevated registration can assign the caller's default group owner.
-    if ($owner -and $owner.Value -ne $sid -and $owner.Value -eq $identity.Owner.Value) {
-        $null = Read-ListenerTask -NewTaskDefaultOwner $identity.Owner.Value
+    if ($owner -and $owner.Value -eq $adminsSid) {
+        $null = Read-ListenerTask
         $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(7))
         if ($descriptor.Owner.Value -ne $owner.Value) { throw 'other_user' }
         $descriptor.Owner = $identity.User
@@ -2249,10 +2255,14 @@ mod tests {
 function Get-MockListenerIdentity {
     $groupOwner = $env:SIDENOTE_TEST_MISMATCH -eq 'default-owner'
     $user = if ($groupOwner) { 'S-1-5-18' } else { 'S-1-5-19' }
-    $owner = if ($groupOwner) { 'S-1-5-32-544' } else { $user }
+    $claimType = if ($env:SIDENOTE_TEST_MISMATCH -eq 'legacy-admin-owner') { [Security.Claims.ClaimTypes]::DenyOnlySid } else { [Security.Claims.ClaimTypes]::GroupSid }
     [PSCustomObject]@{
         User = [Security.Principal.SecurityIdentifier]$user
-        Owner = [Security.Principal.SecurityIdentifier]$owner
+        UserClaims = @(if ($groupOwner -or $env:SIDENOTE_TEST_MISMATCH -in @('legacy-admin-owner', 'foreign-owner')) {
+            $claim = [Security.Claims.Claim]::new($claimType, 'S-1-5-32-544')
+            $claim.Properties.Add([Security.Claims.ClaimTypes]::WindowsSubAuthority, '5')
+            $claim
+        })
     }
 }
 function New-Object {
@@ -2262,7 +2272,8 @@ function New-Object {
     $task | Add-Member ScriptMethod GetSecurityDescriptor {
         param($Flags)
         if ($Flags -notin @(1, 7) -or $env:SIDENOTE_TEST_MISMATCH -eq 'unreadable-owner') { throw 'Synthetic owner read error' }
-        if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:SY' }
+        if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:S-1-5-21-101-102-103-1001' }
+        if ($env:SIDENOTE_TEST_MISMATCH -in @('legacy-admin-owner', 'legacy-nonadmin-owner')) { return 'O:BA' }
         if ($env:SIDENOTE_TEST_MISMATCH -eq 'default-owner' -and !$script:userOwned) { return 'O:BA' }
         'O:' + (Get-MockListenerIdentity).User.Value
     }
@@ -2397,6 +2408,7 @@ $script:migrated = $false
         for (scenario, error) in [
             ("foreign-principal", ListenerTaskError::OtherUser),
             ("foreign-owner", ListenerTaskError::OtherUser),
+            ("legacy-nonadmin-owner", ListenerTaskError::OtherUser),
             ("privilege", ListenerTaskError::Elevated),
             ("disabled", ListenerTaskError::Disabled),
             ("extra-args", ListenerTaskError::UnmanagedAction),
@@ -2452,6 +2464,7 @@ $script:migrated = $false
             ("absent", "register\nstart\n"),
             ("default-owner", "register\nset-owner\nstart\n"),
             ("none", "start\n"),
+            ("legacy-admin-owner", "start\n"),
             ("legacy", "repair\nstart\n"),
         ] {
             let root = tempfile::tempdir().unwrap();
@@ -2497,16 +2510,18 @@ $script:migrated = $false
     #[test]
     fn recovery_refuses_foreign_task_owner_before_repair_or_start() {
         let root = tempfile::tempdir().unwrap();
-        let refused = mock_install_task(
-            root.path(),
-            "foreign-owner",
-            ListenerTaskMode::Recover {
-                run: true,
-                register: true,
-            },
-        );
-        assert!(refused.is_err());
-        assert!(!root.path().join("task-operations").exists());
+        for scenario in ["foreign-owner", "legacy-nonadmin-owner"] {
+            let refused = mock_install_task(
+                root.path(),
+                scenario,
+                ListenerTaskMode::Recover {
+                    run: true,
+                    register: true,
+                },
+            );
+            assert!(refused.is_err(), "{scenario}");
+            assert!(!root.path().join("task-operations").exists(), "{scenario}");
+        }
     }
 
     #[test]

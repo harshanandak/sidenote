@@ -381,6 +381,10 @@ try {
     $buildFeed = if ($release) { Join-Path $root.FullName 'baseline-feed' } else { $feed }
     $feedSetup = Join-Path $buildFeed "sidenote-$channel-Setup.exe"
     $versions = if ($release) { @($n) } else { @($n, $next) }
+    $taskSource = Join-Path $source 'src/updates_windows.rs'
+    $taskChecker = [IO.File]::ReadAllText($taskSource)
+    $baselineChecker = $taskChecker.Replace('        $registered.SetSecurityDescriptor($sddl, 16) # TASK_DONT_ADD_PRINCIPAL_ACE', '')
+    if ($baselineChecker -ceq $taskChecker) { throw 'Could not preserve default task ownership in the baseline.' }
     $actions = $env:GITHUB_ACTIONS
     Push-Location -LiteralPath $source
     try {
@@ -388,6 +392,7 @@ try {
         & cargo +stable-x86_64-pc-windows-gnu fetch --locked --target x86_64-pc-windows-gnu
         if ($LASTEXITCODE) { throw 'Could not fetch the locked Windows GNU dependencies.' }
         foreach ($version in $versions) {
+            [IO.File]::WriteAllText($taskSource, $(if ($version -ceq $n) { $baselineChecker } else { $taskChecker }))
             Set-SourceVersion $source $version
             & (Join-Path $source 'tools/pack_release.ps1') -Feed $buildFeed -Channel $channel
             if ($version -ceq $n) { Copy-Item -LiteralPath $feedSetup -Destination $baselineSetup }
@@ -414,6 +419,12 @@ try {
     }
 
     $installed = Install-ProofFixture $fixture $baselineSetup $n
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $taskOwner = $scheduler.GetFolder('\').GetTask($fixture.Task).GetSecurityDescriptor(1)
+    if ([Security.AccessControl.RawSecurityDescriptor]::new($taskOwner).Owner.Value -ne 'S-1-5-32-544') {
+        throw 'The baseline task did not inherit Administrators ownership.'
+    }
     $listener = $installed.Listener
     $initialPointer = $installed.Pointer
     $reportPath = Join-Path $fixture.Updates 'update-report.json'
