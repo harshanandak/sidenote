@@ -480,8 +480,12 @@ mod tests {
         assert!(command.get_envs().any(|(key, value)| {
             key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
         }));
-        let command = windows_powershell_at("powershell.exe");
-        assert_eq!(command.get_program(), "powershell.exe");
+        let command =
+            windows_powershell_at(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+        assert_eq!(
+            command.get_program(),
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
         assert!(command.get_envs().any(|(key, value)| {
             key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
         }));

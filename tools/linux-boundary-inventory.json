@@ -325,11 +325,11 @@
 
   "src/hex_engine/audio_retention/tests.rs": "e222ae001e30661415465c8a1c055b135c37ac0821496dbe25c47d1307fa8a77",
 
-  "src/hex_install.rs": "f8d19f8e6f25f43d04e06eef029e1f31f20e8127667af22dc42dd56fc2dd7d47",
+  "src/hex_install.rs": "8d8b3f5c82d7f8887aa5efd2a6125e15417ecfd894b130032bf4bf1fd4d49567",
 
-  "src/hex_probe.rs": "0c50a06725535b61c042aa2a6c13a2c42e046bc88ee3354b7aaa0bf004a88757",
+  "src/hex_probe.rs": "c70da5b9ab7e359008a743386406996abd72895cbd435027b53727f8e177284c",
 
-  "src/listener.rs": "000ce154288492a2c7311e9a061456d00322ce9682d5a769c1717b563e9dc25f",
+  "src/listener.rs": "4476f11edbb34d8524d2c1509448bc9d59c5e3d2c04f26275022c45577c166f7",
 
   "src/listener/completion.rs": "ed9ba2b329051ded8dc962dc150c7643fbf3f75723ee6faa6eebf95a1bf1e3a2",
 
@@ -359,7 +359,7 @@
 
   "src/platform/user_runner.rs": "f5c10133b9d4110ccc88c021306a56c6aeb8b6fc96d50243999d5b553f7b1bf2",
 
-  "src/platform/windows.rs": "6277e4206aeef357ac7d90593bbce14154c2ee18ee29e8b7334a998a505794ff",
+  "src/platform/windows.rs": "81e66106d6385cee02b161a067ae5442f4337623b20a0130163b68869af46ed4",
 
   "src/platform/windows/job_process.rs": "b0f03992270107af88f15010bad4779d55149d8605dc2ed4c6f06efaf5bc945f",
 
@@ -469,5 +469,5 @@
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "7a05a845a0679f177c311e06bf2e2d92ccdad915d8ed17945ea7e4a2a084aafa"
+  "src/updates_windows.rs": "90c3351411339161dc081864418ed4c43ea8bd6c1a04f7c91ee07f6a7e3c3bc5"
 }
