@@ -13,6 +13,7 @@ on:
       - tools/pack_release.ps1
       - Cargo.toml
       - docs/releases/**
+      - tools/check_package_imports.py
   workflow_dispatch:
     inputs:
       tag:
@@ -66,6 +67,10 @@ jobs:
           pwsh -NoProfile -File tools/release_ci.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Release contract self-test failed.' }
           ./tools/release_ci.ps1 -ValidateOnly
+      - name: Test the package import check
+        if: matrix.task == 'package'
+        shell: pwsh
+        run: python -I tools/check_package_imports.py --self-test
       - &rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
@@ -179,6 +184,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Update proof self-test failed.' }
           ./tools/release_update_proof.ps1 -PackageDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-release') -ExpectedTag $env:RELEASE_TAG
           "artifact-id=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Verify Windows DLL imports in the exact packages
+        shell: pwsh
+        run: python -I tools/check_package_imports.py (Join-Path $env:RUNNER_TEMP 'sidenote-release')
 
   publish-dry-run:
     name: Dry-run Windows release publish
