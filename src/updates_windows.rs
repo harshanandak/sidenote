@@ -723,7 +723,7 @@ function Read-ListenerTask([switch]$AllowMissing) {
     if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
     $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
     if (!$owner) { throw 'permission_denied' }
-    # UAC can mark the group deny-only in an administrator's filtered token.
+    # UAC can mark group membership deny-only for a filtered administrator.
     $legacyOwner = $owner.Value -eq $adminsSid -and ($identity.UserClaims | Where-Object {
         $_.Value -eq $adminsSid -and $_.Type -in @([Security.Claims.ClaimTypes]::GroupSid, [Security.Claims.ClaimTypes]::DenyOnlySid) -and
             $_.Properties.ContainsKey([Security.Claims.ClaimTypes]::WindowsSubAuthority)
