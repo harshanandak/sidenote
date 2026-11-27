@@ -3405,11 +3405,23 @@ fn return_to_source(rt: &mut Runtime<State>) {
     assert_eq!(rt.state.current().unwrap().id, MEETING);
 }
 
+/// Whether `text` shows outside the meeting list. List rows (keyed `meeting-<id>`) preview
+/// the first summary line, so they are skipped: this checks the reading or live view.
 fn assert_rendered(rt: &Runtime<State>, text: &str, visible: bool) {
-    let shown = rt
-        .elements()
+    let elements = rt.elements();
+    let rows: Vec<String> = elements
         .iter()
-        .any(|e| e.text.as_deref() == Some(text));
+        .filter(|e| {
+            e.key
+                .as_deref()
+                .and_then(|k| k.strip_prefix("meeting-"))
+                .is_some_and(|id| id.starts_with(|c: char| c.is_ascii_digit()))
+        })
+        .map(|e| format!("{}/", e.path))
+        .collect();
+    let shown = elements.iter().any(|e| {
+        e.text.as_deref() == Some(text) && !rows.iter().any(|row| e.path.starts_with(row))
+    });
     assert_eq!(shown, visible, "{text}");
 }
 

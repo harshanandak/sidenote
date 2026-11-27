@@ -1105,9 +1105,16 @@ mod tests {
         );
     }
 
+    /// A synthetic meeting with a saved summary, so its row shows content, not "No summary yet".
+    fn summarised_meeting(title: &str) -> Meeting {
+        let mut meeting = synthetic_meeting("1793955600000-1", title);
+        meeting.summary_raw = "{}".into();
+        meeting
+    }
+
     #[test]
     fn row_shows_the_meeting_kind_when_nobody_is_named() {
-        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry standup");
+        let mut meeting = summarised_meeting("Invented blueberry standup");
         meeting.summary.kind = "Team meeting".into();
         let mut rt = render_home(home_state(vec![meeting]), 390.0);
         rt.settle_all();
@@ -1121,7 +1128,7 @@ mod tests {
 
     #[test]
     fn row_puts_saved_line_breaks_on_one_line() {
-        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry\nstandup");
+        let mut meeting = summarised_meeting("Invented blueberry\nstandup");
         meeting.summary.context = vec!["Kickoff\nBudget".into()];
         meeting.summary.people = vec!["  ada".into()];
         let mut rt = render_home(home_state(vec![meeting]), 390.0);
@@ -1138,7 +1145,8 @@ mod tests {
 
     #[test]
     fn row_without_outcomes_or_people_has_no_bottom_row() {
-        let mut rt = render_home(home_state(solo_meeting()), 390.0);
+        let meeting = summarised_meeting("Invented blueberry standup");
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
         rt.settle_all();
         rt.frame(0.0);
         let elements = rt.elements();
