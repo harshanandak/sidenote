@@ -465,11 +465,11 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "f460e66fa854c45a04a64a74b206aef4b0ac95d4ad7a681e39c95fdddfde176a",
+  "src/ui/updates.rs": "8af2409911043a547c0b2bd51c454490de41a3ca987dcee925235796b177d8c8",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "a76d449bbc06ecdca2c9e091e6022e81f2cb52fd6a6fd315c75834244cc6921c",
+  "src/updates_windows.rs": "c5655324d5f82d9d564eee77b94af2a6a0f48d3e19da3c5259b83d6a9e135774",
 
-  "src/updates_windows/reconcile_tests.rs": "52e42939e2ecf5dd3a74797500c753b1ec82900959d50b9ab872108c518f4efc"
+  "src/updates_windows/reconcile_tests.rs": "65041a09a60af69dc232a802170cd50ef624b4dcd46f18355a6a75a8ff901efe"
 }
