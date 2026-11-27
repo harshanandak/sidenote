@@ -317,19 +317,10 @@ fn home_row(
         .grow(1.0)
         .min_w(0.0)
         .on_press_tx(move |s: &mut State, tx| s.select(&id, tx));
-    let mut r = row()
-        .w_full()
-        .gap(12.0)
-        .px(10.0)
-        .py(9.0)
-        .radius(10.0)
-        .hover(p.chip);
-    r = if narrow {
-        r.items_start()
-    } else {
-        r.items_center()
-    };
-    r = r.child(main);
+    // The row action ("Try again", "Choose an agent", "Turn on Meeting summary",
+    // "Use first 4 hours"). Same key, label and press in both layouts; only its
+    // placement changes.
+    let mut action: Option<El> = None;
     if problem && let Some(job) = &notes_job {
         let setup = matches!(
             job.state,
@@ -350,7 +341,7 @@ fn home_row(
             job.retry_request()
         };
         let needs_page = matches!(job.state, core::notes::JobState::ContextTooLong { .. });
-        r = r.child(
+        action = Some(
             super::area::button(
                 if setup {
                     if matches!(job.state, core::notes::JobState::NoHelper)
@@ -383,11 +374,38 @@ fn home_row(
     }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
-    r = if narrow {
-        r.child(col().items_end().child(more).child(time))
+    // Every row is a card whose first child is the title's row, at any width and with
+    // or without an action, so the title keeps its element path (and its keyboard
+    // focus) when an action appears or the window crosses the narrow breakpoint.
+    let mut top = row().w_full().gap(12.0).child(main);
+    let mut below = None;
+    if narrow {
+        // At phone width the action would squeeze the title to about 40px, so it
+        // sits under the row text, left-aligned with the title.
+        top = top
+            .items_start()
+            .child(col().items_end().child(more).child(time));
+        below = action;
     } else {
-        r.child(row().w(44.0).justify_end().child(time)).child(more)
-    };
+        top = top.items_center();
+        if let Some(button) = action {
+            top = top.child(button);
+        }
+        top = top
+            .child(row().w(44.0).justify_end().child(time))
+            .child(more);
+    }
+    let mut r = col()
+        .w_full()
+        .gap(8.0)
+        .px(10.0)
+        .py(9.0)
+        .radius(10.0)
+        .hover(p.chip)
+        .child(top);
+    if let Some(button) = below {
+        r = r.child(row().w_full().child(button));
+    }
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
         r = r.fill(p.chip);
@@ -1076,6 +1094,172 @@ mod tests {
         );
     }
 
+    /// A home state whose single row shows "Turn on Meeting summary": a NoHelper
+    /// job with Claude found, so the row action offers the one-tap setup.
+    fn turn_on_summary_state() -> State {
+        crate::test_paths::isolate();
+        let meeting = fixture();
+        let id = meeting.id.clone();
+        let mut state = home_state(vec![meeting]);
+        state.ai_notes.found = vec![(core::notes::Helper::Claude, true)];
+        state.ai_notes.jobs.insert(
+            id,
+            serde_json::from_str(r#"{"state":"no_helper"}"#).unwrap(),
+        );
+        state
+    }
+
+    fn title_and_action(
+        elements: &[rune::ElementInfo],
+        title: &str,
+        action_key: &str,
+    ) -> ([f32; 4], [f32; 4]) {
+        let title_rect = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some(title))
+            .unwrap_or_else(|| panic!("the row title {title}"))
+            .rect;
+        let action_rect = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(action_key))
+            .unwrap_or_else(|| panic!("the row action {action_key}"))
+            .rect;
+        (title_rect, action_rect)
+    }
+
+    #[test]
+    fn narrow_action_sits_below_the_title_at_phone_width() {
+        let title = fixture().title.clone();
+        let action_key = "notes-list-action-1793955600000-1";
+        let mut rt = render_home(turn_on_summary_state(), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements.iter().any(|e| e.key.as_deref() == Some(action_key)
+                && e.label.as_deref() == Some("Turn on Meeting summary")),
+            "the row keeps its action key and label"
+        );
+        let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
+        // The pressable title area grows into the free width, so it shows the squeeze;
+        // the title text itself is only as wide as its words. Beside the button it was
+        // about 40px; under it, the day column and the More button leave about 187px.
+        let title_area = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row's title area")
+            .rect;
+        assert!(
+            title_area[2] >= 160.0,
+            "the title area keeps its width, got {}",
+            title_area[2]
+        );
+        assert!(
+            action_rect[1] >= title_rect[1] + title_rect[3],
+            "the action sits below the title (action top {}, title bottom {})",
+            action_rect[1],
+            title_rect[1] + title_rect[3]
+        );
+    }
+
+    #[test]
+    fn narrow_action_keeps_the_title_path_when_an_action_appears() {
+        // Rune tracks focus by element path, so a focused title must keep its path
+        // when a failed summary adds the action under it.
+        let path = |state: State| {
+            let mut rt = render_home(state, 390.0);
+            rt.settle_all();
+            rt.frame(0.0);
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+                .expect("the row's title area")
+                .path
+        };
+        let with_action = path(turn_on_summary_state());
+        crate::test_paths::isolate();
+        let without_action = path(home_state(vec![fixture()]));
+        assert_eq!(with_action, without_action);
+    }
+
+    #[test]
+    fn narrow_action_keeps_title_focus_across_the_breakpoint() {
+        // With the sidebar folded, 830 is the wide row and 810 the narrow one; neither
+        // shows the week rail. Rune drops focus when the focused element's path changes.
+        let key = "meeting-1793955600000-1";
+        for with_action in [true, false] {
+            for (from, to) in [(830.0, 810.0), (810.0, 830.0)] {
+                let state = if with_action {
+                    turn_on_summary_state()
+                } else {
+                    crate::test_paths::isolate();
+                    home_state(vec![fixture()])
+                };
+                state.sidebar_open.set(false);
+                state.sidebar_sized.set(true);
+                let mut rt = render_home(state, from);
+                rt.settle_all();
+                rt.frame(0.0);
+                let narrow = rt.state.narrow.get();
+                rt.update(|_, tx| tx.focus(key, true));
+                rt.settle_all();
+                rt.frame(0.0);
+                let focused = |rt: &rune::Runtime<State>| {
+                    rt.elements()
+                        .into_iter()
+                        .find(|e| e.key.as_deref() == Some(key))
+                        .is_some_and(|e| e.focused)
+                };
+                assert!(focused(&rt), "focused at {from} (action {with_action})");
+                rt.set_viewport((to, 900.0), 1.0);
+                rt.settle_all();
+                rt.frame(0.0);
+                assert_ne!(rt.state.narrow.get(), narrow, "{from} to {to} crosses");
+                assert!(
+                    focused(&rt),
+                    "focus kept from {from} to {to} (action {with_action})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_action_stays_beside_the_title_when_wide() {
+        let title = fixture().title.clone();
+        let action_key = "notes-list-action-1793955600000-1";
+        let mut rt = render_home(turn_on_summary_state(), 1334.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements.iter().any(|e| e.key.as_deref() == Some(action_key)
+                && e.label.as_deref() == Some("Turn on Meeting summary")),
+            "the row keeps its action key and label"
+        );
+        let (_, action_rect) = title_and_action(&elements, &title, action_key);
+        // The wide row centres the action on the whole text column (title, status and
+        // people lines), so compare against the title area, not the title's own line.
+        let main = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row's title area")
+            .rect;
+        let main_bottom = main[1] + main[3];
+        let action_bottom = action_rect[1] + action_rect[3];
+        assert!(
+            action_rect[1] < main_bottom && action_bottom > main[1],
+            "the action stays on the title area's line when wide (action {}..{}, title area {}..{})",
+            action_rect[1],
+            action_bottom,
+            main[1],
+            main_bottom
+        );
+        assert!(
+            action_rect[0] >= main[0] + main[2],
+            "the action sits to the right of the title area"
+        );
+    }
+
     #[test]
     fn row_shows_one_line_summary_and_truncates() {
         let meeting = fixture();
@@ -1646,10 +1830,10 @@ mod tests {
             .iter()
             .find(|e| e.key.as_deref() == Some("meeting-1793955600000-2"))
             .expect("second row");
-        let parent = row.path.rsplit_once('/').unwrap().0;
-        assert!(
-            elements.iter().find(|e| e.path == parent).unwrap().fill != rune::Color::TRANSPARENT
-        );
+        // The cursor fills the row's card: the title's row sits inside it.
+        let top = row.path.rsplit_once('/').unwrap().0;
+        let card = top.rsplit_once('/').unwrap().0;
+        assert!(elements.iter().find(|e| e.path == card).unwrap().fill != rune::Color::TRANSPARENT);
     }
 
     #[test]
