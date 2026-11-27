@@ -271,12 +271,12 @@ fn recording_clock_stays_visible_on_the_live_page() {
         s.listener_finished(Ok(()));
     });
     hex_records(&mut rt);
-    // No bar spans the window: the 48 px page header sits in the content column, and the
-    // sidebar beside it starts at the top.
+    // No bar spans the window: the page header sits in the content column with no control and
+    // no caption buttons to hold, so it takes no height, and the sidebar starts at the top.
     let header = element(&rt, "page-header");
     let nav = element(&rt, "nav");
     assert!(rt.find("top-bar").is_none());
-    assert_eq!(header.rect[3], 48.0);
+    assert_eq!(header.rect[3], 0.0);
     assert_eq!(nav.rect[1], 0.0);
     assert!(header.rect[0] >= nav.rect[0] + nav.rect[2]);
     tap(&mut rt, "nav-new-menu");
@@ -363,6 +363,35 @@ fn recording_clock_stays_visible_on_the_live_page() {
     tap(&mut rt, "nav-new-menu");
     tap(&mut rt, "nav-collapse");
     assert!(rt.find("nav-meetings").is_none());
+}
+
+#[test]
+fn the_recording_pill_stays_clear_of_the_caption_buttons_at_360_px() {
+    if in_parent("the_recording_pill_stays_clear_of_the_caption_buttons_at_360_px") {
+        return;
+    }
+    // Phone width on Windows: caption buttons take 138 px, the sidebar is a recording rail.
+    let mut rt = page(SavedPhase::Recording, (360.0, 800.0));
+    let mut insets = rune::ChromeInsets::default();
+    insets.trailing = 138.0;
+    insets.height = TITLEBAR_H;
+    rt.set_chrome_insets(insets);
+    hex_records(&mut rt);
+    rt.update(|s, _| {
+        if let Some(Ok(state)) = s.hex.status.as_mut()
+            && let Some(recording) = state.recording.as_mut()
+        {
+            recording.title = Some("A very long meeting title that keeps on going".into());
+        }
+        s.selected = Some(OTHER.into());
+        s.load_saved();
+    });
+    rt.settle_all();
+    rt.frame(0.2);
+    let pill = element(&rt, "recording-pill");
+    assert!(pill.rect[0] + pill.rect[2] <= 360.0 - 138.0 + 0.5);
+    // The rail starts below the header, so the toggle keeps its place.
+    assert!(rt.find("rail-recording").is_some() && element(&rt, "sidebar-toggle").rect[0] < 20.0);
 }
 
 #[test]

@@ -19,7 +19,9 @@ pub(super) mod stop;
 use rune::{Color, El, Key, KeyEvent, TextEdit, Tx, Waker, col, row};
 use rune_kit::{Kit, Select, SelectAppearance, Switch, TextInput};
 use serde_json::Value;
-pub use settings::{sidebar as settings_sidebar, tick as settings_tick};
+pub use settings::{
+    nav_docked, nav_open, sidebar as settings_sidebar, tick as settings_tick, toggle_nav,
+};
 use sidenote::hex_engine::{
     AudioRetention, Capabilities, EngineState, Feature, HexEngine, HexError, ModelInfo, ModelState,
     Recording, Setting, StatusSample, Support, VocabularyEntry, sample_status,

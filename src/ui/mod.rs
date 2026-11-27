@@ -382,7 +382,7 @@ pub struct State {
     pub app_w: Cell<f32>,
     /// What the window's own controls take at the leading and trailing edge, as the view last
     /// read it (`Cx::chrome_insets`); the page headers keep clear of it.
-    pub chrome: Cell<(f32, f32)>,
+    pub chrome: Cell<(f32, f32, f32)>,
     pub app_h: Cell<f32>,
     /// Height of the whole meeting pane; the Ask thread takes a share of it.
     pub pane_h: Cell<f32>,
@@ -619,7 +619,7 @@ impl State {
             narrow: Cell::new(false),
             viewport_h: Cell::new(600.0),
             app_w: Cell::new(DEFAULT_SIZE.0),
-            chrome: Cell::new((0.0, 0.0)),
+            chrome: Cell::new((0.0, 0.0, 0.0)),
             app_h: Cell::new(DEFAULT_SIZE.1),
             pane_h: Cell::new(800.0),
             live_document_h: Cell::new(340.0),
@@ -2291,7 +2291,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if e.is_command('\\') {
-        s.toggle_sidebar();
+        nav::press_toggle(s, tx);
         return true;
     }
     if e.is_command('k') {
@@ -2314,7 +2314,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if e.is_command('b') {
-        s.toggle_sidebar();
+        nav::press_toggle(s, tx);
         return true;
     }
     if s.on_hex() && (e.key == Key::Escape || (e.key == Key::Tab && e.mods.ctrl)) {
@@ -2449,29 +2449,33 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 
 const TITLEBAR_H: f32 = 48.0;
 
-/// The first row of the content column, with no bar over the sidebar. While the sidebar is
-/// closed it holds the toggle and search icons at the top left, where the open sidebar keeps
-/// the same two in its own top row. The page's actions (the logo on Hex, the recording pill,
+/// The first row of the content column, with no bar over an open sidebar. Whenever no docked
+/// sidebar carries them, the row holds the toggle and search icons at the top left, where the
+/// docked sidebar keeps the same two in its own top row, and then spans the whole window. The page's actions (the logo on Hex, the recording pill,
 /// New annotation) sit at the trailing side, clear of the Windows caption buttons
 /// (`State::chrome`). Empty parts of the row drag the window.
 fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
-    let (leading, trailing) = s.chrome.get();
+    let (leading, trailing, caption_h) = s.chrome.get();
     let (pill, action) = if s.on_hex() {
         (None, None)
     } else {
         nav::actions(s, p, narrow)
     };
+    let docked = s.sidebar_docked();
     let tools = row()
         .gap(2.0)
         .items_center()
-        .children((!s.on_hex() && !s.sidebar_is_open()).then(|| nav::toggle(s, p)))
-        .children((s.on_hex() || !s.sidebar_is_open()).then(|| nav::search(p)));
+        .children((!docked).then(|| nav::toggle(s, p)))
+        .children((!docked).then(|| nav::search(p)));
+    // A row with nothing in it takes only the height the window's own buttons need.
+    let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
+    let h = if bare { caption_h } else { TITLEBAR_H };
     row()
         .key("page-header")
         .w_full()
-        .h(TITLEBAR_H)
-        .min_h(TITLEBAR_H)
-        .max_h(TITLEBAR_H)
+        .h(h)
+        .min_h(h)
+        .max_h(h)
         .pl(13.0_f32.max(leading))
         .pr(8.0_f32.max(trailing))
         .gap(6.0)
@@ -2495,7 +2499,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let k = theme::kit(&p);
     cx.caption_color(p.ink);
     let insets = cx.chrome_insets();
-    s.chrome.set((insets.leading, insets.trailing));
+    s.chrome
+        .set((insets.leading, insets.trailing, insets.height));
     let narrow = cx
         .layout_with("app", |r| u8::from(r[2] < NARROW))
         .unwrap_or(0)
@@ -2607,6 +2612,14 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         meeting::pane(s, &k, p, narrow, &mut layer)
     };
+    // Beside a docked sidebar the header is the content column's first row; otherwise it spans
+    // the window above the body, so the toggle never moves for a rail, a drawer or a list.
+    let header = page_header(s, p, window_narrow);
+    let (above, beside) = if s.sidebar_docked() {
+        (None, Some(header))
+    } else {
+        (Some(header), None)
+    };
     let mut main = col()
         .key("main")
         .grow(1.0)
@@ -2614,7 +2627,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .min_h(0.0)
         .fill(p.bg)
-        .child(page_header(s, p, window_narrow))
+        .children(beside)
         .children((!on_hex).then(|| page_actions(s, p)).flatten())
         .children(updates::recorder_gap_notice(s, p));
     if let Some(bar) = hex::error_bar(s, p) {
@@ -2726,7 +2739,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .shadow(0.0, 32.0, p.shadow),
             );
     }
-    app = app.child(body);
+    app = app.children(above).child(body);
     if let Some(finder) = finder::overlay(s, &k, p, window_narrow) {
         app = app.child(finder);
     }

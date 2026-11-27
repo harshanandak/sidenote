@@ -19,6 +19,8 @@ const PAGE_COLUMN: f32 = 640.0;
 #[derive(Default)]
 pub struct Settings {
     pub navigation_open: bool,
+    /// The settings list is folded away in a window wide enough to show it.
+    pub nav_hidden: bool,
     pub labs: sidenote::hex_labs::Snapshot,
     pub labs_loading: bool,
     labs_show_all: bool,
@@ -1455,7 +1457,7 @@ fn jump(s: &mut State, dest: Destination) {
 }
 
 pub fn sidebar(s: &State, k: &Kit, p: Palette) -> El {
-    if s.app_w.get() < DRAWER_AT {
+    if !nav_docked(s) {
         return col().key("settings-sidebar").w(0.0).h_full();
     }
     let width = if s.app_w.get() < 700.0 {
@@ -1463,11 +1465,31 @@ pub fn sidebar(s: &State, k: &Kit, p: Palette) -> El {
     } else {
         LIST_WIDE
     };
-    settings_list(s, k, p, width)
+    settings_list(s, k, p, width, true)
 }
 
 fn drawer_open(s: &State) -> bool {
     s.app_w.get() < DRAWER_AT && (s.hex.shell.navigation_open || s.hex.filter.focused)
+}
+
+/// The settings list sits beside the page and carries the sidebar toggle in its own top row.
+pub fn nav_docked(s: &State) -> bool {
+    s.app_w.get() >= DRAWER_AT && !s.hex.shell.nav_hidden
+}
+
+pub fn nav_open(s: &State) -> bool {
+    nav_docked(s) || drawer_open(s)
+}
+
+/// Ctrl+\ and the top-left toggle: fold the list, or open and close the narrow drawer.
+pub fn toggle_nav(s: &mut State) {
+    if s.app_w.get() >= DRAWER_AT {
+        s.hex.shell.nav_hidden = !s.hex.shell.nav_hidden;
+    } else if drawer_open(s) {
+        close_drawer(s);
+    } else {
+        s.hex.shell.navigation_open = true;
+    }
 }
 
 fn close_drawer(s: &mut State) {
@@ -1500,7 +1522,7 @@ fn settings_back(p: Palette) -> El {
         .on_press(back)
 }
 
-fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
+fn settings_list(s: &State, k: &Kit, p: Palette, width: f32, docked: bool) -> El {
     let mut list = col()
         .w_full()
         .gap(1.0)
@@ -1616,6 +1638,15 @@ fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
         .h_full()
         .min_h(0.0)
         .fill(p.side)
+        .children(docked.then(|| {
+            row()
+                .h(48.0)
+                .pl(14.0)
+                .gap(2.0)
+                .items_center()
+                .child(nav::collapse(p))
+                .child(nav::search(p))
+        }))
         .child(scroll(list, "settings-list-scroll"))
 }
 fn path(page: Page, tab: usize) -> String {
@@ -3209,7 +3240,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
     if drawer {
         layer.push(rune_kit::scrim("settings-scrim", close_drawer).fill(p.scrim));
         layer.push(
-            settings_list(s, k, p, LIST_WIDE)
+            settings_list(s, k, p, LIST_WIDE, false)
                 .key("settings-drawer")
                 .role("dialog")
                 .label("Settings pages")
