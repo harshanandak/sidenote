@@ -9,20 +9,25 @@ on:
       - tools/release_ci.ps1
       - tools/release_publish.sh
       - tools/release_update_proof.ps1
+      - tools/install_release.ps1
       - tools/pack_release.ps1
       - Cargo.toml
       - docs/releases/**
   workflow_dispatch:
     inputs:
       tag:
-        description: Expected build tag (v followed by the Cargo package version)
+        description: Versioned tag to build or prove (for example v0.1.0-dev.1)
         type: string
         required: true
       channel:
-        description: Channel to build as an Actions artifact
+        description: Channel for a build dry run
         type: choice
         options: [stable, dev]
-        required: true
+        default: stable
+      prove_published:
+        description: Prove the published tag instead of building a release artifact
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,11 +35,12 @@ permissions:
 jobs:
   package:
     name: ${{ matrix.task == 'package' && 'Package Windows release artifacts' || 'Prove clean Windows install and update' }}
-    if: github.event_name != 'push' || !github.event.deleted
+    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,7 +50,8 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_CHANNEL: ${{ inputs.channel }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - &checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -59,19 +66,23 @@ jobs:
           pwsh -NoProfile -File tools/release_ci.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Release contract self-test failed.' }
           ./tools/release_ci.ps1 -ValidateOnly
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - &rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable-x86_64-pc-windows-gnu
-      - uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0
+      - &msys2
+        uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0
         id: msys2
         with:
           msystem: MINGW64
           install: mingw-w64-x86_64-toolchain
           path-type: inherit
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - &dotnet
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.427'
-      - name: Install pinned Velopack CLI
+      - &velopack
+        name: Install pinned Velopack CLI
         shell: pwsh
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
@@ -96,6 +107,7 @@ jobs:
       # One name per run: "Re-run failed jobs" keeps this artifact for the publish jobs,
       # and a full re-run replaces it.
       - name: Upload validated packages
+        id: upload
         if: matrix.task == 'package' && steps.package.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -114,6 +126,59 @@ jobs:
           pwsh -NoProfile -File tools/release_update_proof.ps1 -SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'Update proof self-test failed.' }
           ./tools/release_update_proof.ps1
+
+  exact-package-proof:
+    name: Prove clean install and update on the exact release packages
+    needs: package
+    if: >-
+      ${{ !cancelled() &&
+      (inputs.prove_published || (github.event_name != 'workflow_dispatch' && needs.package.result == 'success')) }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.prove.outputs.artifact-id }}
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+      RELEASE_TAG: ${{ inputs.prove_published && inputs.tag || needs.package.outputs.tag }}
+      ARTIFACT_ID: ${{ needs.package.outputs.artifact-id }}
+    steps:
+      - *checkout
+      - name: Require the uploaded artifact ID
+        if: '!inputs.prove_published && !needs.package.outputs.artifact-id'
+        shell: pwsh
+        run: throw 'Packaging did not return an artifact ID.'
+      - name: Download the uploaded packages
+        if: '!inputs.prove_published'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/sidenote-release
+      - name: Download the published release
+        if: inputs.prove_published
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '\Av\d+\.\d+\.\d+(?:-dev\.\d+)?\z') { throw 'Expected a versioned release tag.' }
+          $draft = gh release view --repo $env:GITHUB_REPOSITORY --json isDraft --jq .isDraft -- $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0 -or $draft -cne 'false') { throw 'Expected a published release.' }
+          gh release download --repo $env:GITHUB_REPOSITORY --dir (Join-Path $env:RUNNER_TEMP 'sidenote-release') --pattern '*' -- $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset download failed.' }
+      - *rust
+      - *msys2
+      - *dotnet
+      - *velopack
+      - name: Prove install and update
+        id: prove
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sidenote-target
+        run: |
+          pwsh -NoProfile -File tools/release_update_proof.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw 'Update proof self-test failed.' }
+          ./tools/release_update_proof.ps1 -PackageDirectory (Join-Path $env:RUNNER_TEMP 'sidenote-release') -ExpectedTag $env:RELEASE_TAG
+          "artifact-id=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 
   publish-dry-run:
     name: Dry-run Windows release publish
@@ -149,8 +214,12 @@ jobs:
 
   publish:
     name: Publish Windows release artifacts
-    if: github.event_name == 'push'
-    needs: package
+    if: >-
+      github.event_name == 'push' &&
+      needs.exact-package-proof.result == 'success' &&
+      needs.exact-package-proof.outputs.artifact-id != '' &&
+      needs.exact-package-proof.outputs.artifact-id == needs.package.outputs.artifact-id
+    needs: [package, exact-package-proof]
     concurrency:
       group: release-publish
       cancel-in-progress: false
@@ -160,12 +229,12 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.package.outputs.tag }}
-      ARTIFACT_NAME: sidenote-windows-${{ github.event_name }}-${{ needs.package.outputs.tag }}
     steps:
       - name: Download validated packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/sidenote-release
       - name: Verify release checksums
         working-directory: ${{ runner.temp }}/sidenote-release

@@ -1,6 +1,10 @@
 #Requires -Version 7.4
-[CmdletBinding()]
-param([switch]$SelfTest)
+[CmdletBinding(DefaultParameterSetName = 'Source')]
+param(
+    [Parameter(Mandatory, ParameterSetName = 'Test')][switch]$SelfTest,
+    [Parameter(Mandatory, ParameterSetName = 'Package')][string]$PackageDirectory,
+    [Parameter(Mandatory, ParameterSetName = 'Package')][string]$ExpectedTag
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -8,6 +12,62 @@ $checksumError = 'The update checksum does not match. Try again.'
 
 function Read-Json([string]$Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+}
+
+function Copy-VerifiedPackageFiles([string]$Directory, [string]$Feed) {
+    $manifest = Get-Item -LiteralPath (Join-Path $Directory 'SHA256SUMS')
+    [void][IO.Directory]::CreateDirectory($Feed)
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in [IO.File]::ReadAllLines($manifest.FullName)) {
+        if ($line -cnotmatch '\A([0-9A-Fa-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)\z') {
+            throw 'Invalid SHA256SUMS entry.'
+        }
+        $hash, $name = $Matches[1], $Matches[2]
+        if ($name -ieq 'SHA256SUMS' -or -not $names.Add($name)) { throw "Unexpected SHA256SUMS entry: $name." }
+        $file = Get-Item -LiteralPath (Join-Path $Directory $name)
+        if ($file -isnot [IO.FileInfo] -or $file.Name -cne $name -or
+            ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Expected a regular package file: $name."
+        }
+        $copy = Join-Path $Feed $name
+        Copy-Item -LiteralPath $file.FullName -Destination $copy
+        if ((Get-FileHash -LiteralPath $copy).Hash -ine $hash) { throw "SHA256SUMS mismatch: $name." }
+        Write-Output "Verified SHA256SUMS for $name ($hash)."
+    }
+    if (-not $names.Count) { throw 'SHA256SUMS is empty.' }
+    # Publishing uploads every file in the directory, so each one must be covered.
+    $unlisted = @(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -cne 'SHA256SUMS' -and -not $names.Contains($_.Name) })
+    if ($unlisted.Count) { throw "Unlisted package file: $($unlisted[0].Name)." }
+}
+
+function Get-ProofPackage([string]$Feed, [string]$Tag) {
+    . (Join-Path $PSScriptRoot 'release_ci.ps1') -ValidateOnly
+    $full = @(Get-ChildItem -LiteralPath $Feed -File -Filter '*-full.nupkg')
+    if ($full.Count -ne 1 -or $full[0].Name -cnotmatch
+        '\Asidenote-(\d+\.\d+\.\d+(?:-dev\.(?:0|[1-9]\d*))?)-(stable|dev)-full\.nupkg\z') {
+        throw 'Expected one versioned Sidenote full package.'
+    }
+    $version, $channel = $Matches[1], $Matches[2]
+    if (($version.Contains('-dev.') -ne ($channel -ceq 'dev')) -or ($Tag -and $Tag -cne "v$version")) {
+        throw 'The package version or channel does not match the release.'
+    }
+    [void](Get-ReleaseAssets $Feed $version $channel)
+    return @{ Version = $version; Channel = $channel; Full = $full[0] }
+}
+
+function Assert-PackageExecutable($Fixture, $Release) {
+    $archive = [IO.Compression.ZipFile]::OpenRead($Release.Full.FullName)
+    try {
+        $entry = @($archive.Entries | Where-Object FullName -CMatch '\Alib/[^/]+/sidenote\.exe\z')
+        if ($entry.Count -ne 1) { throw 'Expected one Sidenote executable in the full package.' }
+        $stream = $entry[0].Open()
+        try { $hash = (Get-FileHash -InputStream $stream).Hash }
+        finally { $stream.Dispose() }
+    } finally { $archive.Dispose() }
+    if ((Get-FileHash -LiteralPath $Fixture.Exe).Hash -ine $hash) {
+        throw 'The installed executable does not match the verified full package.'
+    }
+    Write-Output "Installed executable matches $($Release.Full.Name) ($hash)."
 }
 
 function Set-SourceVersion([string]$Source, [string]$Version) {
@@ -22,7 +82,7 @@ function Set-SourceVersion([string]$Source, [string]$Version) {
     }
 }
 
-function New-ProofFixture([string]$Root, [string]$Source) {
+function New-ProofFixture([string]$Root, [string]$Source, [string]$Feed = (Join-Path $Root 'feed')) {
     $proofProfile = Join-Path $Root 'profile'
     $install = Join-Path $Root 'install'
     $local = Join-Path $proofProfile 'local'
@@ -30,7 +90,6 @@ function New-ProofFixture([string]$Root, [string]$Source) {
     $state = Join-Path $Root 'state'
     $meetings = Join-Path $Root 'meetings'
     $peers = Join-Path $Root 'peers'
-    $feed = Join-Path $Root 'feed'
     $environment = @{
         USERPROFILE = $proofProfile
         APPDATA = Join-Path $proofProfile 'roaming'
@@ -154,6 +213,39 @@ function Assert-Fixture($Fixture, [string]$Version) {
     $pointer
 }
 
+function Install-ProofFixture($Fixture, [string]$SetupFeed, [string]$Version) {
+    if ((Test-Path -LiteralPath $Fixture.Install) -or (Test-Path -LiteralPath $Fixture.Updates)) {
+        throw 'The isolated install is not clean.'
+    }
+    if (Get-CimInstance Win32_Process -Filter "Name = 'hex.exe' OR Name = 'hex.com' OR Name = 'sidenote.exe' OR Name = 'hex-meetings.exe'") {
+        throw 'The runner already has a Hex or Sidenote process.'
+    }
+    [void](Get-ScheduledTask -TaskPath '\')
+    $setupLog = $Fixture.Install + '-setup.log'
+    $installer = Join-Path $PSScriptRoot 'install_release.ps1'
+    $setupExit = Invoke-ProofProcess $Fixture (Join-Path $PSHOME 'pwsh.exe') -Capture -Arguments @(
+        '-NoProfile', '-File', $installer, '-Feed', $SetupFeed, '-Version', $Version, '-Log', $setupLog,
+        '-ProofInstallDirectory', $Fixture.Install)
+    if (Test-Path -LiteralPath $setupLog) {
+        Select-String -LiteralPath $setupLog -Pattern 'hook| WARN | ERROR ' | ForEach-Object { Write-Host $_.Line }
+    }
+    if ($setupExit -ne 0) { throw "Setup exited with code $setupExit." }
+    $reportPath = Join-Path $Fixture.Updates 'update-report.json'
+    if (Test-Path -LiteralPath $reportPath) {
+        $hookStatus = (Read-Json $reportPath).status
+        Write-Host "Setup hook reported $($hookStatus.phase). $($hookStatus.error)"
+    }
+    # Setup runs the fast hook, then stops app processes. Let normal startup reconcile its listener.
+    if ((Invoke-UpdateCommand $Fixture '--update-window-start') -ne 0) { throw 'Clean install startup failed.' }
+    $listener = Wait-Proof { Get-Listener $Fixture } 'The clean installation did not start its isolated listener.'
+    if ((Invoke-UpdateCommand $Fixture '--update-status') -ne 0) { throw 'Clean install status failed.' }
+    Assert-Report $Fixture (Read-Json $reportPath) $Version
+    $initialPointer = Assert-Fixture $Fixture $Version
+    Write-Host "Verified the clean $Version install, listener and pipeline."
+
+    return @{ Listener = $listener; Pointer = $initialPointer }
+}
+
 function Invoke-SelfTest([string]$Root, [string]$Source) {
     $fixture = New-ProofFixture $Root $Source
     if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates) -or
@@ -195,7 +287,42 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         }
         throw 'Refusal assertion accepted a success or an unrelated failure.'
     }
+    $packages = Join-Path $Root 'packages'
+    [void][IO.Directory]::CreateDirectory($packages)
+    $file = Join-Path $packages 'sidenote-dev-Setup.exe'
+    [IO.File]::WriteAllText($file, 'Synthetic bytes')
+    $sum = Join-Path $packages 'SHA256SUMS'
+    $entry = "$((Get-FileHash -LiteralPath $file).Hash)  sidenote-dev-Setup.exe"
+    [IO.File]::WriteAllText($sum, $entry)
+    Copy-VerifiedPackageFiles $packages (Join-Path $Root 'verified') | Out-Null
+    foreach ($case in @(
+        @{ Entry = $entry.Replace('sidenote-dev-Setup.exe', '../sidenote-dev-Setup.exe'); Error = 'Invalid SHA256SUMS entry.' }
+        @{ Entry = "$('0' * 64)  sidenote-dev-Setup.exe"; Error = 'SHA256SUMS mismatch: sidenote-dev-Setup.exe.' }
+        @{ Entry = $entry; Stray = $true; Error = 'Unlisted package file: stray.txt.' }
+    )) {
+        [IO.File]::WriteAllText($sum, $case.Entry)
+        if ($case['Stray']) { [IO.File]::WriteAllText((Join-Path $packages 'stray.txt'), 'Unlisted bytes') }
+        $rejected = $false
+        try { Copy-VerifiedPackageFiles $packages (Join-Path $Root 'verified') | Out-Null }
+        catch {
+            if ($_.Exception.Message -cne $case.Error) { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'Package checksum verification accepted invalid input.' }
+    }
     Write-Output 'Release update fixture, report and refusal self-test passed.'
+    Write-Output 'Release package checksum self-test passed.'
+}
+
+function Remove-ProofFixture($Fixture) {
+    if (Get-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskPath '\' -TaskName $Fixture.Task -Confirm:$false
+    }
+    $processes = @(Get-Process -Name sidenote,Update -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($Fixture.Install + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    })
+    $processes | Stop-Process -Force
+    $processes | Wait-Process -Timeout 10
 }
 
 if (-not $SelfTest -and (-not $IsWindows -or $env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted')) {
@@ -209,6 +336,20 @@ try {
 
     $n = '0.1.0'
     $next = '0.1.1'
+    $channel = 'stable'
+    $release = $null
+    $feed = Join-Path $root.FullName 'feed'
+    if ($PackageDirectory) {
+        Copy-VerifiedPackageFiles $PackageDirectory $feed
+        $release = Get-ProofPackage $feed $ExpectedTag
+        $next = $release.Version
+        $channel = $release.Channel
+        # Velopack needs a version core of at least 0.0.1; prereleases of 0.0.1 are accepted.
+        $n = if ($channel -ceq 'dev') { '0.0.1-dev.0' } else { '0.0.1' }
+        if ([System.Management.Automation.SemanticVersion]$next -le [System.Management.Automation.SemanticVersion]$n) {
+            throw "The release needs to be newer than the synthetic baseline $n."
+        }
+    }
     $source = Join-Path $root.FullName 'source'
     $archive = Join-Path $root.FullName 'source.tar'
     [void][IO.Directory]::CreateDirectory($source)
@@ -216,60 +357,56 @@ try {
     if ($LASTEXITCODE) { throw 'Could not export the source for the proof builds.' }
     & tar.exe -xf $archive -C $source
     if ($LASTEXITCODE) { throw 'Could not extract the source for the proof builds.' }
-    $fixture = New-ProofFixture $root.FullName $source
-    $setup = Join-Path $root.FullName 'sidenote-stable-Setup.exe'
-    $feedSetup = Join-Path $fixture.Feed 'sidenote-stable-Setup.exe'
-    $env:GITHUB_ACTIONS = $null # Disable ANSI in the pinned vpk help captured by the packer.
+    if ($release) {
+        $fixture = New-ProofFixture (Join-Path $root.FullName 'clean') $source $feed
+        [void](Install-ProofFixture $fixture $feed $next)
+        Assert-PackageExecutable $fixture $release
+        Remove-ProofFixture $fixture
+        $fixture = $null
+    }
+
+    $fixture = New-ProofFixture $root.FullName $source $feed
+    $baselineSetup = Join-Path $root.FullName 'baseline-setup'
+    [void][IO.Directory]::CreateDirectory($baselineSetup)
+    $buildFeed = if ($release) { Join-Path $root.FullName 'baseline-feed' } else { $feed }
+    $feedSetup = Join-Path $buildFeed "sidenote-$channel-Setup.exe"
+    $versions = if ($release) { @($n) } else { @($n, $next) }
+    $actions = $env:GITHUB_ACTIONS
     Push-Location -LiteralPath $source
     try {
+        $env:GITHUB_ACTIONS = $null # Disable ANSI in the pinned vpk help captured by the packer.
         & cargo +stable-x86_64-pc-windows-gnu fetch --locked --target x86_64-pc-windows-gnu
         if ($LASTEXITCODE) { throw 'Could not fetch the locked Windows GNU dependencies.' }
-        foreach ($version in @($n, $next)) {
+        foreach ($version in $versions) {
             Set-SourceVersion $source $version
-            & (Join-Path $source 'tools/pack_release.ps1') -Feed $fixture.Feed -Channel stable
-            if ($version -eq $n) { Copy-Item -LiteralPath $feedSetup -Destination $setup }
+            & (Join-Path $source 'tools/pack_release.ps1') -Feed $buildFeed -Channel $channel
+            if ($version -ceq $n) { Copy-Item -LiteralPath $feedSetup -Destination $baselineSetup }
         }
-    } finally { Pop-Location }
-    $index = Read-Json (Join-Path $fixture.Feed 'releases.stable.json')
-    foreach ($expected in @(@($n, 'Full'), @($next, 'Full'), @($next, 'Delta'))) {
-        $kind = $expected[1].ToLowerInvariant()
-        $name = "sidenote-$($expected[0])-stable-$kind.nupkg"
-        $assets = @($index.Assets | Where-Object FileName -CEQ $name)
-        $package = Get-Item -LiteralPath (Join-Path $fixture.Feed $name)
-        if ($assets.Count -ne 1 -or $assets[0].PackageId -cne 'sidenote' -or
-            $assets[0].Version -cne $expected[0] -or $assets[0].Type -cne $expected[1] -or
-            $package.Length -le 0 -or $package.Length -ne $assets[0].Size -or
-            (Get-FileHash -LiteralPath $package.FullName).Hash -ine $assets[0].SHA256) {
-            throw "Expected a verified feed asset: $name."
-        }
+    } finally {
+        Pop-Location
+        $env:GITHUB_ACTIONS = $actions
     }
-    Write-Output 'Verified both full packages and the delta in the isolated feed.'
+    if (-not $release) {
+        $index = Read-Json (Join-Path $fixture.Feed 'releases.stable.json')
+        foreach ($expected in @(@($n, 'Full'), @($next, 'Full'), @($next, 'Delta'))) {
+            $kind = $expected[1].ToLowerInvariant()
+            $name = "sidenote-$($expected[0])-stable-$kind.nupkg"
+            $assets = @($index.Assets | Where-Object FileName -CEQ $name)
+            $package = Get-Item -LiteralPath (Join-Path $fixture.Feed $name)
+            if ($assets.Count -ne 1 -or $assets[0].PackageId -cne 'sidenote' -or
+                $assets[0].Version -cne $expected[0] -or $assets[0].Type -cne $expected[1] -or
+                $package.Length -le 0 -or $package.Length -ne $assets[0].Size -or
+                (Get-FileHash -LiteralPath $package.FullName).Hash -ine $assets[0].SHA256) {
+                throw "Expected a verified feed asset: $name."
+            }
+        }
+        Write-Output 'Verified both full packages and the delta in the isolated feed.'
+    }
 
-    if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates)) {
-        throw 'The isolated install is not clean.'
-    }
-    if (Get-CimInstance Win32_Process -Filter "Name = 'hex.exe' OR Name = 'hex.com' OR Name = 'sidenote.exe' OR Name = 'hex-meetings.exe'") {
-        throw 'The runner already has a Hex or Sidenote process.'
-    }
-    [void](Get-ScheduledTask -TaskPath '\')
-    $setupLog = Join-Path $root.FullName 'setup.log'
-    $setupExit = Invoke-ProofProcess $fixture $setup @('--silent', '--installto', $fixture.Install, '--log', $setupLog)
-    if (Test-Path -LiteralPath $setupLog) {
-        Select-String -LiteralPath $setupLog -Pattern 'hook| WARN | ERROR ' | ForEach-Object { Write-Host $_.Line }
-    }
-    if ($setupExit -ne 0) { throw "Setup exited with code $setupExit." }
+    $installed = Install-ProofFixture $fixture $baselineSetup $n
+    $listener = $installed.Listener
+    $initialPointer = $installed.Pointer
     $reportPath = Join-Path $fixture.Updates 'update-report.json'
-    if (Test-Path -LiteralPath $reportPath) {
-        $hookStatus = (Read-Json $reportPath).status
-        Write-Host "Setup hook reported $($hookStatus.phase). $($hookStatus.error)"
-    }
-    # Setup runs the fast hook, then stops app processes. Let normal startup reconcile its listener.
-    if ((Invoke-UpdateCommand $fixture '--update-window-start') -ne 0) { throw 'Clean install startup failed.' }
-    $listener = Wait-Proof { Get-Listener $fixture } 'The clean installation did not start its isolated listener.'
-    if ((Invoke-UpdateCommand $fixture '--update-status') -ne 0) { throw 'Clean install status failed.' }
-    Assert-Report $fixture (Read-Json $reportPath) $n
-    $initialPointer = Assert-Fixture $fixture $n
-    Write-Output "Verified the clean $n install, listener and pipeline."
 
     $checkExit = Invoke-UpdateCommand $fixture '--update-check'
     $report = Read-Json $reportPath
@@ -282,6 +419,15 @@ try {
     $original = [IO.File]::ReadAllBytes($readyPath)
     $ready = Read-Json $readyPath
     $hash = $ready[1].SHA256
+    if ($release) {
+        $download = Join-Path $fixture.Install "packages/$($release.Full.Name)"
+        if ($ready[0] -cne $channel -or $ready[1].FileName -cne $release.Full.Name -or
+            (Get-FileHash -LiteralPath $release.Full.FullName).Hash -ine $hash -or
+            (Get-FileHash -LiteralPath $download).Hash -ine $hash) {
+            throw 'The ready update does not match the verified full package.'
+        }
+        Write-Output "Downloaded update matches $($release.Full.Name) ($hash)."
+    }
     $replacement = if ($hash[0] -eq '0') { '1' } else { '0' }
     $ready[1].SHA256 = $replacement + $hash.Substring(1)
     try {
@@ -322,15 +468,9 @@ try {
         'assets/licenses/lucide-LICENSE.txt')) {
         if ((Get-Item -LiteralPath (Join-Path $current $file)).Length -le 0) { throw "Missing bundle file: $file." }
     }
+    if ($release) { Assert-PackageExecutable $fixture $release }
     Write-Output "Verified $next, the restarted listener (PID $($newListener.ProcessId)), preserved fixtures and bundled runtime and notices."
 } finally {
-    if ($fixture -and -not $SelfTest) {
-        if (Get-ScheduledTask -TaskPath '\' -TaskName $fixture.Task -ErrorAction SilentlyContinue) {
-            Unregister-ScheduledTask -TaskPath '\' -TaskName $fixture.Task -Confirm:$false
-        }
-        Get-Process -Name sidenote,Update -ErrorAction SilentlyContinue | Where-Object {
-            $_.Path -and $_.Path.StartsWith($fixture.Install + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
-        } | Stop-Process -Force
-    }
+    if ($fixture) { Remove-ProofFixture $fixture }
     $root.Delete($true)
 }

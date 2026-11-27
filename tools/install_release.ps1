@@ -1,18 +1,19 @@
 <# Install only while Hex is idle, then require complete post-install evidence. #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Release')]
 param(
     [Parameter(Mandatory)][string]$Feed,
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$')]
     [string]$Version,
     [Parameter(Mandatory)][string]$Log,
-    [switch]$WhatIf
+    [Parameter(ParameterSetName = 'Release')][switch]$WhatIf,
+    [Parameter(Mandatory, ParameterSetName = 'Proof')][string]$ProofInstallDirectory
 )
 $ErrorActionPreference = 'Stop'
 $stage = 'preflight'
 function Quote-Argument([string]$Value) {
     return '"' + ([regex]::Replace($Value, '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
 }
-function Run-Hidden([string]$Exe, [string[]]$Arguments, [scriptblock]$Started = {}) {
+function Run-Hidden([string]$Exe, [string[]]$Arguments, [scriptblock]$Started = {}, [int]$Timeout = -1) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Exe
     $info.Arguments = (@($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' ')
@@ -26,7 +27,11 @@ function Run-Hidden([string]$Exe, [string[]]$Arguments, [scriptblock]$Started = 
         # Drain both streams without exposing paths, environment values or hook errors.
         $stdout = $child.StandardOutput.ReadToEndAsync()
         $stderr = $child.StandardError.ReadToEndAsync()
-        $child.WaitForExit()
+        if (-not $child.WaitForExit($Timeout)) {
+            $child.Kill($true)
+            $child.WaitForExit()
+            throw 'Setup timed out'
+        }
         [void]$stdout.GetAwaiter().GetResult()
         [void]$stderr.GetAwaiter().GetResult()
         if ($child.ExitCode -ne 0) { throw 'Child failed' }
@@ -106,10 +111,25 @@ function Invoke-InstallCheck([string]$Expected) {
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install_check.ps1') -Expect $Expected
     if ($LASTEXITCODE -ne 0) { throw 'Install check failed' }
 }
-function Invoke-ReleaseInstall {
+function Get-SetupPath {
     $channel = if ($Version -match '-dev\.') { 'dev' } else { 'stable' }
     $setup = Join-Path $Feed "sidenote-$channel-Setup.exe"
-    if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { $setup = Join-Path $Feed 'sidenote-win-Setup.exe' }
+    if (-not $ProofInstallDirectory -and -not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+        return Join-Path $Feed 'sidenote-win-Setup.exe'
+    }
+    return $setup
+}
+function Invoke-Setup([string]$Path, [string]$LogPath, [scriptblock]$Started = {}) {
+    $arguments = @('--silent', '--log', $LogPath)
+    $timeout = -1
+    if ($ProofInstallDirectory) {
+        $arguments += @('--installto', $ProofInstallDirectory)
+        $timeout = 120000
+    }
+    Run-Hidden $Path $arguments $Started $timeout
+}
+function Invoke-ReleaseInstall {
+    $setup = Get-SetupPath
     if ($WhatIf) {
         Write-Output '1. Require Hex idle with no capture jobs; reserve the existing update activity, window and worker locks; refuse pending notes/routing.'
         Write-Output '2. Request listener stop with its existing stop/resume markers; wait up to 8 seconds. Re-check Hex and Sidenote immediately before Setup.'
@@ -147,7 +167,7 @@ function Invoke-ReleaseInstall {
         $script:stage = 'final Sidenote idle check immediately before Setup'
         Assert-SidenoteIdle $paths
         $script:stage = 'silent Setup: require exit 0; inspect the requested log on failure'
-        Run-Hidden $setup @('--silent', '--log', $logPath) {
+        Invoke-Setup $setup $logPath {
             $handoff.Started = $true
             Release-InstallLocks $locks
         }
@@ -181,5 +201,16 @@ function Invoke-ReleaseInstall {
     }
 }
 if ($MyInvocation.InvocationName -eq '.') { return }
-try { Invoke-ReleaseInstall; exit 0 }
-catch { [Console]::Error.WriteLine("install_release: failed at $stage."); exit 1 }
+try {
+    if ($ProofInstallDirectory) {
+        $stage = 'isolated hosted proof preflight'
+        if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+            -not [IO.Path]::IsPathFullyQualified($ProofInstallDirectory) -or
+            (Test-Path -LiteralPath $ProofInstallDirectory)) {
+            throw 'Proof Setup requires a fresh absolute install directory on a GitHub-hosted runner.'
+        }
+        $stage = 'isolated silent Setup'
+        Invoke-Setup (Get-SetupPath) ([IO.Path]::GetFullPath($Log))
+    } else { Invoke-ReleaseInstall }
+    exit 0
+} catch { [Console]::Error.WriteLine("install_release: failed at $stage."); exit 1 }
