@@ -413,7 +413,7 @@
 
   "src/ui/cloud_ask.rs": "0b3cd72ff4fabf3bfdf64e0017c44851bef8113df24feede14e991364312e0ae",
 
-  "src/ui/edit_worker.rs": "87c4fe72d8b55837ba984b994de1a424ad247a1c98e5179defc32ce400f62c6c",
+  "src/ui/edit_worker.rs": "58f07495aa05f170ae6aa25d1ff9821a1da6b044001e645e04e387ecadbac8be",
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
-  "src/ui/hex/settings.rs": "427bf73bee1e70a7f23a4e5a5ac6554e8d66339ac5ec88c61986b1320b8b15cf",
+  "src/ui/hex/settings.rs": "5800cc25f82008b57d0c20aa1c2c3c6ede7b1c3ff97d7e716478ffdf6ddee015",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 

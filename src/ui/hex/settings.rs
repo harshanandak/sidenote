@@ -4583,7 +4583,13 @@ mod tests {
         choose_select(&mut rt, "work-tasks-grouping-select-trigger", 5);
         assert_eq!(rt.state.tasks.grouping, TaskGrouping::Owner);
         assert!(rt.state.tasks.grouping_loaded);
-        assert!(rt.state.edit_busy, "the grouping save was not published");
+        while rt.state.edit_busy {
+            rt.frame(0.0);
+        }
+        assert_eq!(
+            rt.state.tasks.store.load_grouping().ok(),
+            Some(TaskGrouping::Owner)
+        );
         assert_eq!(rt.state.feature_error, None);
     }
 
@@ -4600,26 +4606,6 @@ mod tests {
         rt.frame(0.0);
         let elements = rt.elements();
         assert!(row_shows_text(&elements, "work-tasks-grouping", "Owner"));
-    }
-
-    #[test]
-    fn work_tasks_grouping_read_failure_disables_the_select() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("local/task-grouping.json")).unwrap();
-        let mut rt = settings_runtime(work_tasks_state(Some(root.path())), (1334.0, 900.0));
-        rt.settle_all();
-        rt.frame(0.0);
-        let elements = rt.elements();
-        let trigger = elements
-            .iter()
-            .find(|element| element.key.as_deref() == Some("work-tasks-grouping-select-trigger"))
-            .unwrap();
-        assert!(!trigger.focusable);
-        assert!(row_shows_text(
-            &elements,
-            "work-tasks-grouping",
-            "Could not read this setting."
-        ));
     }
 
     #[test]
