@@ -114,66 +114,61 @@ remote_tag_sha() {
 }
 
 refresh_latest_release() {
-    local staging asset name id inventory previous i
-    local -a ordered=() pending=() promoted=()
-    local -A ids=() wanted=()
-    local asset_api="repos/$repo/releases/assets"
-    staging=$(mktemp -d "$runner_temp/latest-assets.XXXXXXXX")
-    # Keep the live feed pointing to its old packages until the new payload is ready.
-    for asset in "$asset_dir/"*.nupkg "$asset_dir/sidenote-latest-Setup.exe" \
-        "$asset_dir/SHA256SUMS" "$asset_dir/releases.latest.json"; do
+    local asset name digest checksum inventory version previous= count=0
+    local -A existing=()
+    local -a obsolete=()
+    local package_pattern="^sidenote-(${latest:2:-1})-latest-(full|delta)\.nupkg$"
+    if [[ $rolling_state == exists ]]; then
+        inventory=$(read_or_fail 'Failed to list Latest assets.' gh release view latest-main --repo "$repo" \
+            --json assets --jq '.assets[] | [.name, (.digest // "")] | @tsv') || exit 1
+        while IFS=$'\t' read -r name digest; do
+            if [[ -n $name ]]; then existing[$name]=$digest; fi
+        done <<< "$inventory"
+    fi
+    for asset in "$asset_dir/"*.nupkg; do
         name=${asset##*/}
-        ordered+=("$name")
-        wanted[$name]=1
-        cp -- "$asset" "$staging/$name.pending"
-        pending+=("$staging/$name.pending")
-    done
-    run_write gh release upload latest-main "${pending[@]}" --repo "$repo" --clobber
-    if [[ $DRY_RUN == 1 ]]; then return; fi
-    inventory=$(read_or_fail 'Failed to list staged Latest assets.' gh release view latest-main --repo "$repo" \
-        --json assets --jq '.assets[] | [.name, (.apiUrl | split("/") | last)] | @tsv') || exit 1
-    while IFS=$'\t' read -r name id; do
-        if [[ -n $name && $id =~ ^[0-9]+$ ]]; then ids[$name]=$id; fi
-    done <<< "$inventory"
-    for name in "${ordered[@]}"; do
-        [[ -n ${ids[$name.pending]+x} ]] || { echo "Missing staged asset $name." >&2; exit 1; }
-    done
-    for name in "${ordered[@]}"; do
-        previous=${ids[$name]:-}
-        if [[ -n $previous ]] && ! run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name.previous-$previous" --silent; then
-            run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || exit 1
-            break
-        fi
-        if ! run_write gh api -X PATCH "$asset_api/${ids[$name.pending]}" -f "name=$name" --silent; then
-            if [[ -n $previous ]]; then
-                # If the index rename took effect but returned an error, keep the packages it may now reference.
-                run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || exit 1
-            elif [[ $name == releases.latest.json ]]; then
+        if [[ -n ${existing[$name]+x} ]]; then
+            checksum=$(sha256sum -- "$asset")
+            if [[ ${existing[$name]} != "sha256:${checksum%% *}" ]]; then
+                echo "Existing asset $name differs from the proved package; refusing to replace it." >&2
                 exit 1
             fi
-            break
+        else
+            run_write gh release upload latest-main "$asset" --repo "$repo"
+            existing[$name]=''
         fi
-        promoted+=("$name")
     done
-    if (( ${#promoted[@]} != ${#ordered[@]} )); then
-        for ((i = ${#promoted[@]} - 1; i >= 0; i--)); do
-            name=${promoted[i]}
-            previous=${ids[$name]:-}
-            if run_write gh api -X PATCH "$asset_api/${ids[$name.pending]}" -f "name=$name.pending" --silent && [[ -n $previous ]]; then
-                run_write gh api -X PATCH "$asset_api/$previous" -f "name=$name" --silent || echo "Could not restore $name." >&2
+
+    # The Latest version grammar has fixed labels, so version-sort orders its numeric components.
+    while IFS=$'\t' read -r version name; do
+        if [[ -z $version ]]; then continue; fi
+        if [[ $version != "$previous" ]]; then
+            count=$((count + 1))
+            previous=$version
+        fi
+        if (( count > 3 )); then
+            [[ v$version != "$tag" ]] || { echo 'The candidate is older than the retained Latest builds.' >&2; exit 1; }
+            obsolete+=("$name")
+        fi
+    done < <(
+        for name in "${!existing[@]}"; do
+            if [[ $name =~ $package_pattern ]]; then
+                printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$name"
             fi
-        done
-        exit 1
-    fi
+        done | sort -t $'\t' -k1,1Vr
+    )
+
+    run_write gh release upload latest-main "$asset_dir/sidenote-latest-Setup.exe" "$asset_dir/SHA256SUMS" --repo "$repo" --clobber
+    run_write gh release upload latest-main "$asset_dir/releases.latest.json" --repo "$repo" --clobber
+    for name in "${!existing[@]}"; do
+        if [[ $name == *.pending || $name == *.previous-* ]]; then obsolete+=("$name"); fi
+    done
+    for name in "${obsolete[@]}"; do
+        run_write gh release delete-asset latest-main "$name" --repo "$repo" --yes
+    done
     if [[ $rolling_draft == false ]]; then
         run_write gh api -X PATCH "repos/$repo/git/refs/tags/latest-main" -f "sha=$sha" -F force=true --silent
     fi
-    inventory=$(read_or_fail 'Failed to list current Latest assets.' gh release view latest-main --repo "$repo" --json assets --jq '.assets[].name') || exit 1
-    while IFS= read -r name; do
-        if [[ -n $name && -z ${wanted[$name]+x} ]]; then
-            run_write gh release delete-asset latest-main "$name" --repo "$repo" --yes
-        fi
-    done <<< "$inventory"
     run_write gh release edit latest-main --repo "$repo" --target "$sha" --title "Sidenote latest $tag" \
         --notes-file "$notes_file" --draft=false --prerelease --latest=false
 }
@@ -312,6 +307,13 @@ if [[ $channel == dev || $channel == latest ]]; then
                 *) exit 1 ;;
             esac
         fi
-        run_write "${rolling_create[@]}"
+        if [[ $channel == latest ]]; then
+            run_write gh release create latest-main --repo "$repo" --target "$sha" --title "$rolling_prefix$tag" \
+                --notes-file "$notes_file" --draft --prerelease --latest=false
+            rolling_draft=true
+            refresh_latest_release
+        else
+            run_write "${rolling_create[@]}"
+        fi
     fi
 fi
