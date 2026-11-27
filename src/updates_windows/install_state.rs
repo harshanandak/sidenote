@@ -5,6 +5,12 @@ const RECEIPT: &str = "install-hook.complete";
 const PIPELINE: &str = "pipeline-install.pending";
 const RESUME: &str = "update-listener.resume";
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PipelineCompletion {
+    Complete,
+    NotConfigured,
+}
+
 // Display and feed status can sample the legacy files without install admission.
 pub(super) fn pipeline_pending(directory: &Path) -> bool {
     directory.join(PIPELINE).exists()
@@ -12,6 +18,15 @@ pub(super) fn pipeline_pending(directory: &Path) -> bool {
 
 pub(super) fn listener_pending(directory: &Path) -> bool {
     directory.join(RESUME).exists()
+}
+
+pub(super) fn completion_receipt_version(directory: &Path) -> Option<String> {
+    fs::read_to_string(directory.join(RECEIPT)).ok()
+}
+
+#[cfg(test)]
+pub(super) fn pipeline_version(directory: &Path) -> Option<String> {
+    fs::read_to_string(directory.join(PIPELINE)).ok()
 }
 
 impl InstallGuard<'_> {
@@ -29,7 +44,7 @@ impl InstallGuard<'_> {
 
     pub(super) fn begin_reconciliation(&self) -> Result<bool, String> {
         let receipt = self.directory.join(RECEIPT);
-        let current = fs::read(&receipt).ok().as_deref() == Some(VERSION.as_bytes())
+        let current = completion_receipt_version(self.directory).as_deref() == Some(VERSION)
             && !pipeline_pending(self.directory);
         if receipt.exists() {
             fs::remove_file(&receipt).map_err(|_| "Could not retire install hook completion.")?;
@@ -40,20 +55,15 @@ impl InstallGuard<'_> {
         Ok(current)
     }
 
-    pub(super) fn finish_reconciliation(&self) -> Result<(), String> {
+    pub(super) fn publish_completion_receipt(&self) -> Result<(), String> {
         fs::write(self.directory.join(RECEIPT), VERSION)
-            .map_err(|_| "Could not save install hook completion.")?;
-        if self.listener_pending() {
-            self.clear_listener_pending()
-                .map_err(|_| "Could not clear listener restart state.")?;
-        }
-        Ok(())
+            .map_err(|_| "Could not save install hook completion.".into())
     }
 }
 
 pub(super) fn install_pending_pipeline(
     guard: &InstallGuard<'_>,
-    install: impl FnOnce() -> Result<(), String>,
+    install: impl FnOnce() -> Result<PipelineCompletion, String>,
     clear_status: impl FnOnce() -> Result<(), String>,
 ) -> Result<bool, String> {
     let marker = guard.directory.join(PIPELINE);

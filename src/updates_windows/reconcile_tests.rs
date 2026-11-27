@@ -1,4 +1,5 @@
 use super::*;
+use PipelineCompletion::Complete;
 
 fn hook(
     root: &Path,
@@ -10,7 +11,9 @@ fn hook(
         Instant::now(),
         ReconciliationBudget::InstallOrRecovery,
         |_, _| Ok(()),
-        |guard, _| complete_pipeline_install(guard, || Ok(()), |status| serde_json::json!(status)),
+        |guard, _| {
+            complete_pipeline_install(guard, || Ok(Complete), |status| serde_json::json!(status))
+        },
         listener,
         make_report,
     )
@@ -95,7 +98,7 @@ fn startup_cannot_install_pipeline_during_hook_record_transition() {
             |_| Ok(()),
             || {
                 installed.set(true);
-                Ok(())
+                Ok(Complete)
             },
             || false,
             |_| panic!("no pipeline error to report"),
@@ -182,6 +185,85 @@ fn apply_during_hook(path: &Path, from_window: bool) -> Result<(), String> {
         |_| panic!("rejected apply wrote a report"),
         |_| panic!("apply reached handoff while the hook owned recovery"),
     )
+}
+
+#[test]
+fn pipeline_failure_listener_success_allows_newer_update() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let report = |status: &Status| serde_json::json!(status);
+    let error = reconcile_installed(
+        path,
+        Instant::now(),
+        ReconciliationBudget::InstallOrRecovery,
+        |_, _| Ok(()),
+        |_, _| Err(PIPELINE_INSTALL_ERROR.into()),
+        |_| Ok(()),
+        report,
+    )
+    .unwrap_err();
+    assert_eq!(error, PIPELINE_INSTALL_ERROR);
+    assert!(install_state::pipeline_pending(path));
+    assert!(!path.join("install-hook.complete").exists());
+    assert!(!install_state::listener_pending(path));
+    apply_installed(
+        path,
+        false,
+        || false,
+        report,
+        |guard| {
+            assert!(!guard.listener_pending());
+            assert!(install_state::pipeline_pending(path));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert!(
+        !start_installed(
+            path,
+            Instant::now(),
+            |_, _| panic!("listener already recovered"),
+            |_| Ok(()),
+            || Ok(Complete),
+            || false,
+            report,
+        )
+        .unwrap()
+    );
+    assert!(!install_state::pipeline_pending(path));
+    assert_eq!(
+        install_state::completion_receipt_version(path).as_deref(),
+        Some(VERSION)
+    );
+}
+
+#[test]
+fn listener_recovery_failure_blocks_apply_before_handoff() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let report = |status: &Status| serde_json::json!(status);
+    assert_eq!(
+        hook(path, |_| Err(INSTALL_LISTENER_ERROR.into()), report).unwrap_err(),
+        INSTALL_LISTENER_ERROR
+    );
+    assert!(install_state::listener_pending(path));
+    assert!(!install_state::pipeline_pending(path));
+    assert!(!path.join("update-listener.stop").exists());
+
+    for from_window in [false, true] {
+        assert_eq!(
+            apply_installed(
+                path,
+                from_window,
+                || false,
+                |_| panic!("rejected apply wrote a report"),
+                |_| panic!("apply reached handoff with unfinished listener recovery"),
+            )
+            .unwrap_err(),
+            "Reopen Sidenote to finish restarting its meeting listener, then retry the update."
+        );
+    }
 }
 
 #[test]
