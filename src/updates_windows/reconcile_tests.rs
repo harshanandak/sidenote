@@ -1,12 +1,14 @@
 use super::*;
+use std::cell::Cell;
 fn start_fixture(
     dir: &Path,
     reconcile: impl FnOnce() -> Result<ReconcileOutcome, String>,
     work: impl Fn() -> Result<(), String> + Copy,
 ) -> ReconcileOutcome {
+    let clock = Cell::new(Instant::now());
     window_start_at(
         dir,
-        acquire_hook_lock,
+        (|| clock.get(), |delay| clock.set(clock.get() + delay)),
         reconcile,
         work,
         work,
@@ -91,4 +93,60 @@ fn missing_pipeline_settings_keep_retry_marker_and_allow_updates() {
     start_fixture(dir, || Err(PIPELINE_INSTALL_ERROR.into()), || Ok(()));
     assert!(dir.join("pipeline-install.pending").exists());
     assert!(update_operation_lock(dir, true).is_ok());
+}
+#[test]
+fn successful_window_recovery_clears_its_saved_task_error() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path();
+    let resume = directory.join("update-listener.resume");
+    fs::write(&resume, b"resume").unwrap();
+    let persist =
+        |status: &Status| fs::write(directory.join("updates.json"), serde_json::to_vec(status)?);
+    let start = |result: Result<bool, String>| {
+        window_start_at(
+            directory,
+            (Instant::now, |_| panic!("the hook lock was held")),
+            || save_reconcile_status(result, directory, persist),
+            || Ok(()),
+            || Ok(()),
+            persist,
+            || Ok(()),
+        )
+    };
+    let failure = ListenerTaskError::TimedOut.message();
+    assert_eq!(start(Err(failure.clone())).unwrap_err(), failure);
+    assert_eq!(read_status(directory).phase, Phase::Error);
+    start(Ok(true)).unwrap();
+    let status = read_status(directory);
+    assert_eq!(status.phase, Phase::Idle);
+    assert!(status.error.is_none());
+}
+#[test]
+fn deferred_startup_retries_after_cli_check_releases_hook_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path();
+    fs::write(directory.join("install-hook.complete"), VERSION).unwrap();
+    let mut holder = Some(update_operation_lock(directory, true).unwrap());
+    let deferred = start_fixture(directory, || panic!("reconciled"), || panic!("started"));
+    assert_eq!(deferred, ReconcileOutcome::Busy);
+    let now = Instant::now();
+    let assert_held = || {
+        assert!(open_hook_lock(directory).unwrap().is_none());
+        Ok(())
+    };
+    let wait = |_| drop(holder.take());
+    let start = window_start_at(
+        directory,
+        (|| now, wait),
+        || panic!("reconciled without a resume marker"),
+        assert_held,
+        assert_held,
+        |_| panic!("idle startup wrote status"),
+        || {
+            assert!(open_hook_lock(directory).unwrap().is_some());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(start, ReconcileOutcome::Complete { changed: false });
 }

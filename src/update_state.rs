@@ -29,6 +29,13 @@ pub struct Status {
     pub notes: String,
     pub checked: Option<String>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reconcile_error: bool,
+}
+
+#[derive(Default)]
+pub struct WindowStart {
+    pub pending_status: Option<Status>,
 }
 
 #[derive(Clone, Debug, Default)]

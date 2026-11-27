@@ -154,7 +154,7 @@ pub enum Event {
         result: meeting_delete::RecycleResult,
     },
     Update(sidenote::updates::Status),
-    UpdateFinished(Result<sidenote::updates::Status, String>),
+    UpdateFinished(Result<sidenote::updates::WindowStart, String>),
     ListenerFinished(Result<(), String>),
     ListenerProbed(
         Option<sidenote::updates::ListenerStatus>,
