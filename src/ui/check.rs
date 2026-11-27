@@ -33,10 +33,9 @@ use std::{
     time::SystemTime,
 };
 
-/// Open findings of the newest report, for the top bar and the Home card.
+/// Open findings of the newest report, for the sidebar.
 #[derive(Clone, Copy, Default)]
 pub struct Counts {
-    pub date: Option<NaiveDate>,
     pub high: usize,
     pub medium: usize,
     pub low: usize,
@@ -269,10 +268,7 @@ fn load_handled(report: &DailyCheck, today: NaiveDate) -> Result<HashMap<String,
 }
 
 fn open_counts(report: &DailyCheck, handled: &HashMap<String, Handled>) -> Counts {
-    let mut c = Counts {
-        date: Some(report.date),
-        ..Counts::default()
-    };
+    let mut c = Counts::default();
     for (i, f) in report.content.findings.iter().enumerate() {
         if handled.contains_key(&key_of(report, i)) {
             continue;
@@ -2768,45 +2764,4 @@ pub fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         _ => return false,
     }
     true
-}
-
-// ---- the top bar pill and the Home card ------------------------------------------------------
-
-/// The newest daily report in one line for Home's Today strip, and whether it has a high
-/// finding open: "Daily check today: 2 high, 1 medium. 1 new." None when Daily check is off or
-/// no report has been read yet.
-pub fn last_line(s: &State) -> Option<(String, bool)> {
-    if !s
-        .config
-        .features
-        .enabled(sidenote::core::Feature::DailyCheck)
-    {
-        return None;
-    }
-    let c = s.check.latest;
-    let date = c.date?;
-    let when = if date == Local::now().date_naive() {
-        "today".to_string()
-    } else {
-        date.format("%a %-d %b").to_string()
-    };
-    let mut parts = Vec::new();
-    if c.high > 0 {
-        parts.push(format!("{} high", c.high));
-    }
-    if c.medium > 0 {
-        parts.push(format!("{} medium", c.medium));
-    }
-    if c.low > 0 {
-        parts.push(format!("{} low", c.low));
-    }
-    let mut said = if parts.is_empty() {
-        format!("Daily check {when}: nothing open.")
-    } else {
-        format!("Daily check {when}: {}.", parts.join(", "))
-    };
-    if c.new > 0 {
-        said.push_str(&format!(" {} new.", c.new));
-    }
-    Some((said, c.high > 0))
 }
