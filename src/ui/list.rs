@@ -181,11 +181,14 @@ fn home_row(
         });
     let status = notes_job.as_ref().and_then(|job| {
         // Task-only jobs leave the saved summary alone, so they keep their task wording.
+        // Other failures (sign-in, usage limit, too long, retry scheduled) keep their reason.
         let tasks_only = matches!(job.request, Some(Request::SortAgain | Request::RedoTasks));
         match job.state {
             _ if tasks_only => super::notes_status::list_label(job),
             JobState::Queued | JobState::Running => Some("Writing the summary now."),
-            _ if failed => Some("Summary failed."),
+            JobState::BackendError {
+                next_try_ms: None, ..
+            } => Some("Summary failed."),
             _ => super::notes_status::list_label(job),
         }
     });
@@ -363,7 +366,8 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
             .map_or_else(|| "unknown".into(), |d| d.to_string());
         let day_column = col()
             .key(format!("day-{key}"))
-            .w(62.0)
+            // Wide enough for "Wednesday" at the group heading size.
+            .w(76.0)
             .pt(10.0)
             .child(roles::GROUP.wrap(day, p.ink))
             .children((!date.is_empty()).then(|| roles::META.line(date, p.faint)));
@@ -869,6 +873,17 @@ mod tests {
             !elements
                 .iter()
                 .any(|e| e.text.as_deref() == Some("Summary failed."))
+        );
+    }
+
+    #[test]
+    fn failed_rows_keep_the_reason_for_other_failures() {
+        let rt = summary_job_home(r#"{"state":"too_long","minutes":300}"#);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Meeting too long for a summary"))
         );
     }
 
