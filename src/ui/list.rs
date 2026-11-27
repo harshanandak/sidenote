@@ -374,46 +374,38 @@ fn home_row(
     }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
-    let mut r = if narrow {
+    // Every row is a card whose first child is the title's row, at any width and with
+    // or without an action, so the title keeps its element path (and its keyboard
+    // focus) when an action appears or the window crosses the narrow breakpoint.
+    let mut top = row().w_full().gap(12.0).child(main);
+    let mut below = None;
+    if narrow {
         // At phone width the action would squeeze the title to about 40px, so it
-        // sits under the row text, left-aligned with the title. Every narrow row
-        // uses this shape, so an action appearing later keeps the title's element
-        // path and its keyboard focus.
-        let top = row()
-            .w_full()
-            .gap(12.0)
+        // sits under the row text, left-aligned with the title.
+        top = top
             .items_start()
-            .child(main)
             .child(col().items_end().child(more).child(time));
-        let mut card = col()
-            .w_full()
-            .gap(8.0)
-            .px(10.0)
-            .py(9.0)
-            .radius(10.0)
-            .hover(p.chip)
-            .child(top);
-        if let Some(button) = action {
-            card = card.child(row().w_full().child(button));
-        }
-        card
+        below = action;
     } else {
-        let mut row_el = row()
-            .w_full()
-            .gap(12.0)
-            .px(10.0)
-            .py(9.0)
-            .radius(10.0)
-            .hover(p.chip)
-            .items_center()
-            .child(main);
+        top = top.items_center();
         if let Some(button) = action {
-            row_el = row_el.child(button);
+            top = top.child(button);
         }
-        row_el
+        top = top
             .child(row().w(44.0).justify_end().child(time))
-            .child(more)
-    };
+            .child(more);
+    }
+    let mut r = col()
+        .w_full()
+        .gap(8.0)
+        .px(10.0)
+        .py(9.0)
+        .radius(10.0)
+        .hover(p.chip)
+        .child(top);
+    if let Some(button) = below {
+        r = r.child(row().w_full().child(button));
+    }
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
         r = r.fill(p.chip);
@@ -1188,6 +1180,47 @@ mod tests {
         crate::test_paths::isolate();
         let without_action = path(home_state(vec![fixture()]));
         assert_eq!(with_action, without_action);
+    }
+
+    #[test]
+    fn narrow_action_keeps_title_focus_across_the_breakpoint() {
+        // With the sidebar folded, 830 is the wide row and 810 the narrow one; neither
+        // shows the week rail. Rune drops focus when the focused element's path changes.
+        let key = "meeting-1793955600000-1";
+        for with_action in [true, false] {
+            for (from, to) in [(830.0, 810.0), (810.0, 830.0)] {
+                let state = if with_action {
+                    turn_on_summary_state()
+                } else {
+                    crate::test_paths::isolate();
+                    home_state(vec![fixture()])
+                };
+                state.sidebar_open.set(false);
+                state.sidebar_sized.set(true);
+                let mut rt = render_home(state, from);
+                rt.settle_all();
+                rt.frame(0.0);
+                let narrow = rt.state.narrow.get();
+                rt.update(|_, tx| tx.focus(key, true));
+                rt.settle_all();
+                rt.frame(0.0);
+                let focused = |rt: &rune::Runtime<State>| {
+                    rt.elements()
+                        .into_iter()
+                        .find(|e| e.key.as_deref() == Some(key))
+                        .is_some_and(|e| e.focused)
+                };
+                assert!(focused(&rt), "focused at {from} (action {with_action})");
+                rt.set_viewport((to, 900.0), 1.0);
+                rt.settle_all();
+                rt.frame(0.0);
+                assert_ne!(rt.state.narrow.get(), narrow, "{from} to {to} crosses");
+                assert!(
+                    focused(&rt),
+                    "focus kept from {from} to {to} (action {with_action})"
+                );
+            }
+        }
     }
 
     #[test]
