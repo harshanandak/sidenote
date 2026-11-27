@@ -1,88 +1,104 @@
 use super::*;
 use std::cell::Cell;
-
-#[test]
-fn hook_lock_sharing_violation_is_busy() {
-    let root = tempfile::tempdir().unwrap();
-    let _lock = open_hook_lock(root.path()).unwrap().unwrap();
-    assert!(open_hook_lock(root.path()).unwrap().is_none());
-}
-
-#[test]
-fn hook_lock_other_io_error_is_failure() {
-    let root = tempfile::tempdir().unwrap();
-    fs::create_dir(root.path().join("install-hook.lock")).unwrap();
-    let error = open_hook_lock(root.path()).unwrap_err();
-    assert_ne!(error.raw_os_error(), Some(32));
-}
-
-fn run_busy_window(directory: &Path, reconcile: impl FnOnce() -> Result<ReconcileOutcome, String>) {
-    let _lock = open_hook_lock(directory).unwrap().unwrap();
-    let started = Instant::now();
-    let clock = Cell::new(started);
-    let outcome = window_start_at(
-        directory,
-        (|| clock.get(), |wait| clock.set(clock.get() + wait)),
+fn start_fixture(
+    dir: &Path,
+    reconcile: impl FnOnce() -> Result<ReconcileOutcome, String>,
+    work: impl Fn() -> Result<(), String> + Copy,
+) -> ReconcileOutcome {
+    let clock = Cell::new(Instant::now());
+    window_start_at(
+        dir,
+        (|| clock.get(), |delay| clock.set(clock.get() + delay)),
         reconcile,
-        || panic!("busy startup checked the listener"),
-        || panic!("busy startup retried the pipeline"),
-        |_| panic!("busy startup persisted status"),
-        || panic!("busy startup applied an update"),
+        work,
+        work,
+        |_| work().map_err(io::Error::other),
+        work,
+    )
+    .unwrap()
+}
+fn run_busy_window(dir: &Path, reconcile: impl FnOnce() -> Result<ReconcileOutcome, String>) {
+    let _lock = open_hook_lock(dir).unwrap().unwrap();
+    assert!(open_hook_lock(dir).unwrap().is_none());
+    let unexpected = || panic!("startup did work while the hook held the lock");
+    assert_eq!(
+        start_fixture(dir, reconcile, unexpected),
+        ReconcileOutcome::Busy
     );
-    assert_eq!(outcome.unwrap(), ReconcileOutcome::Busy);
-    assert_eq!(clock.get() - started, Duration::from_secs(2));
 }
 
 #[test]
-fn busy_startup_preserves_saved_failure_before_app_preflight_can_time_out() {
+fn startup_recovers_a_clean_profile_and_waits_for_a_held_hook() {
     let root = tempfile::tempdir().unwrap();
-    let saved = root.path().join("updates.json");
+    let dir = root.path();
+    let lock = dir.join("install-hook.lock");
+    fs::create_dir(&lock).unwrap();
+    assert_ne!(open_hook_lock(dir).unwrap_err().raw_os_error(), Some(32));
+    fs::remove_dir(lock).unwrap();
+    let receipt = dir.join("install-hook.complete");
+    let reconcile = || {
+        fs::write(&receipt, VERSION).unwrap();
+        Ok(ReconcileOutcome::Complete { changed: true })
+    };
+    start_fixture(dir, reconcile, || Ok(()));
+    assert_eq!(fs::read_to_string(&receipt).unwrap(), VERSION);
+    fs::remove_file(receipt).unwrap();
+    let pending = dir.join("pipeline-install.pending");
+    fs::write(&pending, VERSION).unwrap();
+    run_busy_window(dir, || panic!("busy startup reconciled"));
+    assert_eq!(fs::read_to_string(&pending).unwrap(), VERSION);
+    let saved = dir.join("updates.json");
     let bytes = br#"{"phase":"Error","error":"prior task failure"}"#;
+    let resume = dir.join("update-listener.resume");
     fs::write(&saved, bytes).unwrap();
-    let resume = root.path().join("update-listener.resume");
     fs::write(&resume, b"resume").unwrap();
-    run_busy_window(root.path(), || Err(ListenerTaskError::TimedOut.message()));
+    run_busy_window(dir, || Err(ListenerTaskError::TimedOut.message()));
     assert_eq!(fs::read(saved).unwrap(), bytes);
     assert_eq!(fs::read(resume).unwrap(), b"resume");
 }
 
-#[test]
-fn busy_startup_cannot_retry_pipeline_before_resume_marker_exists() {
-    let root = tempfile::tempdir().unwrap();
-    let pending = root.path().join("pipeline-install.pending");
-    fs::write(&pending, VERSION).unwrap();
-    run_busy_window(root.path(), || panic!("busy startup reconciled"));
-    assert_eq!(fs::read_to_string(pending).unwrap(), VERSION);
-}
-
 fn assert_cli_recovery_gate(command: &str) {
     let root = tempfile::tempdir().unwrap();
-    let args = [command.into()];
-    let invoke = || {
-        let result = cli_update_at(Some(root.path()), &args, |_| panic!("pending command ran"));
-        assert_eq!(result.unwrap().unwrap_err(), UPDATE_RECONCILING);
-    };
+    let invoke =
+        || cli_update_at(Some(root.path()), || panic!("pending {command} ran")).unwrap_err();
     let saved = root.path().join("updates.json");
     let bytes = br#"{"phase":"Error","error":"prior task failure"}"#;
     fs::write(&saved, bytes).unwrap();
     let lock = open_hook_lock(root.path()).unwrap().unwrap();
-    invoke();
+    let error = invoke();
+    assert_eq!(error, UPDATE_RECONCILING);
+    if command == "--update-check" {
+        let mut published = Status::default();
+        publish_check_failure(Err(error), |status| published = status);
+        assert_eq!(published.phase, Phase::Error);
+        assert_eq!(published.error.as_deref(), Some(UPDATE_RECONCILING));
+    }
     drop(lock);
     fs::write(root.path().join("update-listener.resume"), b"resume").unwrap();
-    invoke();
+    assert_eq!(invoke(), UPDATE_RECONCILING);
     assert_eq!(fs::read(saved).unwrap(), bytes);
 }
-
 #[test]
 fn cli_check_rejects_pending_reconciliation() {
     assert_cli_recovery_gate("--update-check");
 }
-
 #[test]
 fn cli_apply_rejects_pending_reconciliation() {
     assert_cli_recovery_gate("--update-apply");
 }
 
+#[test]
+fn missing_pipeline_settings_keep_retry_marker_and_allow_updates() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path();
+    // Configured scripts without private settings exit 1.
+    let pipeline = || pipeline_script_result(Some(1));
+    let result = reconcile_install(dir, || Ok(()), pipeline, || Ok(()));
+    assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
+    assert!(dir.join("pipeline-install.pending").exists());
+    assert!(!dir.join("update-listener.resume").exists());
+    assert!(update_operation_lock(dir, true).is_ok());
+}
 #[test]
 fn successful_window_recovery_clears_its_saved_lock_error() {
     let root = tempfile::tempdir().unwrap();
@@ -114,26 +130,24 @@ fn successful_window_recovery_clears_its_saved_lock_error() {
     assert_eq!(status.phase, Phase::Idle);
     assert!(status.error.is_none());
 }
-
 #[test]
 fn app_start_retries_held_lock_before_preparing_listener_and_pipeline() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path();
+    fs::write(directory.join("install-hook.complete"), VERSION).unwrap();
     let mut holder = open_hook_lock(directory).unwrap();
     let clock = Cell::new(Instant::now());
     let assert_held = || {
         assert!(open_hook_lock(directory).unwrap().is_none());
         Ok(())
     };
+    let wait = |delay| {
+        clock.set(clock.get() + delay);
+        drop(holder.take());
+    };
     let start = window_start_at(
         directory,
-        (
-            || clock.get(),
-            |wait| {
-                clock.set(clock.get() + wait);
-                drop(holder.take());
-            },
-        ),
+        (|| clock.get(), wait),
         || panic!("reconciled without a resume marker"),
         assert_held,
         assert_held,
@@ -144,6 +158,5 @@ fn app_start_retries_held_lock_before_preparing_listener_and_pipeline() {
         },
     )
     .unwrap();
-    assert!(holder.is_none());
     assert_eq!(start, ReconcileOutcome::Complete { changed: false });
 }

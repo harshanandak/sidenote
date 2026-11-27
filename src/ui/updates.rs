@@ -279,6 +279,9 @@ impl State {
     }
 
     fn check_updates(&mut self) {
+        self.check_updates_with(Self::updates_start);
+    }
+    fn check_updates_with(&mut self, start: impl FnOnce(&mut Self)) {
         if self.updates.scene
             || self.updates.applying
             || self.updates.status.phase == Phase::Manual
@@ -294,6 +297,8 @@ impl State {
                 self.updates.status.error =
                     Some("The update check stopped. Reopen Sidenote to try again.".into());
             }
+        } else {
+            start(self);
         }
     }
     pub fn updates_focus(&mut self) {
@@ -935,12 +940,15 @@ mod listener_tests {
     }
 
     #[test]
-    fn failed_reconcile_preserves_task_error_and_never_starts_feed_service() {
+    fn failed_startup_preserves_diagnostic_and_listener_recovery_can_retry() {
         let mut state = window_state();
         let diagnostic = "The meeting listener task is disabled.";
         state.update_finished_with(Err(diagnostic.into()), |_| panic!("feed service started"));
         assert_eq!(state.updates.status.error.as_deref(), Some(diagnostic));
         assert_eq!(state.updates.status.phase, Phase::Error);
+        state.listener_finished(Ok(()));
+        state.check_updates_with(|s| s.updates.begin_window_start());
+        assert!(state.updates.applying);
     }
 
     #[test]
@@ -989,6 +997,7 @@ mod listener_tests {
         let (x, y) = rt.find("update-retry").expect("pending retry button");
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
+        rt.frame(0.0);
         rt.update(|s, _| assert!(s.updates.listener_probed.is_none()));
     }
 
