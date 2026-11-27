@@ -2342,21 +2342,26 @@ fn ask_on_every_page_settings_search_closes_the_ask_menu() {
     if in_parent("ask_on_every_page_settings_search_closes_the_ask_menu") {
         return;
     }
-    let mut rt = ask_page_fixture((390.0, 844.0));
-    rt.update(|s, _| {
-        s.open_hex();
-        s.ask_settings.scope_open = true;
-    });
-    rt.settle_all();
-    rt.frame(0.0);
-    rt.key(KeyEvent {
-        key: Key::Command('f'),
-        mods: rune::Mods::default(),
-    });
-    rt.settle_all();
-    rt.frame(0.0);
-    assert!(!rt.state.ask_settings.scope_open);
-    assert!(rect_of(&rt, "settings-drawer")[3] > 0.0);
+    for model_picker in [false, true] {
+        let mut rt = ask_page_fixture((390.0, 844.0));
+        rt.update(|s, _| {
+            s.open_hex();
+            s.ask_settings.scope_open = true;
+            s.runner_open = model_picker;
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.key(KeyEvent {
+            key: Key::Command('f'),
+            mods: rune::Mods::default(),
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(!rt.state.ask_settings.scope_open);
+        assert!(!rt.state.runner_open);
+        assert!(rt.state.hex.filter.focused, "{model_picker}");
+        assert!(rect_of(&rt, "settings-drawer")[3] > 0.0);
+    }
 }
 
 #[test]

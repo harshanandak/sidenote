@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
-  "src/ui/ask_switch_tests.rs": "d9f75da3461971440a4e6e353c470289565868d0de82490a6ffc5eba93e6f7cb",
+  "src/ui/ask_switch_tests.rs": "871e5434462a98cca3ce6fcee9c5c20bfc8bfd7d54ba0918e4ce9249505d1812",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "b121cd37e2684a75fafabdb7e9e73140194b05c6f5a372214fd7c24a2511c7b0",
+  "src/ui/mod.rs": "789c65702f2bb4c71ad9ff88f0d17f12a0851e782f9a464f91b16a1ac02d2b4c",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 

@@ -778,8 +778,9 @@ impl State {
     }
 
     pub fn focus_search(&mut self) {
-        // An open Ask menu would sit above the search and keep its focus.
+        // An open Ask menu or model picker would sit above the search and keep its focus.
         self.ask_settings.scope_open = false;
+        self.runner_open = false;
         if self.annotations.open {
             self.reset_navigation();
         }
