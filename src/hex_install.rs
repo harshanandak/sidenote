@@ -356,7 +356,7 @@ impl Backend for WindowsBackend {
     fn verify_signer(&mut self, path: &Path) -> Result<()> {
         let system = std::env::var_os("SystemRoot")
             .ok_or("Could not find Windows signature verification.")?;
-        let mut command = Command::new(
+        let mut command = crate::platform::windows_powershell_at(
             PathBuf::from(system).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
         );
         command.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",

@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::windows::{fs::OpenOptionsExt, process::CommandExt},
+    os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -353,15 +353,6 @@ fn recorder_ready_root() -> Option<PathBuf> {
 }
 fn local(name: &str) -> PathBuf {
     directory().join(name)
-}
-/// Windows PowerShell must use its own module path; a PSModulePath inherited from
-/// PowerShell 7 hides built-in script-module commands such as Get-FileHash.
-fn windows_powershell() -> Command {
-    let mut command = Command::new("powershell.exe");
-    command
-        .env_remove("PSModulePath")
-        .creation_flags(0x08000000);
-    command
 }
 pub fn load() -> Status {
     if !installed() {
@@ -860,7 +851,7 @@ fn listener_task(mode: ListenerTaskMode, deadline: Instant) -> Result<(), Listen
     #[cfg(not(feature = "recorder-ready-proof"))]
     let script = LISTENER_TASK_SCRIPT.to_owned();
     run_listener_task(
-        &mut windows_powershell(),
+        &mut crate::platform::windows_powershell(),
         &script,
         mode,
         &name,
@@ -1354,7 +1345,7 @@ fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
     if deadline.is_some_and(|limit| Instant::now() >= limit) {
         return Err(error.into());
     }
-    let mut child = windows_powershell()
+    let mut child = crate::platform::windows_powershell()
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2438,7 +2429,7 @@ $script:migrated = $false
         mode: ListenerTaskMode,
     ) -> Result<(), ListenerTaskError> {
         run_listener_task(
-            windows_powershell()
+            crate::platform::windows_powershell()
                 .env("SIDENOTE_TEST_MISMATCH", scenario)
                 .env("SIDENOTE_TEST_OPERATIONS", root.join("task-operations")),
             &format!("{MOCK_LISTENER_TASK}\n{}", mock_task_script()),
@@ -2619,6 +2610,7 @@ $script:migrated = $false
 
     #[test]
     fn mismatched_listener_task_is_never_started() {
+        use std::os::windows::process::CommandExt;
         let suffix = r#"
 } catch { if ($script:started) { exit 2 }; exit 1 }
 if ($script:started) { exit 0 }; exit 3
@@ -2746,14 +2738,5 @@ if ($script:started) { exit 0 }; exit 3
                 "The update package is invalid."
             );
         }
-    }
-
-    #[test]
-    fn powershell_children_drop_the_inherited_module_path() {
-        let command = windows_powershell();
-        assert_eq!(command.get_program(), "powershell.exe");
-        assert!(command.get_envs().any(|(key, value)| {
-            key == std::ffi::OsStr::new("PSModulePath") && value.is_none()
-        }));
     }
 }

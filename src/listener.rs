@@ -1,6 +1,4 @@
 use crate::core::failure::{AtStage, Stage};
-#[cfg(windows)]
-use crate::platform::CommandExt;
 use serde::Deserialize;
 use std::{
     fs::{self, OpenOptions},
@@ -11,8 +9,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(windows)]
-const HIDDEN: u32 = 0x08000000;
 #[cfg(any(windows, test))]
 pub(crate) mod completion;
 pub mod heartbeat;
@@ -388,14 +384,12 @@ fn script_command_with_environment(
     report: impl FnOnce(&str),
     refresh: impl FnOnce(&mut Command) -> io::Result<()>,
 ) -> io::Result<(Command, bool)> {
-    let filtered = Command::new("powershell.exe")
+    let filtered = crate::platform::windows_powershell()
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command",
             "$ErrorActionPreference='Stop'; if ((Get-Command -Name $env:SIDENOTE_NOTES_SCRIPT).Parameters.ContainsKey('MeetingFolders')) { exit 0 }; exit 1"])
-        .env("SIDENOTE_NOTES_SCRIPT", script).env_remove("PSModulePath").creation_flags(HIDDEN)
+        .env("SIDENOTE_NOTES_SCRIPT", script)
         .output().is_ok_and(|output| output.status.success());
-    // A PSModulePath inherited from PowerShell 7 hides Windows PowerShell's Get-FileHash.
-    let mut command = Command::new("powershell.exe");
-    command.env_remove("PSModulePath");
+    let mut command = crate::platform::windows_powershell();
     if filtered {
         command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command",
             "$ErrorActionPreference='Stop'; $folders=@(ConvertFrom-Json $env:SIDENOTE_MEETING_FOLDERS); & $env:SIDENOTE_NOTES_SCRIPT -MeetingFolders $folders; if (!$?) { exit 1 }"])
@@ -407,7 +401,6 @@ fn script_command_with_environment(
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(script);
     }
-    command.creation_flags(HIDDEN);
     refresh(&mut command)?;
     Ok((command, filtered))
 }

@@ -152,14 +152,13 @@ pub fn run() -> i32 {
         })
         .or_else(|| {
             let pid = d.pid?;
-            let output = Command::new("powershell.exe")
+            let output = sidenote::platform::windows_powershell()
                 .args([
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
                     &format!("(Get-Process -Id {pid}).Path"),
                 ])
-                .creation_flags(0x08000000)
                 .output()
                 .ok()?;
             if !output.status.success() {
