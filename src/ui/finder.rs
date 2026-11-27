@@ -120,7 +120,7 @@ fn entries(s: &State, query: &str) -> Vec<Entry> {
         // The Settings tabs are listed by name only when the query asks for one of them.
         for section in hex::Section::ALL
             .into_iter()
-            .filter(|s| hex::settings::section_visible(*s))
+            .filter(|section| hex::settings::section_visible(s, *section))
         {
             pages.push(page(
                 &format!("Settings \u{b7} {}", section.name()),
@@ -324,7 +324,9 @@ impl State {
             }
             Target::Settings(section) => {
                 self.open_hex();
-                if let Some(section) = section.filter(|s| hex::settings::section_visible(*s)) {
+                if let Some(section) =
+                    section.filter(|section| hex::settings::section_visible(self, *section))
+                {
                     self.hex.section = section;
                 }
                 self.nav_done();

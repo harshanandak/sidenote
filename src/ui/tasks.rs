@@ -4214,7 +4214,7 @@ impl State {
         timing.ready();
     }
     /// The List / Board choice. It belongs to this PC, in `local/ui.json`, so it never syncs.
-    fn set_layout(&mut self, layout: core::TasksLayout) {
+    pub(crate) fn set_layout(&mut self, layout: core::TasksLayout) {
         if self.tasks.layout == layout {
             return;
         }
