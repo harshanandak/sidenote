@@ -12,7 +12,10 @@ use super::{
 };
 use rune::{Align, El, Key, Side, TextEdit, col, el, row};
 use rune_kit::{Kit, TextInput};
-use sidenote::core::{self, Meeting, SearchHit, SearchSource};
+use sidenote::core::{
+    self, Meeting, SearchHit, SearchSource,
+    notes::{JobState, Request},
+};
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -162,16 +165,32 @@ fn home_row(
         .map(|t| t.format("%H:%M").to_string())
         .unwrap_or_default();
     let notes_job = super::notes_status::job(s, m);
-    let problem = notes_job.as_ref().is_some_and(|j| {
-        super::notes_status::is_failure(&j.state)
-            || matches!(
+    let failed = notes_job
+        .as_ref()
+        .is_some_and(|j| super::notes_status::is_failure(&j.state));
+    let problem = failed
+        || notes_job.as_ref().is_some_and(|j| {
+            matches!(
                 j.state,
-                core::notes::JobState::NoHelper
-                    | core::notes::JobState::Done {
+                JobState::NoHelper
+                    | JobState::Done {
                         tasks_failed: true,
                         ..
                     }
             )
+        });
+    let status = notes_job.as_ref().and_then(|job| {
+        // Task-only jobs leave the saved summary alone, so they keep their task wording.
+        // Other failures (sign-in, usage limit, too long, retry scheduled) keep their reason.
+        let tasks_only = matches!(job.request, Some(Request::SortAgain | Request::RedoTasks));
+        match job.state {
+            _ if tasks_only => super::notes_status::list_label(job),
+            JobState::Queued | JobState::Running => Some("Writing the summary now."),
+            JobState::BackendError {
+                next_try_ms: None, ..
+            } => Some("Summary failed."),
+            _ => super::notes_status::list_label(job),
+        }
     });
     let mut text_col = col()
         .grow(1.0)
@@ -183,16 +202,16 @@ fn home_row(
                 .wrap_anywhere()
                 .max_lines(2),
         )
-        .child(
-            roles::META.wrap(
-                notes_job
-                    .as_ref()
-                    .and_then(super::notes_status::list_label)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| people_line(m)),
-                if problem { p.ink } else { p.faint },
-            ),
-        );
+        .child(roles::META.wrap(
+            status.map(str::to_owned).unwrap_or_else(|| people_line(m)),
+            if failed {
+                p.warn
+            } else if problem {
+                p.ink
+            } else {
+                p.faint
+            },
+        ));
     if let Some(hit) = &item.hit {
         text_col = text_col.child(snippet(hit, p));
     }
@@ -339,18 +358,32 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .children(super::area::project_tools(s, k, p, layer))
         .child(toolbar(s, k, p, layer));
     let mut position = 0;
+    let today = chrono::Local::now().date_naive();
     for group in &s.groups {
-        doc = doc.child(
-            roles::GROUP
-                .wrap(&group.label, p.soft)
-                .mt(24.0)
-                .mb(4.0)
-                .px(10.0),
-        );
+        let (day, date) = core::day_column(group.date, today);
+        let key = group
+            .date
+            .map_or_else(|| "unknown".into(), |d| d.to_string());
+        let day_column = col()
+            .key(format!("day-{key}"))
+            // Wide enough for "Wednesday" at the group heading size.
+            .w(76.0)
+            .pt(10.0)
+            .child(roles::GROUP.wrap(day, p.ink))
+            .children((!date.is_empty()).then(|| roles::META.line(date, p.faint)));
+        let mut rows = col().grow(1.0).min_w(0.0).gap(2.0);
         for item in &group.items {
-            doc = doc.child(home_row(s, k, item, position, narrow, p, layer));
+            rows = rows.child(home_row(s, k, item, position, narrow, p, layer));
             position += 1;
         }
+        doc = doc.child(
+            row()
+                .items_start()
+                .gap(8.0)
+                .mt(6.0)
+                .child(day_column)
+                .child(rows),
+        );
     }
     if position == 0 {
         doc = doc.child(roles::SMALL.wrap(empty_text(s), p.soft).mt(24.0).px(10.0));
@@ -664,7 +697,7 @@ mod tests {
         assert!(
             elements
                 .iter()
-                .any(|e| e.text.as_deref() == Some("Summary failed"))
+                .any(|e| e.text.as_deref() == Some("Summary failed."))
         );
         assert!(elements.iter().any(|e| {
             e.key.as_deref() == Some(action_key.as_str()) && e.label.as_deref() == Some("Try again")
@@ -733,6 +766,125 @@ mod tests {
         rt.on_key = Some(super::super::on_key);
         rt.frame(0.0);
         rt
+    }
+
+    #[test]
+    fn day_column_shows_the_day_beside_the_rows() {
+        crate::test_paths::isolate();
+        let today = chrono::Local::now().date_naive();
+        let mut meetings = trio_meetings();
+        for (meeting, offset) in meetings.iter_mut().zip([0, 1, 3]) {
+            meeting.started = (today - chrono::Days::new(offset))
+                .and_hms_opt(12, 0, 0)
+                .unwrap()
+                .and_local_timezone(chrono::Local)
+                .single();
+        }
+        let keys: Vec<_> = meetings
+            .iter()
+            .map(|m| {
+                (
+                    format!("day-{}", m.started.unwrap().date_naive()),
+                    format!("meeting-{}", m.id),
+                )
+            })
+            .collect();
+        let mut rt = render_home(home_state(meetings), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        for (day, meeting) in keys {
+            let (day_x, _) = rt.find(&day).unwrap();
+            let (meeting_x, _) = rt.find(&meeting).unwrap();
+            assert!(day_x < meeting_x);
+        }
+    }
+
+    #[test]
+    fn day_column_uses_weekday_and_short_date_for_older_days() {
+        let today = chrono::NaiveDate::from_ymd_opt(2025, 11, 26).unwrap();
+        for (date, primary, secondary) in [
+            (Some(today), "Today", "Wed 26"),
+            (today.pred_opt(), "Yesterday", "Tue 25"),
+            (
+                today.checked_sub_days(chrono::Days::new(2)),
+                "Monday",
+                "24 Nov",
+            ),
+            (None, "Date unknown", ""),
+        ] {
+            assert_eq!(
+                core::day_column(date, today),
+                (primary.into(), secondary.into())
+            );
+        }
+    }
+
+    fn summary_job_home(raw: &str) -> rune::Runtime<State> {
+        crate::test_paths::isolate();
+        let meeting = fixture();
+        let id = meeting.id.clone();
+        let mut state = home_state(vec![meeting]);
+        state
+            .ai_notes
+            .jobs
+            .insert(id, serde_json::from_str(raw).unwrap());
+        render_home(state, 390.0)
+    }
+
+    #[test]
+    fn writing_summary_rows_read_writing_the_summary_now() {
+        for raw in [r#"{"state":"running"}"#, r#"{"state":"queued"}"#] {
+            let rt = summary_job_home(raw);
+            let elements = rt.elements();
+            assert!(
+                elements
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some("Writing the summary now."))
+            );
+            assert!(
+                !elements
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some(people_line(&fixture()).as_str()))
+            );
+        }
+    }
+
+    #[test]
+    fn failed_rows_pair_summary_failed_with_try_again() {
+        let rt = summary_job_home(r#"{"state":"backend_error"}"#);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Summary failed."))
+        );
+        assert!(rt.find("notes-list-action-1793955600000-1").is_some());
+    }
+
+    #[test]
+    fn failed_rows_keep_task_wording_for_task_only_jobs() {
+        let rt = summary_job_home(r#"{"state":"backend_error","request":"sort_again"}"#);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Task sorting failed"))
+        );
+        assert!(
+            !elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Summary failed."))
+        );
+    }
+
+    #[test]
+    fn failed_rows_keep_the_reason_for_other_failures() {
+        let rt = summary_job_home(r#"{"state":"too_long","minutes":300}"#);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Meeting too long for a summary"))
+        );
     }
 
     /// Renders the home list and returns its elements. Asserts one title row (new):

@@ -15,6 +15,19 @@ pub fn day_label(date: Option<NaiveDate>, today: NaiveDate) -> String {
         None => "Date unknown".into(),
     }
 }
+pub fn day_column(date: Option<NaiveDate>, today: NaiveDate) -> (String, String) {
+    match date {
+        Some(date) if date == today || Some(date) == today.pred_opt() => (
+            day_label(Some(date), today),
+            date.format("%a %-d").to_string(),
+        ),
+        Some(date) => (
+            date.format("%A").to_string(),
+            date.format("%-d %b").to_string(),
+        ),
+        None => (day_label(None, today), String::new()),
+    }
+}
 pub fn group_by_day(meetings: &[Meeting]) -> Vec<DayGroup> {
     group_by_day_on(meetings, Local::now().date_naive())
 }
