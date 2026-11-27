@@ -673,7 +673,14 @@ static TASK_VALIDATION: std::sync::Mutex<TaskValidation> = std::sync::Mutex::new
     failure: None,
 });
 fn checked_listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
-    let result = listener_task(ListenerTaskMode::Recover { run, register });
+    checked_listener_task_until(run, register, Instant::now() + TASK_COMMAND_TIMEOUT)
+}
+fn checked_listener_task_until(
+    run: bool,
+    register: bool,
+    deadline: Instant,
+) -> Result<(), ListenerTaskError> {
+    let result = listener_task(ListenerTaskMode::Recover { run, register }, deadline);
     TASK_VALIDATION
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -690,15 +697,21 @@ const LISTENER_TASK_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $sid = $identity.User.Value
-if ($env:SIDENOTE_TASK_REGISTER -eq 'yes' -and !(Get-ScheduledTask -TaskPath '\' | Where-Object TaskName -eq $env:SIDENOTE_TASK_NAME)) {
-    $action = New-ScheduledTaskAction -Execute $env:SIDENOTE_TASK_EXE -Argument $env:SIDENOTE_TASK_ARGS
-    $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
-    $retry = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
-    $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME -Action $action -Trigger @($logon, $retry) -Principal $principal -Settings $settings | Out-Null
+$adminsSid = 'S-1-5-32-544'
+function Open-ListenerTask([switch]$AllowMissing) {
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folder = $service.GetFolder('\')
+    try { $folder.GetTask($env:SIDENOTE_TASK_NAME) }
+    catch {
+        # An exact lookup distinguishes a missing task from an inaccessible task.
+        if ($AllowMissing -and $_.Exception.GetBaseException().HResult -eq -2147024894) { return }
+        throw
+    }
 }
-function Read-ListenerTask {
+function Read-ListenerTask([switch]$AllowMissing) {
+    $registered = Open-ListenerTask -AllowMissing:$AllowMissing
+    if ($null -eq $registered) { return }
     $t = Get-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME
     $a = @($t.Actions)
     $principal = $t.Principal.UserId
@@ -708,23 +721,19 @@ function Read-ListenerTask {
     if ($t.Principal.RunLevel -ne 'Limited') { throw 'elevated' }
     if (!$t.Settings.Enabled) { throw 'disabled' }
     if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
+    $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
+    if (!$owner) { throw 'permission_denied' }
+    # UAC can mark group membership deny-only for a filtered administrator.
+    $legacyOwner = $owner.Value -eq $adminsSid -and ($identity.UserClaims | Where-Object {
+        $_.Value -eq $adminsSid -and $_.Type -in @([Security.Claims.ClaimTypes]::GroupSid, [Security.Claims.ClaimTypes]::DenyOnlySid) -and
+            $_.Properties.ContainsKey([Security.Claims.ClaimTypes]::WindowsSubAuthority)
+    })
+    if ($owner.Value -ne $sid -and !$legacyOwner) { throw 'other_user' }
     return $t
 }
 if ($env:SIDENOTE_TASK_REGISTER -eq 'inspect') {
     try {
-        $service = New-Object -ComObject 'Schedule.Service'
-        $service.Connect()
-        $folder = $service.GetFolder('\')
-        try { $registered = $folder.GetTask($env:SIDENOTE_TASK_NAME) }
-        catch {
-            # An exact lookup distinguishes a missing task from an inaccessible task.
-            if ($_.Exception.GetBaseException().HResult -eq -2147024894) { exit 0 } # ERROR_FILE_NOT_FOUND
-            throw
-        }
-        $null = Read-ListenerTask
-        $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
-        if (!$owner) { exit 35 }
-        if ($owner.Value -ne $sid) { exit 31 }
+        $null = Read-ListenerTask -AllowMissing
         exit 0
     } catch {
         switch ($_.Exception.Message) {
@@ -750,7 +759,28 @@ function Test-RestartSchedule($t) {
     $retry = @($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' -and $_.Enabled -and $_.Repetition.Interval -eq 'PT5M' -and !$_.Repetition.Duration })
     return ($logon.Count -eq 1 -and $retry.Count -eq 1 -and @($t.Triggers).Count -eq 2 -and [string]$t.Settings.MultipleInstances -in @('IgnoreNew', '2') -and $t.Settings.ExecutionTimeLimit -eq 'PT0S')
 }
-$t = Read-ListenerTask
+$register = $env:SIDENOTE_TASK_REGISTER -eq 'yes'
+$t = Read-ListenerTask -AllowMissing:$register
+if (!$t -and $register) {
+    $action = New-ScheduledTaskAction -Execute $env:SIDENOTE_TASK_EXE -Argument $env:SIDENOTE_TASK_ARGS
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
+    $retry = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME -Action $action -Trigger @($logon, $retry) -Principal $principal -Settings $settings | Out-Null
+    $registered = Open-ListenerTask
+    $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
+    # Elevated registration can assign the caller's default group owner.
+    if ($owner -and $owner.Value -eq $adminsSid) {
+        $null = Read-ListenerTask
+        $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(7))
+        if ($descriptor.Owner.Value -ne $owner.Value) { throw 'other_user' }
+        $descriptor.Owner = $identity.User
+        $sddl = $descriptor.GetSddlForm([Security.AccessControl.AccessControlSections]'Owner,Group,Access')
+        $registered.SetSecurityDescriptor($sddl, 16) # TASK_DONT_ADD_PRINCIPAL_ACE
+    }
+    $t = Read-ListenerTask
+}
 if (!(Test-RestartSchedule $t)) {
     if ($env:SIDENOTE_TASK_REGISTER -ne 'yes') { throw 'Listener task needs its restart schedule repaired' }
     # Identity and action were checked above; never replace an unrelated task or stop a running one.
@@ -782,13 +812,14 @@ if ($env:SIDENOTE_TASK_RUN -eq 'yes') {
     }
 }
 "#;
+const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy)]
 enum ListenerTaskMode {
     Preflight,
     Recover { run: bool, register: bool },
 }
 
-fn listener_task(mode: ListenerTaskMode) -> Result<(), ListenerTaskError> {
+fn listener_task(mode: ListenerTaskMode, deadline: Instant) -> Result<(), ListenerTaskError> {
     let name = task().map_err(ListenerTaskError::Failed)?;
     let exe = std::env::current_exe()
         .map_err(|_| ListenerTaskError::Failed("Could not locate Sidenote.".into()))?;
@@ -828,6 +859,7 @@ fn listener_task(mode: ListenerTaskMode) -> Result<(), ListenerTaskError> {
         &name,
         &exe,
         &expected_args,
+        deadline.min(Instant::now() + TASK_COMMAND_TIMEOUT),
     )
 }
 
@@ -838,7 +870,11 @@ fn run_listener_task(
     name: &str,
     exe: &Path,
     expected_args: &str,
+    deadline: Instant,
 ) -> Result<(), ListenerTaskError> {
+    if Instant::now() >= deadline {
+        return Err(ListenerTaskError::TimedOut);
+    }
     let (run, register) = match mode {
         ListenerTaskMode::Preflight => ("no", "inspect"),
         ListenerTaskMode::Recover { run, register } => (
@@ -857,22 +893,13 @@ fn run_listener_task(
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| ListenerTaskError::Failed("Could not check the listener task.".into()))?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
-            result => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(if result.is_ok() {
-                    ListenerTaskError::TimedOut
-                } else {
-                    ListenerTaskError::Failed("Could not check the listener task.".into())
-                });
-            }
+    let status = wait_for_child(&mut child, deadline).map_err(|error| {
+        if error.kind() == io::ErrorKind::TimedOut {
+            ListenerTaskError::TimedOut
+        } else {
+            ListenerTaskError::Failed("Could not check the listener task.".into())
         }
-    };
+    })?;
     if status.success() {
         return Ok(());
     }
@@ -887,6 +914,30 @@ fn run_listener_task(
     } else {
         ListenerTaskError::Failed("Sidenote could not prepare its meeting listener. Try again. If this continues, reinstall Sidenote for your Windows account.".into())
     })
+}
+
+fn wait_for_child(
+    child: &mut std::process::Child,
+    deadline: Instant,
+) -> io::Result<std::process::ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            result => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(result
+                    .err()
+                    .unwrap_or_else(|| io::ErrorKind::TimedOut.into()));
+            }
+        }
+    }
 }
 
 impl ListenerStatus {
@@ -1073,13 +1124,14 @@ fn wait_for_listener(
             Err(_) => return Err("Could not check whether the listener is running.".into()),
             Ok(lock) => drop(lock),
         }
-        if Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             return Err(
                 "The meeting listener did not start. Try again, or reinstall it if this continues."
                     .into(),
             );
         }
-        wait(Duration::from_millis(100));
+        wait(Duration::from_millis(100).min(remaining));
     }
 }
 fn prepare_listener() -> Result<(), String> {
@@ -1170,9 +1222,12 @@ fn pipeline_script_result(code: Option<i32>) -> Result<(), String> {
 }
 
 fn complete_pipeline_install() -> Result<(), String> {
+    complete_pipeline_install_until(None)
+}
+fn complete_pipeline_install_until(deadline: Option<Instant>) -> Result<(), String> {
     install_pending_pipeline(
         &local("pipeline-install.pending"),
-        install_pipeline_scripts,
+        || install_pipeline_scripts(deadline),
         || {
             let mut status = read_saved_status(&directory());
             if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
@@ -1205,7 +1260,7 @@ fn install_pending_pipeline(
     Ok(true)
 }
 
-fn install_pipeline_scripts() -> Result<(), String> {
+fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
     // Only an installed app update or its pending retry reaches this path.
     let files = std::collections::BTreeMap::from([
         (
@@ -1285,6 +1340,13 @@ fn install_pipeline_scripts() -> Result<(), String> {
         "entry": entry, "entry_hash": sha256(entry),
     });
     let error = PIPELINE_INSTALL_ERROR;
+    // A child that stalls before reading stdin must not block the hook's deadline.
+    let mut input = tempfile::tempfile().map_err(|_| error)?;
+    serde_json::to_writer(&mut input, &payload).map_err(|_| error)?;
+    std::io::Seek::rewind(&mut input).map_err(|_| error)?;
+    if deadline.is_some_and(|limit| Instant::now() >= limit) {
+        return Err(error.into());
+    }
     let mut child = windows_powershell()
         .args([
             "-NoProfile",
@@ -1292,19 +1354,16 @@ fn install_pipeline_scripts() -> Result<(), String> {
             "-Command",
             include_str!("pipeline_install.ps1"),
         ])
-        .stdin(std::process::Stdio::piped())
+        .stdin(input)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| error)?;
-    let written = child.stdin.take().ok_or(error).and_then(|mut stdin| {
-        stdin
-            .write_all(payload.to_string().as_bytes())
-            .map_err(|_| error)
-    });
-    // Wait for staging to finish even if stdin failed; publication is one pointer switch.
-    let status = child.wait().map_err(|_| error)?;
-    written?;
+    let status = match deadline {
+        Some(limit) => wait_for_child(&mut child, limit),
+        None => child.wait(),
+    }
+    .map_err(|_| error)?;
     if !status.success() {
         return pipeline_script_result(status.code());
     }
@@ -1312,24 +1371,29 @@ fn install_pipeline_scripts() -> Result<(), String> {
 }
 
 const INSTALL_LISTENER_ERROR: &str = "Sidenote could not restart its meeting listener after installation. Reopen Sidenote to retry, or reinstall it if this continues.";
+// Velopack terminates the fast hook after 30 seconds. Leave time to stop children and save status.
+const INSTALL_HOOK_WORK_LIMIT: Duration = Duration::from_secs(25);
+const INSTALL_HOOK_RECOVERY_RESERVE: Duration = Duration::from_secs(4);
 
 pub fn after_install() -> Result<(), String> {
-    reconcile_installed()
+    run_install_hook()
 }
 
 pub fn after_update() -> Result<(), String> {
-    reconcile_installed()
+    run_install_hook()
 }
 
-fn reconcile_installed() -> Result<(), String> {
+fn run_install_hook() -> Result<(), String> {
+    let started = Instant::now();
     if !installed() {
         return Ok(());
     }
-    let result = reconcile_install(
+    let result = reconcile_installed(
         &directory(),
-        || listener_task(ListenerTaskMode::Preflight).map_err(ListenerTaskError::message),
-        complete_pipeline_install,
-        recover_listener,
+        started,
+        listener_task,
+        |deadline| complete_pipeline_install_until(Some(deadline)),
+        recover_listener_until,
     );
     if let Err(error) = result {
         let _ = save(&Status {
@@ -1346,7 +1410,28 @@ fn reconcile_installed() -> Result<(), String> {
     ))
     .map_err(|_| "Could not save installation status.".into())
 }
+
+fn reconcile_installed(
+    directory: &Path,
+    started: Instant,
+    task: impl Fn(ListenerTaskMode, Instant) -> Result<(), ListenerTaskError>,
+    pipeline: impl FnOnce(Instant) -> Result<(), String>,
+    listener: impl FnOnce(Instant) -> Result<(), String>,
+) -> Result<bool, String> {
+    let deadline = started + INSTALL_HOOK_WORK_LIMIT;
+    let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
+    reconcile_install(
+        directory,
+        || task(ListenerTaskMode::Preflight, pipeline_deadline).map_err(ListenerTaskError::message),
+        || pipeline(pipeline_deadline),
+        || listener(deadline),
+    )
+}
+
 fn recover_listener() -> Result<(), String> {
+    recover_listener_until(Instant::now() + TASK_COMMAND_TIMEOUT + Duration::from_secs(8))
+}
+fn recover_listener_until(deadline: Instant) -> Result<(), String> {
     fs::remove_file(local("update-listener.stop"))
         .or_else(|error| {
             if error.kind() == io::ErrorKind::NotFound {
@@ -1356,9 +1441,9 @@ fn recover_listener() -> Result<(), String> {
             }
         })
         .map_err(|_| "Could not clear the listener stop marker.")?;
-    checked_listener_task(true, true).map_err(ListenerTaskError::message)?;
+    checked_listener_task_until(true, true, deadline).map_err(ListenerTaskError::message)?;
     wait_for_listener(
-        Instant::now() + Duration::from_secs(8),
+        deadline.min(Instant::now() + Duration::from_secs(8)),
         listener_lock,
         std::thread::sleep,
     )
@@ -2167,22 +2252,45 @@ mod tests {
 
     // Shadow the scheduler and process commands so tests cannot reach a real task or listener.
     const MOCK_LISTENER_TASK: &str = r#"
+function Get-MockListenerIdentity {
+    $groupOwner = $env:SIDENOTE_TEST_MISMATCH -eq 'default-owner'
+    $user = if ($groupOwner) { 'S-1-5-18' } else { 'S-1-5-19' }
+    $claimType = if ($env:SIDENOTE_TEST_MISMATCH -eq 'legacy-admin-owner') { [Security.Claims.ClaimTypes]::DenyOnlySid } else { [Security.Claims.ClaimTypes]::GroupSid }
+    [PSCustomObject]@{
+        User = [Security.Principal.SecurityIdentifier]$user
+        UserClaims = @(if ($groupOwner -or $env:SIDENOTE_TEST_MISMATCH -in @('legacy-admin-owner', 'foreign-owner')) {
+            $claim = [Security.Claims.Claim]::new($claimType, 'S-1-5-32-544')
+            $claim.Properties.Add([Security.Claims.ClaimTypes]::WindowsSubAuthority, '5')
+            $claim
+        })
+    }
+}
 function New-Object {
     param([string]$ComObject)
     if ($ComObject -ne 'Schedule.Service') { throw 'Unexpected COM request' }
     $task = [PSCustomObject]@{}
     $task | Add-Member ScriptMethod GetSecurityDescriptor {
         param($Flags)
-        if ($Flags -ne 1 -or $env:SIDENOTE_TEST_MISMATCH -eq 'unreadable-owner') { throw 'Synthetic owner read error' }
-        if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:SY' }
-        'O:' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        if ($Flags -notin @(1, 7) -or $env:SIDENOTE_TEST_MISMATCH -eq 'unreadable-owner') { throw 'Synthetic owner read error' }
+        if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:S-1-5-21-101-102-103-1001' }
+        if ($env:SIDENOTE_TEST_MISMATCH -in @('legacy-admin-owner', 'legacy-nonadmin-owner')) { return 'O:BA' }
+        if ($env:SIDENOTE_TEST_MISMATCH -eq 'default-owner' -and !$script:userOwned) { return 'O:BA' }
+        'O:' + (Get-MockListenerIdentity).User.Value
+    }
+    $task | Add-Member ScriptMethod SetSecurityDescriptor {
+        param($Descriptor, $Flags)
+        $owner = [Security.AccessControl.RawSecurityDescriptor]::new($Descriptor).Owner.Value
+        if ($env:SIDENOTE_TEST_MISMATCH -ne 'default-owner' -or !$script:registered -or $Flags -ne 16 -or
+            $owner -ne (Get-MockListenerIdentity).User.Value) { throw 'Unexpected owner change' }
+        Write-TaskOperation 'set-owner'
+        $script:userOwned = $true
     }
     $service = [PSCustomObject]@{ Task = $task }
     $service | Add-Member ScriptMethod Connect {}
     $service | Add-Member ScriptMethod GetFolder { $this }
     $service | Add-Member ScriptMethod GetTask {
         switch ($env:SIDENOTE_TEST_MISMATCH) {
-            'absent' { throw [Runtime.InteropServices.COMException]::new('Synthetic missing task', -2147024894) }
+            { $_ -in @('absent', 'default-owner') -and !$script:registered } { throw [Runtime.InteropServices.COMException]::new('Synthetic missing task', -2147024894) }
             'inaccessible' { throw [Runtime.InteropServices.COMException]::new('Synthetic read refusal', -2147024891) }
         }
         $this.Task
@@ -2190,13 +2298,13 @@ function New-Object {
     $service
 }
 function Get-ScheduledTask {
-    if ($env:SIDENOTE_TEST_MISMATCH -eq 'absent' -and !$script:registered) { return }
+    if ($env:SIDENOTE_TEST_MISMATCH -in @('absent', 'default-owner') -and !$script:registered) { return }
     $action = [PSCustomObject]@{ Execute = $env:SIDENOTE_TASK_EXE; Arguments = $env:SIDENOTE_TASK_ARGS }
     $actions = @($action)
-    $principal = [PSCustomObject]@{ UserId = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
+    $principal = [PSCustomObject]@{ UserId = (Get-MockListenerIdentity).User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
     $settings = [PSCustomObject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew'; ExecutionTimeLimit = 'PT0S' }
     $triggers = @(New-ScheduledTaskTrigger -AtLogOn -User $principal.UserId)
-    if ($script:migrated -or $env:SIDENOTE_TEST_MISMATCH -notin @('legacy', 'unsaved', 'validate-only')) { $triggers += New-ScheduledTaskTrigger }
+    if ($script:migrated -or $env:SIDENOTE_TEST_MISMATCH -notin @('legacy', 'unsaved', 'validate-only', 'foreign-owner')) { $triggers += New-ScheduledTaskTrigger }
     switch ($env:SIDENOTE_TEST_MISMATCH) {
         'exe' { $action.Execute = 'other.exe' }
         'args' { $action.Arguments = '--other' }
@@ -2226,7 +2334,7 @@ function New-ScheduledTaskPrincipal {}
 function New-ScheduledTaskSettingsSet {}
 function Register-ScheduledTask {
     Write-TaskOperation 'register'
-    if ($env:SIDENOTE_TEST_MISMATCH -ne 'absent') { throw 'Unexpected registration' }
+    if ($env:SIDENOTE_TEST_MISMATCH -notin @('absent', 'default-owner')) { throw 'Unexpected registration' }
     $script:registered = $true
 }
 function Set-ScheduledTask {
@@ -2264,26 +2372,35 @@ $script:started = $false
 $script:migrated = $false
 "#;
 
+    fn mock_task_script() -> String {
+        LISTENER_TASK_SCRIPT
+            .replace(
+                "[Diagnostics.Stopwatch]::StartNew()",
+                "(New-ListenerTestStopwatch)",
+            )
+            .replace(
+                "[Security.Principal.WindowsIdentity]::GetCurrent()",
+                "(Get-MockListenerIdentity)",
+            )
+    }
+
     fn mock_install_task(
         root: &Path,
         scenario: &str,
         mode: ListenerTaskMode,
-    ) -> Result<(), String> {
-        let script = LISTENER_TASK_SCRIPT.replace(
-            "[Diagnostics.Stopwatch]::StartNew()",
-            "(New-ListenerTestStopwatch)",
-        );
+    ) -> Result<(), ListenerTaskError> {
         run_listener_task(
             windows_powershell()
                 .env("SIDENOTE_TEST_MISMATCH", scenario)
                 .env("SIDENOTE_TEST_OPERATIONS", root.join("task-operations")),
-            &format!("{MOCK_LISTENER_TASK}\n{script}"),
+            &format!("{MOCK_LISTENER_TASK}\n{}", mock_task_script()),
             mode,
             "Sidenote mock listener",
             &root.join("current/sidenote.exe"),
             "--listen",
+            // The deadline test uses a simulated clock to isolate it from PowerShell startup.
+            Instant::now() + Duration::from_secs(60),
         )
-        .map_err(ListenerTaskError::message)
     }
 
     #[test]
@@ -2291,6 +2408,7 @@ $script:migrated = $false
         for (scenario, error) in [
             ("foreign-principal", ListenerTaskError::OtherUser),
             ("foreign-owner", ListenerTaskError::OtherUser),
+            ("legacy-nonadmin-owner", ListenerTaskError::OtherUser),
             ("privilege", ListenerTaskError::Elevated),
             ("disabled", ListenerTaskError::Disabled),
             ("extra-args", ListenerTaskError::UnmanagedAction),
@@ -2313,9 +2431,10 @@ $script:migrated = $false
                 fs::write(root.path().join(file), file).unwrap();
             }
             let lock = root.path().join("install-hook.lock");
-            let result = reconcile_install(
+            let result = reconcile_installed(
                 root.path(),
-                || {
+                Instant::now(),
+                |mode, _| {
                     let task = if scenario == "changed-under-lock" {
                         if lock.exists() {
                             "foreign-owner"
@@ -2325,10 +2444,10 @@ $script:migrated = $false
                     } else {
                         scenario
                     };
-                    mock_install_task(root.path(), task, ListenerTaskMode::Preflight)
+                    mock_install_task(root.path(), task, mode)
                 },
-                || panic!("unexpected pipeline call for {scenario}"),
-                || panic!("unexpected listener recovery for {scenario}"),
+                |_| panic!("unexpected pipeline call for {scenario}"),
+                |_| panic!("unexpected listener recovery for {scenario}"),
             );
             assert_eq!(result.unwrap_err(), error.message(), "{scenario}");
             for file in files {
@@ -2343,7 +2462,9 @@ $script:migrated = $false
     fn install_preflight_allows_absent_and_same_install_task() {
         for (scenario, operations) in [
             ("absent", "register\nstart\n"),
+            ("default-owner", "register\nset-owner\nstart\n"),
             ("none", "start\n"),
+            ("legacy-admin-owner", "start\n"),
             ("legacy", "repair\nstart\n"),
         ] {
             let root = tempfile::tempdir().unwrap();
@@ -2351,29 +2472,31 @@ $script:migrated = $false
             let log = root.path().join("task-operations");
             let probes = std::cell::Cell::new(0);
             assert!(
-                reconcile_install(
+                reconcile_installed(
                     root.path(),
-                    || {
+                    Instant::now(),
+                    |mode, _| {
                         probes.set(probes.get() + 1);
-                        mock_install_task(root.path(), scenario, ListenerTaskMode::Preflight)
+                        mock_install_task(root.path(), scenario, mode)
                     },
-                    || {
+                    |_| {
                         assert_eq!(probes.get(), 2);
                         assert!(!log.exists(), "preflight touched the task: {scenario}");
                         assert_eq!(fs::read_to_string(&pending).unwrap(), VERSION);
                         fs::remove_file(&pending).unwrap();
                         Ok(())
                     },
-                    || mock_install_task(
+                    |_| mock_install_task(
                         root.path(),
                         scenario,
                         ListenerTaskMode::Recover {
                             run: true,
                             register: true
                         },
-                    ),
+                    )
+                    .map_err(ListenerTaskError::message),
                 )
-                .unwrap(),
+                .unwrap_or_else(|error| panic!("{scenario}: {error}")),
                 "{scenario}"
             );
             assert_eq!(fs::read_to_string(log).unwrap(), operations, "{scenario}");
@@ -2385,6 +2508,54 @@ $script:migrated = $false
     }
 
     #[test]
+    fn recovery_refuses_foreign_task_owner_before_repair_or_start() {
+        let root = tempfile::tempdir().unwrap();
+        for scenario in ["foreign-owner", "legacy-nonadmin-owner"] {
+            let refused = mock_install_task(
+                root.path(),
+                scenario,
+                ListenerTaskMode::Recover {
+                    run: true,
+                    register: true,
+                },
+            );
+            assert!(refused.is_err(), "{scenario}");
+            assert!(!root.path().join("task-operations").exists(), "{scenario}");
+        }
+    }
+
+    #[test]
+    fn reconciliation_shares_one_deadline_and_reserves_recovery_time() {
+        let root = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let clock = std::cell::Cell::new(started);
+        let spend = |maximum: Duration, deadline: Instant| {
+            let now = clock.get();
+            clock.set(now + maximum.min(deadline.saturating_duration_since(now)));
+        };
+        let result = reconcile_installed(
+            root.path(),
+            started,
+            |_, deadline| {
+                spend(TASK_COMMAND_TIMEOUT, deadline);
+                Ok(())
+            },
+            |deadline| {
+                spend(Duration::from_secs(7), deadline);
+                Err(PIPELINE_INSTALL_ERROR.into())
+            },
+            |deadline| {
+                assert!(deadline - clock.get() >= Duration::from_secs(4));
+                spend(TASK_COMMAND_TIMEOUT + Duration::from_secs(8), deadline);
+                Err(INSTALL_LISTENER_ERROR.into())
+            },
+        );
+        assert_eq!(result.unwrap_err(), PIPELINE_INSTALL_ERROR);
+        assert_eq!(clock.get() - started, Duration::from_secs(25));
+        assert!(!root.path().join("install-hook.complete").exists());
+    }
+
+    #[test]
     fn mismatched_listener_task_is_never_started() {
         let suffix = r#"
 } catch { if ($script:started) { exit 2 }; exit 1 }
@@ -2392,7 +2563,7 @@ if ($script:started) { exit 0 }; exit 3
 "#;
         let real_clock = "[Diagnostics.Stopwatch]::StartNew()";
         assert_eq!(LISTENER_TASK_SCRIPT.matches(real_clock).count(), 1);
-        let script = LISTENER_TASK_SCRIPT.replace(real_clock, "(New-ListenerTestStopwatch)");
+        let script = mock_task_script();
         for mismatch in [
             "none",
             "exe",
