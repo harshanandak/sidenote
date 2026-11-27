@@ -1526,9 +1526,7 @@ fn run_install_hook(budget: ReconciliationBudget) -> Result<(), String> {
         started,
         budget,
         listener_task,
-        |guard, deadline| {
-            complete_pipeline_install(guard, || install_pipeline_scripts(Some(deadline)), report)
-        },
+        |deadline| install_pipeline_scripts(Some(deadline)),
         recover_listener_until,
         report,
     )
@@ -1540,9 +1538,9 @@ fn reconcile_installed(
     started: Instant,
     budget: ReconciliationBudget,
     task: impl Fn(ListenerTaskMode, Instant) -> Result<(), ListenerTaskError>,
-    pipeline: impl FnOnce(&InstallGuard<'_>, Instant) -> Result<(), String>,
+    pipeline: impl FnOnce(Instant) -> Result<PipelineCompletion, String>,
     listener: impl FnOnce(Instant) -> Result<(), String>,
-    make_report: impl FnOnce(&Status) -> serde_json::Value,
+    make_report: impl Fn(&Status) -> serde_json::Value,
 ) -> Result<bool, String> {
     let deadline = started
         + match budget {
@@ -1557,7 +1555,7 @@ fn reconcile_installed(
     reconcile_and_save(
         &guard,
         preflight,
-        || pipeline(&guard, pipeline_deadline),
+        || pipeline(pipeline_deadline),
         || listener(deadline),
         make_report,
     )
@@ -1573,13 +1571,7 @@ fn reconcile_startup(guard: &InstallGuard<'_>, started: Instant) -> Result<(), S
             checked_listener_task_until(ListenerTaskMode::Preflight, pipeline_deadline)
                 .map_err(ListenerTaskError::message)
         },
-        || {
-            complete_pipeline_install(
-                guard,
-                || install_pipeline_scripts(Some(pipeline_deadline)),
-                report,
-            )
-        },
+        || install_pipeline_scripts(Some(pipeline_deadline)),
         || recover_listener_until(deadline),
         report,
     )
@@ -1639,11 +1631,12 @@ impl Reconciliation {
 fn reconcile_and_save(
     guard: &InstallGuard<'_>,
     preflight: impl FnOnce() -> Result<(), String>,
-    pipeline: impl FnOnce() -> Result<(), String>,
+    pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
     listener: impl FnOnce() -> Result<(), String>,
-    make_report: impl FnOnce(&Status) -> serde_json::Value,
+    make_report: impl Fn(&Status) -> serde_json::Value,
 ) -> Result<Reconciliation, String> {
-    let result = preflight().and_then(|()| reconcile_install(guard, pipeline, listener));
+    let result =
+        preflight().and_then(|()| reconcile_install(guard, pipeline, listener, &make_report));
     let directory = guard.directory;
     let status = read_status(directory);
     let error = match &result {
@@ -1672,12 +1665,13 @@ fn reconcile_and_save(
 
 fn reconcile_install(
     guard: &InstallGuard<'_>,
-    pipeline: impl FnOnce() -> Result<(), String>,
+    pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
     listener: impl FnOnce() -> Result<(), String>,
+    make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<Reconciliation, String> {
     let current = guard.begin_reconciliation()?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
-    let pipeline = pipeline();
+    let pipeline = complete_pipeline_install(guard, pipeline, make_report);
     let listener = listener();
     if listener.is_ok() {
         if pipeline.is_ok() {
@@ -1950,14 +1944,16 @@ mod tests {
     fn reconcile_install(
         directory: &Path,
         preflight: impl Fn() -> Result<(), String>,
-        pipeline: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
+        pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
         listener: impl FnOnce() -> Result<(), String>,
     ) -> Result<bool, String> {
         preflight()?;
         let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
         preflight()?;
-        super::reconcile_install(&guard, || pipeline(&guard), listener)
-            .and_then(Reconciliation::hook_result)
+        super::reconcile_install(&guard, pipeline, listener, |status| {
+            serde_json::json!(status)
+        })
+        .and_then(Reconciliation::hook_result)
     }
 
     #[test]
@@ -2079,19 +2075,14 @@ mod tests {
                 reconcile_install(
                     root.path(),
                     || Ok(()),
-                    |guard| {
+                    || {
                         calls.borrow_mut().push("pipeline");
-                        install_pending_pipeline(
-                            guard,
-                            || {
-                                fs::write(&script, "new script").unwrap();
-                                Ok(Complete)
-                            },
-                            || Ok(()),
-                        )
-                        .map(|_| ())
+                        assert!(install_state::pipeline_pending(root.path()));
+                        fs::write(&script, "new script").unwrap();
+                        Ok(Complete)
                     },
                     || {
+                        assert!(!install_state::pipeline_pending(root.path()));
                         assert_eq!(fs::read_to_string(&script).unwrap(), "new script");
                         calls.borrow_mut().push("listener");
                         Ok(())
@@ -2115,18 +2106,16 @@ mod tests {
         for failed_step in ["pipeline", "listener"] {
             let root = tempfile::tempdir().unwrap();
             let started = std::cell::Cell::new(false);
-            let pipeline = |guard: &InstallGuard<'_>| {
-                install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
-            };
+            let pipeline = || Ok(Complete);
             assert!(
                 reconcile_install(
                     root.path(),
                     || Ok(()),
-                    |guard| {
+                    || {
                         if failed_step == "pipeline" {
                             Err(PIPELINE_INSTALL_ERROR.into())
                         } else {
-                            pipeline(guard)
+                            pipeline()
                         }
                     },
                     || {
@@ -2214,21 +2203,13 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
+                || Ok(Complete),
                 || Err("listener failed".into())
             )
             .is_err()
         );
         assert!(install_state::completion_receipt_version(root.path()).is_none());
-        assert!(
-            reconcile_install(
-                root.path(),
-                || Ok(()),
-                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
-                || Ok(())
-            )
-            .unwrap()
-        );
+        assert!(reconcile_install(root.path(), || Ok(()), || Ok(Complete), || Ok(())).unwrap());
     }
 
     #[test]
@@ -2237,9 +2218,7 @@ mod tests {
         fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         // Simulate a failed status save: the existing resume marker must still expose failure.
         fs::create_dir(root.path().join("updates.json")).unwrap();
-        let pipeline = |guard: &InstallGuard<'_>| {
-            install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
-        };
+        let pipeline = || Ok(Complete);
         assert!(
             reconcile_install(
                 root.path(),
@@ -2286,7 +2265,7 @@ mod tests {
                 Instant::now(),
                 ReconciliationBudget::InstallOrRecovery,
                 |_, _| Ok(()),
-                |_, _| panic!("overlapping pipeline"),
+                |_| panic!("overlapping pipeline"),
                 |_| panic!("overlapping listener"),
                 |_| panic!("overlapping persist"),
             )
@@ -2296,15 +2275,7 @@ mod tests {
             assert_eq!(fs::read(root.path().join(name)).unwrap(), name.as_bytes());
         }
         drop(lock);
-        assert!(
-            reconcile_install(
-                root.path(),
-                || Ok(()),
-                |guard| install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ()),
-                || Ok(())
-            )
-            .unwrap()
-        );
+        assert!(reconcile_install(root.path(), || Ok(()), || Ok(Complete), || Ok(())).unwrap());
     }
 
     #[test]
@@ -2736,7 +2707,7 @@ $script:migrated = $false
                     };
                     mock_install_task(root.path(), task, mode)
                 },
-                |_, _| panic!("unexpected pipeline call for {scenario}"),
+                |_| panic!("unexpected pipeline call for {scenario}"),
                 |_| panic!("unexpected listener recovery for {scenario}"),
                 |status| serde_json::json!({"status":status}),
             );
@@ -2780,14 +2751,14 @@ $script:migrated = $false
                         probes.set(probes.get() + 1);
                         mock_install_task(root.path(), scenario, mode)
                     },
-                    |guard, _| {
+                    |_| {
                         assert_eq!(probes.get(), 2);
                         assert!(!log.exists(), "preflight touched the task: {scenario}");
                         assert_eq!(
                             install_state::pipeline_version(root.path()).as_deref(),
                             Some(VERSION)
                         );
-                        install_pending_pipeline(guard, || Ok(Complete), || Ok(())).map(|_| ())
+                        Ok(Complete)
                     },
                     |_| mock_install_task(
                         root.path(),
@@ -2854,7 +2825,7 @@ $script:migrated = $false
                 spend(TASK_COMMAND_TIMEOUT, deadline);
                 Ok(())
             },
-            |_, deadline| {
+            |deadline| {
                 spend(Duration::from_secs(7), deadline);
                 Err(PIPELINE_INSTALL_ERROR.into())
             },
