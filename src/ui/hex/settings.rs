@@ -1,7 +1,9 @@
 //! Settings layout and destinations. Hex keys are routed, never renamed or migrated.
 use super::*;
 use crate::ui::{ai_notes, cards, icons, nav, tasks, widgets::ButtonDisabled};
-use sidenote::core::{CHANNEL, Channel, Feature as AppFeature, TasksLayout, UiPrefs};
+use sidenote::core::{
+    CHANNEL, Channel, Feature as AppFeature, TaskGrouping, TasksLayout, UiPrefs, Who,
+};
 use std::collections::BTreeMap;
 
 mod engine;
@@ -1002,6 +1004,22 @@ fn app_index() -> Vec<Destination> {
             "work-tasks-layout",
             "Tasks open as",
             "tasks list board layout view",
+            Page::Tasks,
+            0,
+            false,
+        ),
+        entry(
+            "work-tasks-grouping",
+            "Group tasks by",
+            "group by status owner due project meeting team",
+            Page::Tasks,
+            0,
+            false,
+        ),
+        entry(
+            "work-tasks-who",
+            "Show",
+            "mine everyone unassigned filter",
             Page::Tasks,
             0,
             false,
@@ -2623,6 +2641,38 @@ fn meeting_icon_capture(s: &State, k: &Kit, p: Palette) -> El {
     )
 }
 
+const TASK_GROUPINGS: [TaskGrouping; 6] = [
+    TaskGrouping::Due,
+    TaskGrouping::Project,
+    TaskGrouping::Meeting,
+    TaskGrouping::Team,
+    TaskGrouping::Status,
+    TaskGrouping::Owner,
+];
+
+fn work_select(
+    s: &State,
+    key: &'static str,
+    label: &'static str,
+    options: &[&str],
+    current: Option<&str>,
+) -> Select {
+    Select::new(key, options)
+        .label(label)
+        .current(current)
+        .appearance(SelectAppearance::Field)
+        .width(short_select_width(s, 180.0))
+        .open(s.hex.select_open.as_deref() == Some(key))
+        .on_toggle(move |s: &mut State| {
+            s.hex.select_open = if s.hex.select_open.is_some() {
+                None
+            } else {
+                Some(key.into())
+            };
+        })
+        .on_close(|s: &mut State| s.hex.select_open = None)
+}
+
 fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let options = ["List", "Board"];
     let current = match s.tasks.layout {
@@ -2659,16 +2709,104 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             s.hex.select_open = None;
         })
         .build(&row_field_kit(k, p), layer);
-    settings_card(
-        "Tasks",
-        setting_row(
-            s,
+
+    let grouping_options: Vec<_> = TASK_GROUPINGS
+        .into_iter()
+        .filter(|by| *by != TaskGrouping::Project || s.config.features.projects)
+        .map(tasks::group_label)
+        .collect();
+    let grouping = if s.tasks.grouping_loaded {
+        Ok(s.tasks.grouping)
+    } else {
+        s.tasks.store.load_grouping()
+    };
+    let grouping_failed = grouping.is_err();
+    let grouping_current = grouping.ok().map(tasks::group_label);
+    let grouping_select = work_select(
+        s,
+        "work-tasks-grouping-select",
+        "Group tasks by",
+        &grouping_options,
+        grouping_current,
+    )
+    .placeholder("Unavailable")
+    .disabled(grouping_failed)
+    .on_choose(|s: &mut State, value: &str, _| {
+        let Some(by) = TASK_GROUPINGS
+            .into_iter()
+            .find(|by| tasks::group_label(*by) == value)
+        else {
+            return;
+        };
+        s.set_grouping(by);
+        s.hex.select_open = None;
+    })
+    .build(&row_field_kit(k, p), layer);
+
+    let who_current = if s.tasks.who == Who::Mine && s.tasks.include_unassigned {
+        "Mine + unassigned"
+    } else if s.tasks.who == Who::Mine {
+        "Mine"
+    } else {
+        "Everyone"
+    };
+    let who_select = work_select(
+        s,
+        "work-tasks-who-select",
+        "Show",
+        &["Everyone", "Mine", "Mine + unassigned"],
+        Some(who_current),
+    )
+    .on_choose(|s: &mut State, value: &str, _| {
+        let (who, include_unassigned) = match value {
+            "Mine" => (Who::Mine, false),
+            "Mine + unassigned" => (Who::Mine, true),
+            _ => (Who::Everyone, false),
+        };
+        s.tasks.who = who;
+        s.tasks.include_unassigned = include_unassigned;
+        if s.save_task_filters().is_ok() {
+            s.feature_error = None;
+            s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
+        } else {
+            s.hex.shell.saved = None;
+            s.feature_error = Some("Could not save Tasks settings. Try again.".into());
+        }
+        s.hex.select_open = None;
+    })
+    .build(&row_field_kit(k, p), layer);
+
+    let grouping_help = if grouping_failed {
+        "Could not read this setting."
+    } else {
+        "Choose how tasks are grouped."
+    };
+    let rows = [
+        (
             "work-tasks-layout",
             "Tasks open as",
             "Choose whether Tasks opens as a list or a board.",
             select,
-            false,
-            p,
+        ),
+        (
+            "work-tasks-grouping",
+            "Group tasks by",
+            grouping_help,
+            grouping_select,
+        ),
+        (
+            "work-tasks-who",
+            "Show",
+            "Choose whose tasks are shown.",
+            who_select,
+        ),
+    ];
+    settings_card(
+        "Tasks",
+        col().w_full().children(
+            rows.into_iter().map(|(key, name, help, control)| {
+                setting_row(s, key, name, help, control, false, p)
+            }),
         ),
         p,
     )
@@ -4226,6 +4364,7 @@ mod tests {
         let mut state = State::new();
         if let Some(root) = root {
             state.store.root = root.to_path_buf();
+            state.tasks.store = sidenote::core::TaskStore::new(root.to_path_buf());
             state.tasks.layout = TasksLayout::List;
         }
         state.config.features.tasks = true;
@@ -4263,14 +4402,35 @@ mod tests {
         })
     }
 
-    fn choose_tasks_layout(rt: &mut rune::Runtime<State>, option: usize) {
-        tap_key(rt, "work-tasks-layout-select-trigger");
+    fn choose_select(rt: &mut rune::Runtime<State>, trigger: &str, option: usize) {
+        tap_key(rt, trigger);
         rt.settle_all();
         rt.frame(0.0);
         let key = format!("option{option}");
         tap_key(rt, &key);
         rt.settle_all();
         rt.frame(0.0);
+    }
+
+    fn choose_tasks_layout(rt: &mut rune::Runtime<State>, option: usize) {
+        choose_select(rt, "work-tasks-layout-select-trigger", option);
+    }
+
+    fn select_options(rt: &mut rune::Runtime<State>, trigger: &str) -> Vec<String> {
+        tap_key(rt, trigger);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        elements
+            .iter()
+            .filter(|element| {
+                element
+                    .key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("option"))
+            })
+            .filter_map(|element| element.label.clone())
+            .collect()
     }
 
     #[test]
@@ -4398,6 +4558,137 @@ mod tests {
                 .all(|element| element.text.as_deref() != Some("Saved")),
             "a failed save must not say Saved"
         );
+    }
+
+    #[test]
+    fn work_tasks_grouping_row_lists_six_values_and_hides_project_without_projects() {
+        for (projects, expected) in [
+            (true, "Due date,Project,Meeting,Team,Status,Owner"),
+            (false, "Due date,Meeting,Team,Status,Owner"),
+        ] {
+            let mut state = work_tasks_state(None);
+            state.config.features.projects = projects;
+            let mut rt = settings_runtime(state, (1334.0, 900.0));
+            let options = select_options(&mut rt, "work-tasks-grouping-select-trigger");
+            assert_eq!(options.join(","), expected);
+        }
+    }
+
+    #[test]
+    fn work_tasks_grouping_row_updates_tasks_and_queues_the_save() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        state.config.features.projects = true;
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        choose_select(&mut rt, "work-tasks-grouping-select-trigger", 5);
+        assert_eq!(rt.state.tasks.grouping, TaskGrouping::Owner);
+        assert!(rt.state.tasks.grouping_loaded);
+        assert!(rt.state.edit_busy, "the grouping save was not published");
+        assert_eq!(rt.state.feature_error, None);
+    }
+
+    #[test]
+    fn work_tasks_grouping_row_shows_the_saved_value_before_tasks_ever_opened() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local")).unwrap();
+        let grouping = serde_json::to_string(&TaskGrouping::Owner).unwrap();
+        std::fs::write(root.path().join("local/task-grouping.json"), grouping).unwrap();
+        let state = work_tasks_state(Some(root.path()));
+        assert!(!state.tasks.grouping_loaded);
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(row_shows_text(&elements, "work-tasks-grouping", "Owner"));
+    }
+
+    #[test]
+    fn work_tasks_grouping_read_failure_disables_the_select() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local/task-grouping.json")).unwrap();
+        let mut rt = settings_runtime(work_tasks_state(Some(root.path())), (1334.0, 900.0));
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let trigger = elements
+            .iter()
+            .find(|element| element.key.as_deref() == Some("work-tasks-grouping-select-trigger"))
+            .unwrap();
+        assert!(!trigger.focusable);
+        assert!(row_shows_text(
+            &elements,
+            "work-tasks-grouping",
+            "Could not read this setting."
+        ));
+    }
+
+    #[test]
+    fn work_tasks_who_row_maps_three_choices_to_the_two_prefs() {
+        for (option, mine, unassigned, label) in [
+            (0, false, false, "Filters"),
+            (1, true, false, "Filters: Mine"),
+            (2, true, true, "Filters: Mine + unassigned"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let mut rt = settings_runtime(work_tasks_state(Some(root.path())), (1334.0, 900.0));
+            choose_select(&mut rt, "work-tasks-who-select-trigger", option);
+            let prefs = UiPrefs::load(root.path());
+            assert_eq!(
+                (prefs.tasks_mine, prefs.tasks_include_unassigned),
+                (mine, unassigned)
+            );
+            rt.update(|s, _| s.set_view(tasks::View::Tasks));
+            rt.settle_all();
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let trigger = elements
+                .iter()
+                .find(|element| element.key.as_deref() == Some("task-filters"))
+                .unwrap();
+            assert_eq!(trigger.label.as_deref(), Some(label));
+        }
+    }
+
+    #[test]
+    fn work_tasks_rows_fit_at_phone_width() {
+        let mut rt = settings_runtime(work_tasks_state(None), (390.0, 844.0));
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let scroll = element_rect(&elements, "hex-scroll");
+        for key in ["work-tasks-layout", "work-tasks-grouping", "work-tasks-who"] {
+            let row = element_rect(&elements, key);
+            assert!(
+                row[0] >= scroll[0] - 0.5 && row[0] + row[2] <= scroll[0] + scroll[2] + 0.5,
+                "{key} overflows horizontally"
+            );
+        }
+        let max = short_select_width(&rt.state, 180.0);
+        for key in [
+            "work-tasks-layout-select-trigger",
+            "work-tasks-grouping-select-trigger",
+            "work-tasks-who-select-trigger",
+        ] {
+            assert!(
+                element_rect(&elements, key)[2] <= max + 0.5,
+                "{key} is too wide"
+            );
+        }
+    }
+
+    #[test]
+    fn work_tasks_who_save_failure_is_shown() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local/ui.json")).unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        state.hex.shell.saved = Some(Instant::now() + Duration::from_secs(60));
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        choose_select(&mut rt, "work-tasks-who-select-trigger", 1);
+        assert_eq!(
+            rt.state.feature_error.as_deref(),
+            Some("Could not save Tasks settings. Try again.")
+        );
+        assert!(rt.state.hex.shell.saved.is_none());
     }
 
     #[test]
