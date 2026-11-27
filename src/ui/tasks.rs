@@ -4214,18 +4214,24 @@ impl State {
         timing.ready();
     }
     /// The List / Board choice. It belongs to this PC, in `local/ui.json`, so it never syncs.
-    pub(crate) fn set_layout(&mut self, layout: core::TasksLayout) {
+    fn set_layout(&mut self, layout: core::TasksLayout) {
         if self.tasks.layout == layout {
             return;
         }
-        self.tasks.layout = layout;
-        self.tasks.close_menus();
-        self.tasks.board_live = None;
-        let mut prefs = core::UiPrefs::load(&self.store.root);
-        prefs.tasks_layout = layout;
-        if prefs.save(&self.store.root).is_err() {
+        if self.save_layout(layout).is_err() {
             self.tasks.notice = Some(SAVE_FAILED.into());
         }
+    }
+    /// Always writes, so Settings can retry a choice whose earlier save failed.
+    pub(crate) fn save_layout(&mut self, layout: core::TasksLayout) -> std::io::Result<()> {
+        if self.tasks.layout != layout {
+            self.tasks.layout = layout;
+            self.tasks.close_menus();
+            self.tasks.board_live = None;
+        }
+        let mut prefs = core::UiPrefs::load(&self.store.root);
+        prefs.tasks_layout = layout;
+        prefs.save(&self.store.root)
     }
     fn toggle_full_titles(&mut self) {
         self.tasks.show_full_titles = !self.tasks.show_full_titles;

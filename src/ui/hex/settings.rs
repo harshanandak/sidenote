@@ -2649,8 +2649,7 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             } else {
                 TasksLayout::List
             };
-            s.set_layout(layout);
-            if UiPrefs::load(&s.store.root).tasks_layout == layout {
+            if s.save_layout(layout).is_ok() {
                 s.feature_error = None;
                 s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
             } else {
@@ -4377,6 +4376,13 @@ mod tests {
             Some("Could not save Tasks settings. Try again.")
         );
         assert!(rt.state.hex.shell.saved.is_none());
+        // Going back to List must not pass because the unreadable file loads as List.
+        choose_tasks_layout(&mut rt, 0);
+        assert_eq!(
+            rt.state.feature_error.as_deref(),
+            Some("Could not save Tasks settings. Try again.")
+        );
+        assert!(rt.state.hex.shell.saved.is_none());
         let elements = rt.elements();
         assert!(
             elements.iter().any(|element| element.text.as_deref()
@@ -4393,21 +4399,26 @@ mod tests {
 
     #[test]
     fn work_tasks_search_finds_the_row() {
-        let mut s = State::new();
-        s.config.features.tasks = true;
-        navigate(&mut s, Page::Meetings, 0);
-        s.hex.filter = TextEdit::new("board");
-        let destination = results(&s)
-            .into_iter()
-            .find(|entry| entry.key == "work-tasks-layout")
-            .expect("missing Tasks layout result");
-        jump(&mut s, destination);
-        assert_eq!(active(&s), (Page::Tasks, 0));
+        let mut rt = settings_runtime(work_tasks_state(None), (1334.0, 900.0));
+        rt.update(|s, _| {
+            navigate(s, Page::Meetings, 0);
+            s.hex.filter = TextEdit::new("board");
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        // Click the rendered result, so a broken handler or scroll fails here.
+        tap_key(&mut rt, "find-setting-work-tasks-layout");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(active(&rt.state), (Page::Tasks, 0));
         assert_eq!(
-            s.hex.shell.highlighted.as_ref().unwrap().0,
+            rt.state.hex.shell.highlighted.as_ref().unwrap().0,
             "work-tasks-layout"
         );
-        assert_eq!(s.pending_scroll.as_ref().unwrap().key, "work-tasks-layout");
+        let elements = rt.elements();
+        let [_, top, _, height] = element_rect(&elements, "hex-scroll");
+        let [_, y, _, h] = element_rect(&elements, "work-tasks-layout");
+        assert!(y >= top && y + h <= top + height, "the row is on screen");
     }
 
     #[test]
