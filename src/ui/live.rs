@@ -927,15 +927,11 @@ impl State {
     }
 
     pub(super) fn cancel_missing_summary(&mut self, known: bool, incoming: &[CatalogMeeting]) {
-        if known
-            && let Some(id) = self.live.as_ref().and_then(|live| {
-                (live.phase == Phase::Making)
-                    .then(|| live.meeting_id())
-                    .flatten()
-            })
-        {
+        if let Some(id) = self.live.as_ref().and_then(Live::meeting_id) {
             let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
-            if (self.meetings.iter().any(in_catalog) || incoming.iter().any(in_catalog))
+            // The previous catalog came from an earlier good read, so it counts even when this
+            // read failed and is about to replace it with an empty one.
+            if (self.meetings.iter().any(in_catalog) || (known && incoming.iter().any(in_catalog)))
                 && let Some(live) = self.live.as_mut()
             {
                 live.source_seen = true;
@@ -2609,6 +2605,24 @@ mod writer_tests {
             "a source that was never seen must not cancel the wait"
         );
         assert!(!unseen.live.as_ref().unwrap().source_lost);
+
+        // Listed while recording, then the first refresh after Stop fails: still cancels later.
+        let mut early = waiting_state(store_root.path(), id);
+        early.live.as_mut().unwrap().phase = Phase::Recording;
+        early.meetings = vec![entry.clone()];
+        early.cancel_missing_summary(true, std::slice::from_ref(&entry));
+        early.live.as_mut().unwrap().phase = Phase::Making;
+        early.cancel_missing_summary(false, &[]);
+        assert!(
+            early.live.is_some(),
+            "a failed catalog read must not cancel the wait"
+        );
+        early.meetings = Vec::new();
+        early.cancel_missing_summary(true, &[]);
+        assert!(
+            early.live.is_none(),
+            "a source listed before Stop and lost during a failed read must cancel the wait"
+        );
     }
 }
 
