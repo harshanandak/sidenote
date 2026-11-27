@@ -303,8 +303,8 @@ pub struct State {
     pub finder_query: TextEdit,
     pub highlight: Option<usize>,
     pub back: Option<String>,
-    /// The citation's answer key and whether its Ask pane was on Home.
-    pub cite_back: Option<(String, bool)>,
+    /// The citation's answer key and the page its Ask pane was on.
+    pub cite_back: Option<(String, nav::Page)>,
     pub question: TextEdit,
     pub runners: Vec<Runner>,
     pub runner: Option<String>,
@@ -1030,8 +1030,8 @@ impl State {
         ((self.viewport_h.get() - self.overlay_h.get()) / 2.0 - 24.0).max(60.0)
     }
 
-    /// Opens the meeting a home-thread citation names: `<id>` or `<id>@<stamp>`. With a stamp it
-    /// lands on that transcript line. Back returns to the answer the link was in.
+    /// Opens the meeting an Ask citation names: `<id>` or `<id>@<stamp>`. With a stamp it
+    /// lands on that transcript line. Back returns to the page the answer was asked on.
     pub fn open_citation(&mut self, target: &str, origin: String, tx: &mut Tx) {
         let (id, stamp) = match target.split_once('@') {
             Some((id, stamp)) => (id, Some(stamp)),
@@ -1040,13 +1040,47 @@ impl State {
         if !self.meetings.iter().any(|m| m.id == id) {
             return;
         }
-        let from_home = self.page() == nav::Page::Home;
+        let page = self.page();
         self.select(id, tx);
         if let Some(stamp) = stamp {
             self.jump(stamp, origin.clone(), tx);
         }
         self.back = Some(origin.clone());
-        self.cite_back = Some((origin, from_home));
+        self.cite_back = Some((origin, page));
+    }
+
+    /// Returns to the page an Ask answer was asked on after opening its citation, with the
+    /// same open functions the sidebar uses. `reset_navigation` keeps the meetings filter, the
+    /// Settings section and the open company, so only the page flags need restoring.
+    fn restore_citation_origin(&mut self, origin: nav::Page) {
+        match origin {
+            nav::Page::Home => {
+                self.go_home();
+                self.nav_done();
+            }
+            // The filter is still set; reapplying it would reset an Area's inactive toggle.
+            nav::Page::Meetings => {
+                self.refresh_list();
+                self.nav_done();
+            }
+            nav::Page::Tasks => {
+                self.set_view(tasks::View::Tasks);
+                self.nav_done();
+            }
+            nav::Page::People => self.open_people(),
+            nav::Page::Memory => {
+                self.open_memory();
+                self.nav_done();
+            }
+            nav::Page::Check => {
+                self.open_check();
+                self.nav_done();
+            }
+            nav::Page::Hex => hex::settings::reopen(self),
+            nav::Page::Annotations => self.open_annotations(),
+            // The sidebar's own entry: checks the People switch and reloads the catalog.
+            nav::Page::Companies => self.open_company(self.companies.selected.clone()),
+        }
     }
 
     pub fn go_back(&mut self, tx: &mut Tx) {
@@ -1076,11 +1110,9 @@ impl State {
             });
             return;
         }
-        if let Some((key, from_home)) = self.cite_back.take() {
+        if let Some((key, origin)) = self.cite_back.take() {
             self.reset_navigation();
-            if from_home {
-                self.view = tasks::View::Home;
-            }
+            self.restore_citation_origin(origin);
             self.thread_hidden = false;
             self.pending_thread = Some(PendingScroll {
                 key,

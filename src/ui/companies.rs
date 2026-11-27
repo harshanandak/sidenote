@@ -81,7 +81,9 @@ impl State {
             }
         }
         self.companies.open = true;
-        self.companies.selected = id;
+        // A company removed since it was opened falls back to the list, not its old Ask thread.
+        self.companies.selected =
+            id.filter(|id| self.companies.data.catalog.records.contains_key(id));
         self.companies.tab = 0;
         self.companies.expanded_decisions.clear();
         self.companies.editing = false;
