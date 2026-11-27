@@ -324,6 +324,7 @@ jobs:
             ui::list::tests::day_ \
             ui::list::tests::writing_ \
             ui::list::tests::failed_ \
+            ui::list::tests::row_ \
             ui::updates::listener_tests::install_action_waits_for_a_verified_download \
             ui::tasks::tests::empty_tasks_page_offers_to_add_a_task \
             ui::ask_switch_tests::deletion_cancels_delayed_ask_text_and_answers_in_all_scopes \

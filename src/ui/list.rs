@@ -10,7 +10,7 @@ use super::{
         pressable, row_button, scroll,
     },
 };
-use rune::{Align, El, Key, Side, TextEdit, col, el, row};
+use rune::{Align, El, Key, Side, TextEdit, TextStyle, col, el, row, text};
 use rune_kit::{Kit, TextInput};
 use sidenote::core::{
     self, Meeting, SearchHit, SearchSource,
@@ -150,6 +150,77 @@ impl State {
     }
 }
 
+/// One round initial for a person on a meeting row: a 20px circle on the chip fill with a
+/// 2px page-background border, the first letter upcased in 10/600, labelled with the full
+/// name. Each circle after the first pulls left 5px so the row reads as a stack.
+fn row_avatar(name: &str, overlap: bool, p: Palette) -> El {
+    let initial: String = name.chars().take(1).flat_map(char::to_uppercase).collect();
+    let mut avatar = col()
+        .size(20.0, 20.0)
+        .radius(10.0)
+        .fill(p.chip)
+        .border(2.0, p.bg)
+        .center()
+        .label(name)
+        .child(
+            text(initial)
+                .font(TextStyle::new(10.0, 600.0).lh(20.0))
+                .color(p.soft),
+        );
+    if overlap {
+        avatar = avatar.ml(-5.0);
+    }
+    avatar
+}
+
+/// The outcome counts under a meeting row: decisions, tasks and questions, then the peer
+/// device. Empty when the meeting has nothing to count and no device.
+fn row_counts(m: &Meeting) -> Option<String> {
+    let decided = m.points().filter(|p| p.kind == "decided").count();
+    let mut parts = Vec::new();
+    if decided > 0 {
+        parts.push(plural(decided, "decision", "decisions"));
+    }
+    if !m.summary.todo.is_empty() {
+        parts.push(plural(m.summary.todo.len(), "task", "tasks"));
+    }
+    if !m.summary.to_settle.is_empty() {
+        parts.push(plural(m.summary.to_settle.len(), "question", "questions"));
+    }
+    if let Some(device) = &m.device {
+        parts.push(format!("from {device}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+}
+
+/// The people-and-outcomes row under a meeting title: up to 3 initial circles, "+n" for
+/// the rest, then the outcome counts. Absent when there is nobody and nothing to count.
+fn row_bottom(m: &Meeting, p: Palette) -> Option<El> {
+    let shown: Vec<&String> = m.summary.people.iter().take(3).collect();
+    let extra = m.summary.people.len().saturating_sub(shown.len());
+    let counts = row_counts(m);
+    if shown.is_empty() && counts.is_none() {
+        return None;
+    }
+    // No gap: the faces overlap by margin, and the 6px gaps only separate the three groups.
+    let mut bottom = row().items_center().gap(6.0);
+    if !shown.is_empty() {
+        let mut faces = row().items_center();
+        for (i, name) in shown.iter().enumerate() {
+            faces = faces.child(row_avatar(name, i > 0, p));
+        }
+        bottom = bottom.child(faces);
+    }
+    if extra > 0 {
+        bottom = bottom.child(roles::META.line(format!("+{extra}"), p.faint));
+    }
+    if let Some(counts) = counts {
+        bottom = bottom.child(roles::META.line(counts, p.soft));
+    }
+    // With the column's 2px gap this sits 4px below the line above.
+    Some(bottom.mt(2.0))
+}
+
 fn home_row(
     s: &State,
     k: &Kit,
@@ -196,22 +267,29 @@ fn home_row(
         .grow(1.0)
         .min_w(0.0)
         .gap(2.0)
-        .child(
-            roles::TITLE
-                .wrap(&m.title, p.ink)
-                .wrap_anywhere()
-                .max_lines(2),
-        )
-        .child(roles::META.wrap(
-            status.map(str::to_owned).unwrap_or_else(|| people_line(m)),
-            if failed {
-                p.warn
-            } else if problem {
-                p.ink
-            } else {
-                p.faint
-            },
-        ));
+        .child(roles::TITLE.line(&m.title, p.ink));
+    match status {
+        Some(status) => {
+            text_col = text_col.child(roles::META.wrap(
+                status.to_owned(),
+                if failed {
+                    p.warn
+                } else if problem {
+                    p.ink
+                } else {
+                    p.faint
+                },
+            ));
+        }
+        None => {
+            if let Some(first) = m.summary.context.iter().find(|s| !s.trim().is_empty()) {
+                text_col = text_col.child(roles::SMALL.line(first, p.soft));
+            }
+        }
+    }
+    if let Some(bottom) = row_bottom(m, p) {
+        text_col = text_col.child(bottom);
+    }
     if let Some(hit) = &item.hit {
         text_col = text_col.child(snippet(hit, p));
     }
@@ -884,6 +962,148 @@ mod tests {
             elements
                 .iter()
                 .any(|e| e.text.as_deref() == Some("Meeting too long for a summary"))
+        );
+    }
+
+    #[test]
+    fn row_shows_one_line_summary_and_truncates() {
+        let meeting = fixture();
+        let title = meeting.title.clone();
+        let first = meeting
+            .summary
+            .context
+            .iter()
+            .find(|s| !s.trim().is_empty())
+            .cloned()
+            .expect("the fixture has a summary context entry");
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let shown = elements
+            .iter()
+            .filter(|e| e.text.as_deref() == Some(first.as_str()))
+            .count();
+        assert_eq!(shown, 1, "the first context entry shows once");
+        let title_el = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some(title.as_str()))
+            .expect("the row title");
+        assert!(
+            title_el.rect[3] < 33.0,
+            "the title stays on one line, cut off with an ellipsis"
+        );
+    }
+
+    #[test]
+    fn row_avatars_are_initials_with_overflow_count() {
+        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry standup");
+        meeting.summary.people = ["Ada", "Boris", "Cleo", "Dara", "Elif"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        for name in ["Ada", "Boris", "Cleo"] {
+            assert!(
+                elements.iter().any(|e| e.label.as_deref() == Some(name)),
+                "an avatar labelled {name}"
+            );
+        }
+        for name in ["Dara", "Elif"] {
+            assert!(
+                elements.iter().all(|e| e.label.as_deref() != Some(name)),
+                "no avatar for {name}"
+            );
+        }
+        assert!(elements.iter().any(|e| e.text.as_deref() == Some("+2")));
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row");
+        let prefix = format!("{}/", row.path);
+        let row_texts: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .filter_map(|e| e.text.as_deref())
+            .collect();
+        for initial in ["A", "B", "C"] {
+            assert!(
+                row_texts.contains(&initial),
+                "the row shows initial {initial}"
+            );
+        }
+    }
+
+    #[test]
+    fn row_counts_list_decisions_tasks_and_questions() {
+        let meeting = fixture();
+        let decided = meeting.points().filter(|p| p.kind == "decided").count();
+        let mut parts = Vec::new();
+        if decided > 0 {
+            parts.push(plural(decided, "decision", "decisions"));
+        }
+        if !meeting.summary.todo.is_empty() {
+            parts.push(plural(meeting.summary.todo.len(), "task", "tasks"));
+        }
+        if !meeting.summary.to_settle.is_empty() {
+            parts.push(plural(
+                meeting.summary.to_settle.len(),
+                "question",
+                "questions",
+            ));
+        }
+        let expected = parts.join(" \u{b7} ");
+        assert!(
+            expected.contains("decision")
+                && expected.contains("task")
+                && expected.contains("question"),
+            "the fixture has all three outcome kinds"
+        );
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some(expected.as_str())),
+            "the row counts read {expected}"
+        );
+    }
+
+    #[test]
+    fn row_without_outcomes_or_people_has_no_bottom_row() {
+        let mut rt = render_home(home_state(solo_meeting()), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+            .expect("the row");
+        let prefix = format!("{}/", row.path);
+        let texts: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.path.starts_with(&prefix))
+            .filter_map(|e| e.text.as_deref())
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(texts, ["Invented blueberry standup"]);
+    }
+
+    #[test]
+    fn row_names_the_device_for_a_peer_meeting() {
+        let mut meeting = synthetic_meeting("1793955600000-1", "Invented blueberry standup");
+        meeting.device = Some("Pixel 9".into());
+        let mut rt = render_home(home_state(vec![meeting]), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("from Pixel 9"))
         );
     }
 
