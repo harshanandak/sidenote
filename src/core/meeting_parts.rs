@@ -142,7 +142,7 @@ pub fn source(root: &Path, hex: &Path, id: &str) -> PathBuf {
     }
 }
 impl Meeting {
-    fn claim(&self, root: &Path) -> io::Result<Vec<std::fs::File>> {
+    fn claim(&self, root: &Path) -> io::Result<Vec<super::meeting_delete::MeetingClaim>> {
         let ids: std::collections::BTreeSet<_> = std::iter::once(self.id.as_str())
             .chain(self.parts.iter().map(|part| part.id.as_str()))
             .collect();
