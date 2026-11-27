@@ -295,6 +295,7 @@ pub struct Live {
     /// The meetings that existed when this one began, so the new one can be told apart.
     known: HashSet<String>,
     source_lost: bool,
+    source_seen: bool,
     began: Instant,
     stopped: Option<Instant>,
     /// When the meeting began, for the heading. `exact` is false until Hex gives the real start.
@@ -415,6 +416,7 @@ impl Live {
             phase,
             known,
             source_lost: false,
+            source_seen: false,
             began: Instant::now(),
             session: None,
             generate_after_pause: false,
@@ -925,6 +927,20 @@ impl State {
     }
 
     pub(super) fn cancel_missing_summary(&mut self, known: bool, incoming: &[CatalogMeeting]) {
+        if known
+            && let Some(id) = self.live.as_ref().and_then(|live| {
+                (live.phase == Phase::Making)
+                    .then(|| live.meeting_id())
+                    .flatten()
+            })
+        {
+            let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
+            if self.meetings.iter().any(in_catalog) || incoming.iter().any(in_catalog) {
+                if let Some(live) = self.live.as_mut() {
+                    live.source_seen = true;
+                }
+            }
+        }
         let missing = self.live.as_ref().is_some_and(|live| {
             known
                 && live.phase == Phase::Making
@@ -933,7 +949,7 @@ impl State {
                         let in_catalog = |m: &CatalogMeeting| m.device.is_none() && m.id == id;
                         let deleted = meeting_delete::suppressed_ids(&self.store.root);
                         let suppressed = deleted.is_ok_and(|ids| ids.contains(&id));
-                        (self.meetings.iter().any(in_catalog) || suppressed)
+                        (live.source_seen || self.meetings.iter().any(in_catalog) || suppressed)
                             && !incoming.iter().any(in_catalog)
                     }))
         });
@@ -2532,6 +2548,67 @@ mod writer_tests {
         assert!(state.live_close_after(Duration::from_secs(1)));
         assert_eq!(feed_io::read_notes(root.path()), "The latest draft");
         assert!(!root.path().join("unsaved-notes").exists());
+    }
+
+    #[test]
+    fn missing_source_survives_a_failed_catalog_read() {
+        fn catalog_entry(dir: &std::path::Path, id: &str) -> CatalogMeeting {
+            let folder = dir.join(id);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("english-summary.json"), "{}").unwrap();
+            CatalogMeeting::load(&folder).unwrap()
+        }
+        fn waiting_state(store_root: &std::path::Path, id: &str) -> State {
+            let mut state = State::new();
+            state.store.root = store_root.to_owned();
+            let mut live = Live::new(Phase::Making, HashSet::new());
+            live.folder = Some(PathBuf::from(id));
+            state.live = Some(live);
+            state.live_open = true;
+            state.live_notes = TextEdit::new("");
+            state
+        }
+        let id = "1794303362394-45464";
+        let store_root = tempfile::tempdir().unwrap();
+        let catalog_dir = tempfile::tempdir().unwrap();
+        let entry = catalog_entry(catalog_dir.path(), id);
+
+        // (a) A known refresh that lists the meeting keeps the wait.
+        let mut state = waiting_state(store_root.path(), id);
+        state.meetings = vec![entry.clone()];
+        state.cancel_missing_summary(true, &[entry.clone()]);
+        assert!(
+            state.live.is_some(),
+            "a known refresh listing the meeting must not cancel the wait"
+        );
+        assert!(!state.live.as_ref().unwrap().source_lost);
+        assert!(state.live.as_ref().unwrap().source_seen);
+
+        // (b) A failed refresh with an empty catalog does not cancel.
+        state.meetings = Vec::new();
+        state.cancel_missing_summary(false, &[]);
+        assert!(
+            state.live.is_some(),
+            "a failed catalog read must not cancel the wait"
+        );
+        assert!(!state.live.as_ref().unwrap().source_lost);
+
+        // (c) The next known refresh without the meeting cancels the wait.
+        state.cancel_missing_summary(true, &[]);
+        assert!(
+            state.live.is_none(),
+            "a known refresh missing a previously seen source must cancel the wait"
+        );
+
+        // A source that was never seen does not cancel.
+        let mut unseen = waiting_state(store_root.path(), id);
+        unseen.meetings = Vec::new();
+        unseen.cancel_missing_summary(true, &[]);
+        assert!(
+            unseen.live.is_some(),
+            "a source that was never seen must not cancel the wait"
+        );
+        assert!(!unseen.live.as_ref().unwrap().source_lost);
     }
 }
 
