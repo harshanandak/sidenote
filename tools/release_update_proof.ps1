@@ -293,6 +293,8 @@ function Test-RecoveryState([string]$Root) {
     [IO.File]::WriteAllText($record, '{')
     Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
     Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $unreadable
+    [IO.File]::WriteAllText($record, '{schema_version:1}')
+    Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $unreadable
     $state = @{ schema_version = 1; app_version = $version; listener_work = 'Complete'; pipeline_work = 'Complete' }
     foreach ($case in @(
         @('schema_version', 2), @('schema_version', '1'), @('app_version', '0.1.1'),
@@ -305,6 +307,24 @@ function Test-RecoveryState([string]$Root) {
         Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $incomplete
         Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $incomplete
     }
+    $duplicate = 'Install state contains a duplicate required field.'
+    foreach ($case in @(
+        @('Duplicate pipeline field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Duplicate listener field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Pending","listener_work":"Complete","pipeline_work":"Complete"}', $duplicate),
+        @('Case-only duplicate', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","Pipeline_Work":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Escaped duplicate', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_\u0077ork":"Pending","pipeline_work":"Complete"}', $duplicate),
+        @('Null required field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":null}', $incomplete),
+        @('Missing required field', '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete"}', $incomplete)
+    )) {
+        [IO.File]::WriteAllText($record, $case[1])
+        try {
+            Assert-RecoveryRefused { Assert-RecoveryState $updates $version -Canonical } $case[2]
+            Assert-RecoveryRefused { Get-InstallRecoveryEvidence $updates $version } $case[2]
+        } catch { throw "$($case[0]): $($_.Exception.Message)" }
+    }
+    [IO.File]::WriteAllText($record, '{"schema_version":1,"app_version":"0.1.0","listener_work":"Complete","pipeline_work":"Complete","note":"{\"pipeline_work\":\"Pending\"}","metadata":{"listener_work":"Pending"}}')
+    Assert-RecoveryState $updates $version -Canonical
+
     foreach ($outcome in @('Complete', 'NotConfigured')) {
         $state.pipeline_work = $outcome
         $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $record
