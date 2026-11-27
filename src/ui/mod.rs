@@ -2703,6 +2703,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         });
     let open = s.sidebar_is_open();
     let sidebar = theme::sidebar_palette(cx.system_dark(), p);
+    // A hidden sidebar has no width and so no edge; the recording rail keeps its own.
+    let edge = if on_hex {
+        hex::nav_docked(s)
+    } else {
+        s.hex_recording() || (open && !window_narrow)
+    };
     let mut body = row()
         .w_full()
         .grow(1.0)
@@ -2717,12 +2723,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             nav::sidebar(s, sidebar, p, open && !window_narrow, &mut layer)
         })
-        .child(
+        .children(edge.then(|| {
             rune::el()
+                .key("sidebar-divider")
                 .w(1.0)
                 .h_full()
-                .fill(if on_hex { p.line } else { sidebar.line }),
-        )
+                .fill(if on_hex { p.line } else { sidebar.line })
+        }))
         .child(main);
     if window_narrow && open && !on_hex {
         body = body

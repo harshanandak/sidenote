@@ -1431,14 +1431,21 @@ mod tests {
         // Open: the toggle is in the sidebar. Closed: one toggle and one search at the top left.
         let mut rt = new_meeting_runtime(1334.0, false);
         own_prefs(&mut rt);
-        let keys = ["nav-collapse", "sidebar-toggle", "top-bar", "nav-search"];
+        // A hidden sidebar leaves no divider strip at the window's edge.
+        let keys = [
+            "nav-collapse",
+            "sidebar-toggle",
+            "top-bar",
+            "nav-search",
+            "sidebar-divider",
+        ];
         let shown = |rt: &rune::Runtime<State>| keys.map(|k| count(rt, k));
-        assert_eq!(shown(&rt), [1, 0, 0, 1]);
+        assert_eq!(shown(&rt), [1, 0, 0, 1, 1]);
         tap(&mut rt, "nav-collapse");
-        assert_eq!(shown(&rt), [0, 1, 0, 1]);
+        assert_eq!(shown(&rt), [0, 1, 0, 1, 0]);
         assert!(el(&rt, "sidebar-toggle").rect[0] < 40.0);
         tap(&mut rt, "sidebar-toggle");
-        assert_eq!(shown(&rt), [1, 0, 0, 1]);
+        assert_eq!(shown(&rt), [1, 0, 0, 1, 1]);
         for open in [false, true] {
             ctrl_backslash(&mut rt);
             assert_eq!(rt.state.sidebar_is_open(), open);
@@ -1451,11 +1458,12 @@ mod tests {
         let width = |rt: &rune::Runtime<State>| el(rt, "settings-sidebar").rect[2];
         assert!(width(&rt) > 0.0);
         tap(&mut rt, "nav-collapse");
-        assert_eq!(width(&rt), 0.0);
+        assert_eq!((width(&rt), count(&rt, "sidebar-divider")), (0.0, 0));
         assert!(el(&rt, "sidebar-toggle").rect[0] < 40.0);
         for shown in [true, false] {
             ctrl_backslash(&mut rt);
             assert_eq!(width(&rt) > 0.0, shown);
+            assert_eq!(count(&rt, "sidebar-divider"), usize::from(shown));
         }
         tap(&mut rt, "sidebar-toggle");
         assert!(width(&rt) > 0.0);
