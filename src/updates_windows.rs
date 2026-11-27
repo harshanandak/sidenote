@@ -613,12 +613,32 @@ fn task_command(run: bool) -> Result<(), String> {
 enum ListenerTaskError {
     TimedOut,
     Failed(String),
+    OtherUser,
+    Elevated,
+    Disabled,
+    UnmanagedAction,
+    PermissionDenied,
 }
 impl ListenerTaskError {
     fn message(self) -> String {
+        self.description().into()
+    }
+
+    fn description(&self) -> &str {
         match self {
-            Self::TimedOut => "The meeting listener setup did not finish. Try again.".into(),
+            Self::TimedOut => "The meeting listener setup did not finish. Try again.",
             Self::Failed(message) => message,
+            Self::OtherUser => "The meeting listener task belongs to another Windows account.",
+            Self::Elevated => {
+                "The meeting listener task is configured to run with elevated privileges."
+            }
+            Self::Disabled => "The meeting listener task is disabled.",
+            Self::UnmanagedAction => {
+                "The meeting listener task does not target this Sidenote installation with the expected arguments."
+            }
+            Self::PermissionDenied => {
+                "Sidenote could not verify the meeting listener task's Windows identity."
+            }
         }
     }
 }
@@ -637,8 +657,8 @@ impl TaskValidation {
             Err(error) => {
                 self.retry_after = Some(now + Duration::from_secs(30));
                 // A timeout cannot disprove a definite failure from an earlier check.
-                if let ListenerTaskError::Failed(message) = error {
-                    self.failure = Some(message.clone());
+                if !matches!(error, ListenerTaskError::TimedOut) {
+                    self.failure = Some(error.description().into());
                 }
             }
         }
@@ -653,7 +673,7 @@ static TASK_VALIDATION: std::sync::Mutex<TaskValidation> = std::sync::Mutex::new
     failure: None,
 });
 fn checked_listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
-    let result = listener_task(run, register);
+    let result = listener_task(ListenerTaskMode::Recover { run, register });
     TASK_VALIDATION
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -670,8 +690,7 @@ const LISTENER_TASK_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $sid = $identity.User.Value
-$t = Get-ScheduledTask -TaskPath '\' | Where-Object TaskName -eq $env:SIDENOTE_TASK_NAME
-if (!$t -and $env:SIDENOTE_TASK_REGISTER -eq 'yes') {
+if ($env:SIDENOTE_TASK_REGISTER -eq 'yes' -and !(Get-ScheduledTask -TaskPath '\' | Where-Object TaskName -eq $env:SIDENOTE_TASK_NAME)) {
     $action = New-ScheduledTaskAction -Execute $env:SIDENOTE_TASK_EXE -Argument $env:SIDENOTE_TASK_ARGS
     $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
     $retry = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
@@ -682,10 +701,40 @@ if (!$t -and $env:SIDENOTE_TASK_REGISTER -eq 'yes') {
 function Read-ListenerTask {
     $t = Get-ScheduledTask -TaskPath '\' -TaskName $env:SIDENOTE_TASK_NAME
     $a = @($t.Actions)
-    $owner = $t.Principal.UserId
-    if ($owner -ne $sid) { $owner = ([Security.Principal.NTAccount]$owner).Translate([Security.Principal.SecurityIdentifier]).Value }
-    if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -ne $env:SIDENOTE_TASK_ARGS -or $owner -ne $sid -or $t.Principal.LogonType -ne 'Interactive' -or $t.Principal.RunLevel -ne 'Limited' -or !$t.Settings.Enabled) { throw 'Listener task does not target this user and install' }
+    $principal = $t.Principal.UserId
+    if ($principal -match '^S-\d-') { $principal = ([Security.Principal.SecurityIdentifier]$principal).Value }
+    else { $principal = ([Security.Principal.NTAccount]$principal).Translate([Security.Principal.SecurityIdentifier]).Value }
+    if ($principal -ne $sid -or $t.Principal.LogonType -ne 'Interactive') { throw 'other_user' }
+    if ($t.Principal.RunLevel -ne 'Limited') { throw 'elevated' }
+    if (!$t.Settings.Enabled) { throw 'disabled' }
+    if ($a.Count -ne 1 -or $a[0].Execute -ne $env:SIDENOTE_TASK_EXE -or $a[0].Arguments -cne $env:SIDENOTE_TASK_ARGS) { throw 'unmanaged_action' }
     return $t
+}
+if ($env:SIDENOTE_TASK_REGISTER -eq 'inspect') {
+    try {
+        $service = New-Object -ComObject 'Schedule.Service'
+        $service.Connect()
+        $folder = $service.GetFolder('\')
+        try { $registered = $folder.GetTask($env:SIDENOTE_TASK_NAME) }
+        catch {
+            # An exact lookup distinguishes a missing task from an inaccessible task.
+            if ($_.Exception.GetBaseException().HResult -eq -2147024894) { exit 0 } # ERROR_FILE_NOT_FOUND
+            throw
+        }
+        $null = Read-ListenerTask
+        $owner = [Security.AccessControl.RawSecurityDescriptor]::new($registered.GetSecurityDescriptor(1)).Owner
+        if (!$owner) { exit 35 }
+        if ($owner.Value -ne $sid) { exit 31 }
+        exit 0
+    } catch {
+        switch ($_.Exception.Message) {
+            'other_user' { exit 31 }
+            'elevated' { exit 32 }
+            'disabled' { exit 33 }
+            'unmanaged_action' { exit 34 }
+            default { exit 35 }
+        }
+    }
 }
 function Test-RestartSchedule($t) {
     # Windows saves logon users as account names and indefinite repetition with StopAtDurationEnd true.
@@ -733,7 +782,13 @@ if ($env:SIDENOTE_TASK_RUN -eq 'yes') {
     }
 }
 "#;
-fn listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
+#[derive(Clone, Copy)]
+enum ListenerTaskMode {
+    Preflight,
+    Recover { run: bool, register: bool },
+}
+
+fn listener_task(mode: ListenerTaskMode) -> Result<(), ListenerTaskError> {
     let name = task().map_err(ListenerTaskError::Failed)?;
     let exe = std::env::current_exe()
         .map_err(|_| ListenerTaskError::Failed("Could not locate Sidenote.".into()))?;
@@ -766,16 +821,38 @@ fn listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
     );
     #[cfg(not(feature = "recorder-ready-proof"))]
     let script = LISTENER_TASK_SCRIPT.to_owned();
-    let mut child = windows_powershell()
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    run_listener_task(
+        &mut windows_powershell(),
+        &script,
+        mode,
+        &name,
+        &exe,
+        &expected_args,
+    )
+}
+
+fn run_listener_task(
+    command: &mut Command,
+    script: &str,
+    mode: ListenerTaskMode,
+    name: &str,
+    exe: &Path,
+    expected_args: &str,
+) -> Result<(), ListenerTaskError> {
+    let (run, register) = match mode {
+        ListenerTaskMode::Preflight => ("no", "inspect"),
+        ListenerTaskMode::Recover { run, register } => (
+            if run { "yes" } else { "no" },
+            if register { "yes" } else { "no" },
+        ),
+    };
+    let mut child = command
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("SIDENOTE_TASK_NAME", name)
         .env("SIDENOTE_TASK_EXE", exe)
         .env("SIDENOTE_TASK_ARGS", expected_args)
-        .env("SIDENOTE_TASK_RUN", if run { "yes" } else { "no" })
-        .env(
-            "SIDENOTE_TASK_REGISTER",
-            if register { "yes" } else { "no" },
-        )
+        .env("SIDENOTE_TASK_RUN", run)
+        .env("SIDENOTE_TASK_REGISTER", register)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -797,10 +874,19 @@ fn listener_task(run: bool, register: bool) -> Result<(), ListenerTaskError> {
         }
     };
     if status.success() {
-        Ok(())
-    } else {
-        Err(ListenerTaskError::Failed("Sidenote could not prepare its meeting listener. Try again. If this continues, reinstall Sidenote for your Windows account.".into()))
+        return Ok(());
     }
+    Err(if matches!(mode, ListenerTaskMode::Preflight) {
+        match status.code() {
+            Some(31) => ListenerTaskError::OtherUser,
+            Some(32) => ListenerTaskError::Elevated,
+            Some(33) => ListenerTaskError::Disabled,
+            Some(34) => ListenerTaskError::UnmanagedAction,
+            _ => ListenerTaskError::PermissionDenied,
+        }
+    } else {
+        ListenerTaskError::Failed("Sidenote could not prepare its meeting listener. Try again. If this continues, reinstall Sidenote for your Windows account.".into())
+    })
 }
 
 impl ListenerStatus {
@@ -1227,11 +1313,24 @@ fn install_pipeline_scripts() -> Result<(), String> {
 
 const INSTALL_LISTENER_ERROR: &str = "Sidenote could not restart its meeting listener after installation. Reopen Sidenote to retry, or reinstall it if this continues.";
 
+pub fn after_install() -> Result<(), String> {
+    reconcile_installed()
+}
+
 pub fn after_update() -> Result<(), String> {
+    reconcile_installed()
+}
+
+fn reconcile_installed() -> Result<(), String> {
     if !installed() {
         return Ok(());
     }
-    let result = reconcile_install(&directory(), complete_pipeline_install, recover_listener);
+    let result = reconcile_install(
+        &directory(),
+        || listener_task(ListenerTaskMode::Preflight).map_err(ListenerTaskError::message),
+        complete_pipeline_install,
+        recover_listener,
+    );
     if let Err(error) = result {
         let _ = save(&Status {
             phase: Phase::Error,
@@ -1266,9 +1365,11 @@ fn recover_listener() -> Result<(), String> {
 }
 fn reconcile_install(
     directory: &Path,
+    preflight: impl Fn() -> Result<(), String>,
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
 ) -> Result<bool, String> {
+    preflight()?;
     fs::create_dir_all(directory).map_err(|_| PIPELINE_INSTALL_ERROR)?;
     // Hooks run in separate processes; serialize them before checking the receipt.
     let _lock = OpenOptions::new()
@@ -1278,6 +1379,7 @@ fn reconcile_install(
         .share_mode(0)
         .open(directory.join("install-hook.lock"))
         .map_err(|_| "Another install hook is reconciling Sidenote. Try again.")?;
+    preflight()?;
     let receipt = directory.join("install-hook.complete");
     let pending = directory.join("pipeline-install.pending");
     let current =
@@ -1604,6 +1706,7 @@ mod tests {
             assert_eq!(
                 reconcile_install(
                     root.path(),
+                    || Ok(()),
                     || {
                         calls.borrow_mut().push("pipeline");
                         install_pending_pipeline(
@@ -1651,6 +1754,7 @@ mod tests {
             assert!(
                 reconcile_install(
                     root.path(),
+                    || Ok(()),
                     || {
                         if failed_step == "pipeline" {
                             Err(PIPELINE_INSTALL_ERROR.into())
@@ -1675,7 +1779,7 @@ mod tests {
                 root.path().join("pipeline-install.pending").exists(),
                 failed_step == "pipeline"
             );
-            assert!(reconcile_install(root.path(), pipeline, || Ok(())).unwrap());
+            assert!(reconcile_install(root.path(), || Ok(()), pipeline, || Ok(())).unwrap());
             assert!(!root.path().join("pipeline-install.pending").exists());
         }
     }
@@ -1737,6 +1841,7 @@ mod tests {
         assert!(
             reconcile_install(
                 root.path(),
+                || Ok(()),
                 || {
                     install_pending_pipeline(
                         &root.path().join("pipeline-install.pending"),
@@ -1753,6 +1858,7 @@ mod tests {
         assert!(
             reconcile_install(
                 root.path(),
+                || Ok(()),
                 || {
                     install_pending_pipeline(
                         &root.path().join("pipeline-install.pending"),
@@ -1782,15 +1888,20 @@ mod tests {
             .map(|_| ())
         };
         assert!(
-            reconcile_install(root.path(), pipeline, || Err(INSTALL_LISTENER_ERROR.into()))
-                .is_err()
+            reconcile_install(
+                root.path(),
+                || Ok(()),
+                pipeline,
+                || Err(INSTALL_LISTENER_ERROR.into())
+            )
+            .is_err()
         );
         assert!(!root.path().join("install-hook.complete").exists());
         assert_eq!(
             read_status(root.path()).error.as_deref(),
             Some(INSTALL_LISTENER_ERROR)
         );
-        assert!(reconcile_install(root.path(), pipeline, || Ok(())).unwrap());
+        assert!(reconcile_install(root.path(), || Ok(()), pipeline, || Ok(())).unwrap());
         assert!(!root.path().join("update-listener.resume").exists());
         assert!(read_status(root.path()).error.is_none());
     }
@@ -1808,6 +1919,7 @@ mod tests {
         assert!(
             reconcile_install(
                 root.path(),
+                || Ok(()),
                 || panic!("overlapping pipeline"),
                 || panic!("overlapping listener")
             )
@@ -1817,6 +1929,7 @@ mod tests {
         assert!(
             reconcile_install(
                 root.path(),
+                || Ok(()),
                 || {
                     fs::remove_file(root.path().join("pipeline-install.pending")).unwrap();
                     Ok(())
@@ -2052,12 +2165,34 @@ mod tests {
         });
     }
 
-    #[test]
-    fn mismatched_listener_task_is_never_started() {
-        // Mock every task cmdlet; this never queries, registers or starts a real task.
-        let prelude = r#"
+    // Shadow the scheduler and process commands so tests cannot reach a real task or listener.
+    const MOCK_LISTENER_TASK: &str = r#"
+function New-Object {
+    param([string]$ComObject)
+    if ($ComObject -ne 'Schedule.Service') { throw 'Unexpected COM request' }
+    $task = [PSCustomObject]@{}
+    $task | Add-Member ScriptMethod GetSecurityDescriptor {
+        param($Flags)
+        if ($Flags -ne 1 -or $env:SIDENOTE_TEST_MISMATCH -eq 'unreadable-owner') { throw 'Synthetic owner read error' }
+        if ($env:SIDENOTE_TEST_MISMATCH -eq 'foreign-owner') { return 'O:SY' }
+        'O:' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    }
+    $service = [PSCustomObject]@{ Task = $task }
+    $service | Add-Member ScriptMethod Connect {}
+    $service | Add-Member ScriptMethod GetFolder { $this }
+    $service | Add-Member ScriptMethod GetTask {
+        switch ($env:SIDENOTE_TEST_MISMATCH) {
+            'absent' { throw [Runtime.InteropServices.COMException]::new('Synthetic missing task', -2147024894) }
+            'inaccessible' { throw [Runtime.InteropServices.COMException]::new('Synthetic read refusal', -2147024891) }
+        }
+        $this.Task
+    }
+    $service
+}
 function Get-ScheduledTask {
+    if ($env:SIDENOTE_TEST_MISMATCH -eq 'absent' -and !$script:registered) { return }
     $action = [PSCustomObject]@{ Execute = $env:SIDENOTE_TASK_EXE; Arguments = $env:SIDENOTE_TASK_ARGS }
+    $actions = @($action)
     $principal = [PSCustomObject]@{ UserId = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; LogonType = 'Interactive'; RunLevel = 'Limited' }
     $settings = [PSCustomObject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew'; ExecutionTimeLimit = 'PT0S' }
     $triggers = @(New-ScheduledTaskTrigger -AtLogOn -User $principal.UserId)
@@ -2065,10 +2200,15 @@ function Get-ScheduledTask {
     switch ($env:SIDENOTE_TEST_MISMATCH) {
         'exe' { $action.Execute = 'other.exe' }
         'args' { $action.Arguments = '--other' }
+        'extra-args' { $action.Arguments = '--listen --synthetic' }
+        'multiple-actions' { $actions += $action }
+        'foreign-principal' { $principal.UserId = 'S-1-5-18' }
+        'unreadable-principal' { $principal.UserId = 'S-1-invalid' }
+        'cross-root' { $action.Execute = 'C:\prior\current\sidenote.exe' }
         'privilege' { $principal.RunLevel = 'Highest' }
         'disabled' { $settings.Enabled = $false }
     }
-    [PSCustomObject]@{ TaskName = $env:SIDENOTE_TASK_NAME; Actions = @($action); Principal = $principal; Settings = $settings; Triggers = $triggers }
+    [PSCustomObject]@{ TaskName = $env:SIDENOTE_TASK_NAME; Actions = $actions; Principal = $principal; Settings = $settings; Triggers = $triggers }
 }
 function New-ScheduledTaskTrigger {
     param([switch]$AtLogOn, [string]$User, [switch]$Once, $At, $RepetitionInterval)
@@ -2076,14 +2216,30 @@ function New-ScheduledTaskTrigger {
     if ($AtLogOn) { $User = ([Security.Principal.SecurityIdentifier]$User).Translate([Security.Principal.NTAccount]).Value }
     [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = $kind }; Enabled = $true; UserId = $User; Repetition = [PSCustomObject]@{ Interval = 'PT5M'; Duration = ''; StopAtDurationEnd = $true } }
 }
-function Register-ScheduledTask { throw 'Registration is forbidden in this test' }
+function Write-TaskOperation($Operation) {
+    if ($env:SIDENOTE_TEST_OPERATIONS) {
+        [IO.File]::AppendAllText($env:SIDENOTE_TEST_OPERATIONS, "$Operation`n")
+    }
+}
+function New-ScheduledTaskAction {}
+function New-ScheduledTaskPrincipal {}
+function New-ScheduledTaskSettingsSet {}
+function Register-ScheduledTask {
+    Write-TaskOperation 'register'
+    if ($env:SIDENOTE_TEST_MISMATCH -ne 'absent') { throw 'Unexpected registration' }
+    $script:registered = $true
+}
 function Set-ScheduledTask {
     param($TaskPath, $TaskName, $Trigger, $Settings)
+    Write-TaskOperation 'repair'
     if ($env:SIDENOTE_TEST_MISMATCH -notin @('legacy', 'unsaved')) { throw 'Unexpected migration' }
     if (@($Trigger).Count -ne 2 -or $Settings.MultipleInstances -ne 2) { throw 'Invalid migration' }
     $script:migrated = $env:SIDENOTE_TEST_MISMATCH -ne 'unsaved'
 }
-function Start-ScheduledTask { $script:started = $true }
+function Start-ScheduledTask {
+    Write-TaskOperation 'start'
+    $script:started = $true
+}
 function New-ListenerTestStopwatch {
     $script:elapsedMs = 0
     $clock = [PSCustomObject]@{}
@@ -2106,8 +2262,130 @@ function Get-CimInstance {
 $script:samples = 0
 $script:started = $false
 $script:migrated = $false
-try {
 "#;
+
+    fn mock_install_task(
+        root: &Path,
+        scenario: &str,
+        mode: ListenerTaskMode,
+    ) -> Result<(), String> {
+        let script = LISTENER_TASK_SCRIPT.replace(
+            "[Diagnostics.Stopwatch]::StartNew()",
+            "(New-ListenerTestStopwatch)",
+        );
+        run_listener_task(
+            windows_powershell()
+                .env("SIDENOTE_TEST_MISMATCH", scenario)
+                .env("SIDENOTE_TEST_OPERATIONS", root.join("task-operations")),
+            &format!("{MOCK_LISTENER_TASK}\n{script}"),
+            mode,
+            "Sidenote mock listener",
+            &root.join("current/sidenote.exe"),
+            "--listen",
+        )
+        .map_err(ListenerTaskError::message)
+    }
+
+    #[test]
+    fn install_preflight_refuses_unsafe_task_without_side_effects() {
+        for (scenario, error) in [
+            ("foreign-principal", ListenerTaskError::OtherUser),
+            ("foreign-owner", ListenerTaskError::OtherUser),
+            ("privilege", ListenerTaskError::Elevated),
+            ("disabled", ListenerTaskError::Disabled),
+            ("extra-args", ListenerTaskError::UnmanagedAction),
+            ("multiple-actions", ListenerTaskError::UnmanagedAction),
+            ("unreadable-principal", ListenerTaskError::PermissionDenied),
+            ("unreadable-owner", ListenerTaskError::PermissionDenied),
+            ("inaccessible", ListenerTaskError::PermissionDenied),
+            ("exe", ListenerTaskError::UnmanagedAction),
+            ("cross-root", ListenerTaskError::UnmanagedAction),
+            ("changed-under-lock", ListenerTaskError::OtherUser),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let files = [
+                "pipeline-install.pending",
+                "update-listener.stop",
+                "update-listener.resume",
+                "install-hook.complete",
+            ];
+            for file in files {
+                fs::write(root.path().join(file), file).unwrap();
+            }
+            let lock = root.path().join("install-hook.lock");
+            let result = reconcile_install(
+                root.path(),
+                || {
+                    let task = if scenario == "changed-under-lock" {
+                        if lock.exists() {
+                            "foreign-owner"
+                        } else {
+                            "none"
+                        }
+                    } else {
+                        scenario
+                    };
+                    mock_install_task(root.path(), task, ListenerTaskMode::Preflight)
+                },
+                || panic!("unexpected pipeline call for {scenario}"),
+                || panic!("unexpected listener recovery for {scenario}"),
+            );
+            assert_eq!(result.unwrap_err(), error.message(), "{scenario}");
+            for file in files {
+                assert_eq!(fs::read_to_string(root.path().join(file)).unwrap(), file);
+            }
+            assert_eq!(lock.exists(), scenario == "changed-under-lock");
+            assert!(!root.path().join("task-operations").exists(), "{scenario}");
+        }
+    }
+
+    #[test]
+    fn install_preflight_allows_absent_and_same_install_task() {
+        for (scenario, operations) in [
+            ("absent", "register\nstart\n"),
+            ("none", "start\n"),
+            ("legacy", "repair\nstart\n"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let pending = root.path().join("pipeline-install.pending");
+            let log = root.path().join("task-operations");
+            let probes = std::cell::Cell::new(0);
+            assert!(
+                reconcile_install(
+                    root.path(),
+                    || {
+                        probes.set(probes.get() + 1);
+                        mock_install_task(root.path(), scenario, ListenerTaskMode::Preflight)
+                    },
+                    || {
+                        assert_eq!(probes.get(), 2);
+                        assert!(!log.exists(), "preflight touched the task: {scenario}");
+                        assert_eq!(fs::read_to_string(&pending).unwrap(), VERSION);
+                        fs::remove_file(&pending).unwrap();
+                        Ok(())
+                    },
+                    || mock_install_task(
+                        root.path(),
+                        scenario,
+                        ListenerTaskMode::Recover {
+                            run: true,
+                            register: true
+                        },
+                    ),
+                )
+                .unwrap(),
+                "{scenario}"
+            );
+            assert_eq!(fs::read_to_string(log).unwrap(), operations, "{scenario}");
+            assert!(
+                root.path().join("install-hook.complete").exists(),
+                "{scenario}"
+            );
+        }
+    }
+
+    #[test]
+    fn mismatched_listener_task_is_never_started() {
         let suffix = r#"
 } catch { if ($script:started) { exit 2 }; exit 1 }
 if ($script:started) { exit 0 }; exit 3
@@ -2133,7 +2411,7 @@ if ($script:started) { exit 0 }; exit 3
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
-                    &format!("{prelude}\n{script}\n{suffix}"),
+                    &format!("{MOCK_LISTENER_TASK}\ntry {{\n{script}\n{suffix}"),
                 ])
                 .env("SIDENOTE_TASK_NAME", "Sidenote mock listener")
                 .env("SIDENOTE_TASK_EXE", "sidenote-test.exe")

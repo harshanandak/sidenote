@@ -90,7 +90,8 @@ fn main() {
         velopack::VelopackApp::build()
             .set_auto_apply_on_startup(false)
             .on_after_install_fast_callback(|_| {
-                if sidenote::updates::after_update().is_err() {
+                if let Err(error) = sidenote::updates::after_install() {
+                    eprintln!("{error}");
                     std::process::exit(1);
                 }
             })
@@ -98,7 +99,8 @@ fn main() {
                 let _ = sidenote::updates::after_update();
             })
             .on_after_update_fast_callback(|_| {
-                if sidenote::updates::after_update().is_err() {
+                if let Err(error) = sidenote::updates::after_update() {
+                    eprintln!("{error}");
                     std::process::exit(1);
                 }
             })

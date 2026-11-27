@@ -11,6 +11,11 @@ on:
       - tools/release_update_proof.ps1
       - tools/install_release.ps1
       - tools/pack_release.ps1
+      - src/main.rs
+      - src/install_hooks_tests.rs
+      - src/updates.rs
+      - src/updates_windows.rs
+      - src/updates_windows/**
       - Cargo.toml
       - docs/releases/**
   workflow_dispatch:
