@@ -485,7 +485,8 @@ pub fn section(s: &State, p: Palette) -> El {
             p,
         ),
     );
-    let channel_switch_disabled = status.phase == Phase::Manual || busy(status) || s.updates.applying;
+    let channel_switch_disabled =
+        status.phase == Phase::Manual || busy(status) || s.updates.applying;
     let channel_switches = [
         (Channel::Stable, "update-channel-stable"),
         (Channel::Dev, "update-channel-dev"),

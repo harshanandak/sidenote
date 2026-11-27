@@ -235,7 +235,9 @@ fn public_feed(channel: Channel) -> &'static str {
     match channel {
         Channel::Stable => PUBLIC_FEED,
         Channel::Dev => "https://github.com/harshanandak/sidenote/releases/download/dev/",
-        Channel::Latest => "https://github.com/harshanandak/sidenote/releases/download/latest-main/",
+        Channel::Latest => {
+            "https://github.com/harshanandak/sidenote/releases/download/latest-main/"
+        }
     }
 }
 
