@@ -431,7 +431,6 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 .then(|| super::ai_notes::setup_card(s, p))
                 .flatten(),
         )
-        .children(super::today::strip(s, p))
         .children(super::project_merge::panel(s, k, p, layer))
         .children(super::area::project_tools(s, k, p, layer))
         .child(toolbar(s, k, p, layer));
@@ -895,6 +894,22 @@ mod tests {
                 (primary.into(), secondary.into())
             );
         }
+    }
+
+    #[test]
+    fn today_strip_is_gone_from_the_meetings_list() {
+        crate::test_paths::isolate();
+        let mut meeting = fixture();
+        meeting.started = Some(chrono::Local::now());
+        let row_key = format!("meeting-{}", meeting.id);
+        let mut state = home_state(vec![meeting]);
+        state.live = Some(crate::ui::live::Live::scene(
+            crate::ui::live::Phase::Making,
+            None,
+        ));
+        let rt = render_home(state, 1334.0);
+        assert!(rt.find("today").is_none());
+        assert!(rt.find(&row_key).is_some());
     }
 
     fn summary_job_home(raw: &str) -> rune::Runtime<State> {
