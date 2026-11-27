@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
-  "src/ui/ask_switch_tests.rs": "c050d187c32de4b332654a3483d2d59b17a84042e5705a8fa3767a36121f9551",
+  "src/ui/ask_switch_tests.rs": "5137aad1d213c46f02aa5d45db8458045bfcc07f0df65313816b42be868738c7",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -437,7 +437,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "46cd3492d2c20dfff2742843b20824bdb971dd3841b91eb10f5b082e1fb293d2",
+  "src/ui/live.rs": "ff9fd5b74938a74374b47070bbe4db8f6283292c25b60612a61a5ed757bda943",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "8d8820c53130ffaa6177039725ab6dea50f30c7fdfbc42093e830ac458a21953",
+  "src/ui/mod.rs": "ace386b695cb91b9340724edd6d9f3444660e98959ae63fe3a2c9c23f750a6a5",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -465,9 +465,9 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "dde35242e666cf9eca7bd00d1fa06cd2bd80cb5475cf1c73bb12269bdd6a26c9",
+  "src/ui/updates.rs": "1bbe8893feb041aaf4eb2bbdc9ba5ccd8eb2afc308d45fbce07cf66f75c88d79",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "7a05a845a0679f177c311e06bf2e2d92ccdad915d8ed17945ea7e4a2a084aafa"
+  "src/updates_windows.rs": "a15e7a31e681ae2860e9609ebf3dc3c453bf9c125dbd6d84943fb19b4d8e0026"
 }

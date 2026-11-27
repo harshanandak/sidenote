@@ -429,6 +429,7 @@ fn channel_label(channel: Channel) -> &'static str {
     match channel {
         Channel::Stable => "Stable",
         Channel::Dev => "Dev",
+        Channel::Latest => "Latest",
     }
 }
 
@@ -439,16 +440,16 @@ pub fn section(s: &State, p: Palette) -> El {
             .child(roles::SMALL.wrap("Automatic updates and the tray indicator are unavailable on Linux. Close the window to quit Sidenote.", p.soft));
     }
     let status = &s.updates.status;
-    let (other, channel_help) = match s.updates.channel {
-        Channel::Dev => (
-            Channel::Stable,
-            "Get prerelease builds. If you switch to Stable, this build stays installed until a newer stable release is available.",
-        ),
-        Channel::Stable if CHANNEL == Channel::Dev => (
-            Channel::Dev,
-            "This build stays installed until a newer stable release is available.",
-        ),
-        Channel::Stable => (Channel::Dev, "Get stable releases."),
+    let current_channel = s.updates.channel;
+    let channel_help = match current_channel {
+        Channel::Dev => {
+            "Get prerelease builds. If you switch to Stable, this build stays installed until a newer stable release is available."
+        }
+        Channel::Stable if CHANNEL == Channel::Dev => {
+            "This build stays installed until a newer stable release is available."
+        }
+        Channel::Stable => "Get stable releases.",
+        Channel::Latest => "Get the newest build from main that passed its release checks.",
     };
     let checked = status
         .checked
@@ -484,21 +485,36 @@ pub fn section(s: &State, p: Palette) -> El {
             p,
         ),
     );
+    let channel_switch_disabled =
+        status.phase == Phase::Manual || busy(status) || s.updates.applying;
+    let channel_switches = [
+        (Channel::Stable, "update-channel-stable"),
+        (Channel::Dev, "update-channel-dev"),
+        (Channel::Latest, "update-channel-latest"),
+    ];
+    let channel_control = row().items_center().gap(8.0).flex_wrap().children(
+        channel_switches
+            .into_iter()
+            .filter(|(channel, _)| *channel != current_channel)
+            .map(|(channel, key)| {
+                super::widgets::button(
+                    format!("Switch to {}", channel_label(channel)),
+                    key,
+                    super::widgets::ButtonRole::Secondary,
+                    p,
+                )
+                .disabled(channel_switch_disabled)
+                .on_press(move |s: &mut State| s.switch_update_channel(channel))
+            }),
+    );
     application = application
         .child(hairline(p))
         .child(super::hex::settings::setting_row(
             s,
             "update-channel",
-            &format!("Get updates from · {}", channel_label(s.updates.channel)),
+            &format!("Get updates from · {}", channel_label(current_channel)),
             channel_help,
-            super::widgets::button(
-                format!("Switch to {}", channel_label(other)),
-                "update-channel-switch",
-                super::widgets::ButtonRole::Secondary,
-                p,
-            )
-            .disabled(status.phase == Phase::Manual || busy(status) || s.updates.applying)
-            .on_press(move |s: &mut State| s.switch_update_channel(other)),
+            channel_control,
             false,
             p,
         ));

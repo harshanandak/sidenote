@@ -2503,6 +2503,200 @@ fn citation_back_returns_to_origin() {
     }
 }
 
+const CITED_MEETING: &str = "1800000000002-2";
+
+fn citation_return_fixture() -> Runtime<State> {
+    page_with(DEFAULT_SIZE, || {
+        let folder = core::meetings_dir().join(CITED_MEETING);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("english-summary.json"),
+            r#"{"title":"Workshop follow-up"}"#,
+        )
+        .unwrap();
+    })
+}
+
+#[test]
+fn citation_back_restores_the_open_meeting_or_live_page() {
+    if in_parent("citation_back_restores_the_open_meeting_or_live_page") {
+        return;
+    }
+    let mut rt = citation_return_fixture();
+    rt.update(|s, tx| {
+        s.go_home();
+        for from_live in [false, true] {
+            if from_live {
+                s.live = Some(live::Live::scene(live::Phase::Recording, None));
+                s.ask_settings.recording = true;
+                s.open_live();
+            } else {
+                s.select(MEETING, tx);
+            }
+            s.set_ask_scope(true);
+            assert_eq!(s.ask_key(), core::ALL_KEY);
+            s.open_citation(CITED_MEETING, s.msg_key(1), tx);
+            assert_eq!(s.selected.as_deref(), Some(CITED_MEETING));
+
+            s.go_back(tx);
+            assert_eq!(s.on_live(), from_live);
+            assert_eq!(s.selected.as_deref(), (!from_live).then_some(MEETING));
+            assert_eq!(s.ask_key(), core::ALL_KEY);
+        }
+    });
+}
+
+#[test]
+fn citation_back_unwinds_two_citations_one_page_at_a_time() {
+    if in_parent("citation_back_unwinds_two_citations_one_page_at_a_time") {
+        return;
+    }
+    let mut rt = citation_return_fixture();
+    rt.update(|s, tx| {
+        s.go_home();
+        let first_answer = s.msg_key(1);
+        s.open_citation(MEETING, first_answer.clone(), tx);
+        assert_eq!(s.selected.as_deref(), Some(MEETING));
+        assert_eq!(s.ask_key(), MEETING);
+        s.open_citation(CITED_MEETING, s.msg_key(3), tx);
+        assert_eq!(s.selected.as_deref(), Some(CITED_MEETING));
+
+        s.go_back(tx);
+        assert_eq!(s.selected.as_deref(), Some(MEETING));
+        assert_eq!(s.ask_key(), MEETING);
+        assert_eq!(s.back.as_deref(), Some(first_answer.as_str()));
+        s.go_back(tx);
+        assert!(s.page() == nav::Page::Home);
+        assert!(s.selected.is_none());
+    });
+}
+
+const CITATION_REVIEW_ANSWER: &str = "The workshop starts Friday.";
+
+fn save_citation_answer(rt: &mut Runtime<State>, citations: &str) {
+    rt.update(|s, _| {
+        scene_agents(s, ALL_AGENTS);
+        s.set_sidebar(true);
+        let saved = Saved {
+            messages: vec![
+                Message {
+                    role: "user".into(),
+                    text: "When does the workshop start?".into(),
+                    ..Default::default()
+                },
+                Message {
+                    role: "assistant".into(),
+                    text: format!("{CITATION_REVIEW_ANSWER}\n\n{citations}"),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        s.store.save(core::ALL_KEY, &saved).unwrap();
+        s.go_home();
+    });
+}
+
+fn tap_ask_citation(rt: &mut Runtime<State>, target: &str) {
+    rt.settle_all();
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("thread-scroll"));
+    rt.settle_all();
+    rt.frame(0.0);
+    tap(rt, &format!("cite:{target}"));
+}
+
+fn assert_citation_answer_visible(rt: &mut Runtime<State>) {
+    rt.settle_all();
+    rt.frame(0.0);
+    assert_eq!(rt.state.ask_key(), core::ALL_KEY);
+    assert!(rt.elements().iter().any(|e| {
+        e.text.as_deref() == Some(CITATION_REVIEW_ANSWER) && e.opacity > 0.0 && e.visible[3] > 0.0
+    }));
+}
+
+#[test]
+fn citation_back_does_not_open_a_replacement_recording() {
+    if in_parent("citation_back_does_not_open_a_replacement_recording") {
+        return;
+    }
+    let mut rt = citation_return_fixture();
+    save_citation_answer(&mut rt, &format!("[[{MEETING}]]"));
+    rt.update(|s, _| {
+        s.live = Some(live::Live::scene(live::Phase::Recording, None));
+        s.ask_settings.recording = true;
+        s.open_live();
+        s.set_ask_scope(true);
+    });
+    assert!(rt.state.on_live());
+    tap_ask_citation(&mut rt, MEETING);
+    assert_eq!(rt.state.selected.as_deref(), Some(MEETING));
+
+    rt.update(|s, _| {
+        s.live = Some(live::Live::scene(live::Phase::Recording, None));
+        s.ask_settings.live_all = false;
+    });
+    tap(&mut rt, "back-to-summary");
+    assert!(!rt.state.on_live());
+    assert!(!rt.state.ask_settings.live_all);
+    assert!(rt.state.selected.is_none());
+    assert!(rt.state.page() == nav::Page::Meetings);
+    assert_citation_answer_visible(&mut rt);
+}
+
+#[test]
+fn citation_back_history_clears_when_leaving_a_missing_meeting_fallback() {
+    if in_parent("citation_back_history_clears_when_leaving_a_missing_meeting_fallback") {
+        return;
+    }
+    let mut rt = citation_return_fixture();
+    save_citation_answer(&mut rt, &format!("[[{MEETING}]] [[{CITED_MEETING}]]"));
+    tap_ask_citation(&mut rt, MEETING);
+    assert_eq!(rt.state.selected.as_deref(), Some(MEETING));
+    rt.update(|s, _| s.set_ask_scope(true));
+    tap_ask_citation(&mut rt, CITED_MEETING);
+    assert_eq!(rt.state.selected.as_deref(), Some(CITED_MEETING));
+
+    rt.update(|s, _| {
+        s.meetings.retain(|m| m.id != MEETING);
+        s.refresh_list();
+    });
+    tap(&mut rt, "back-to-summary");
+    assert!(rt.state.selected.is_none());
+    assert!(rt.state.page() == nav::Page::Meetings);
+    assert_citation_answer_visible(&mut rt);
+
+    tap(&mut rt, "nav-home");
+    assert!(rt.state.page() == nav::Page::Home);
+    assert_citation_answer_visible(&mut rt);
+    assert!(rt.find("back-to-summary").is_none());
+}
+
+#[test]
+fn citation_back_skips_the_current_meeting_without_losing_the_jump() {
+    if in_parent("citation_back_skips_the_current_meeting_without_losing_the_jump") {
+        return;
+    }
+    let mut rt = page_with_cited_point();
+    save_citation_answer(&mut rt, &format!("[[{MEETING}]] [[{MEETING}@00:27]]"));
+    tap_ask_citation(&mut rt, MEETING);
+    assert_eq!(rt.state.selected.as_deref(), Some(MEETING));
+    rt.update(|s, _| s.set_ask_scope(true));
+    tap_ask_citation(&mut rt, MEETING);
+    assert_eq!(rt.state.selected.as_deref(), Some(MEETING));
+    assert_citation_answer_visible(&mut rt);
+
+    tap_ask_citation(&mut rt, &format!("{MEETING}@00:27"));
+    assert!(rt.state.transcript_open);
+    assert_eq!(rt.state.highlight, Some(1));
+    rt.settle_all();
+    rt.frame(0.0);
+    tap(&mut rt, "back-to-summary");
+    assert!(rt.state.selected.is_none());
+    assert!(rt.state.page() == nav::Page::Home);
+    assert_citation_answer_visible(&mut rt);
+}
+
 /// Back to a single Area keeps "Show all, including inactive" as the person left it.
 #[test]
 fn citation_back_keeps_the_area_inactive_toggle() {

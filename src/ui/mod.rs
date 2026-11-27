@@ -247,6 +247,12 @@ pub struct PendingScroll {
     left: u8,
 }
 
+enum CitationOrigin {
+    Page(nav::Page),
+    Meeting { id: String, all: bool },
+    Live { recording_id: u64, all: bool },
+}
+
 pub struct ListItem {
     pub index: usize,
     pub hit: Option<SearchHit>,
@@ -303,8 +309,8 @@ pub struct State {
     pub finder_query: TextEdit,
     pub highlight: Option<usize>,
     pub back: Option<String>,
-    /// The citation's answer key and the page its Ask pane was on.
-    pub cite_back: Option<(String, nav::Page)>,
+    /// Each citation's answer key and the page its Ask pane was on.
+    citation_returns: Vec<(String, CitationOrigin)>,
     pub question: TextEdit,
     pub runners: Vec<Runner>,
     pub runner: Option<String>,
@@ -564,7 +570,7 @@ impl State {
             finder_query: TextEdit::new(""),
             highlight: None,
             back: None,
-            cite_back: None,
+            citation_returns: Vec::new(),
             question: TextEdit::new(""),
             runners,
             runner,
@@ -837,13 +843,13 @@ impl State {
         self.live_open = false;
         self.more_menu = None;
         self.meeting_ui.status_open = false;
+        self.back = None;
+        self.citation_returns.clear();
         if self.selected.take().is_some() {
             self.ask_settings.saved_all = false;
             self.transcript_open = false;
             self.meeting_tab = meeting::Tab::Summary;
             self.highlight = None;
-            self.back = None;
-            self.cite_back = None;
             self.question = TextEdit::new("");
             self.runner_open = false;
             self.load_saved();
@@ -888,7 +894,7 @@ impl State {
         self.more_menu = None;
         self.highlight = None;
         self.back = None;
-        self.cite_back = None;
+        self.citation_returns.clear();
         self.question = TextEdit::new("");
         self.notice = None;
         self.runner_open = false;
@@ -1040,13 +1046,33 @@ impl State {
         if !self.meetings.iter().any(|m| m.id == id) {
             return;
         }
-        let page = self.page();
+        if self.selected.as_deref() == Some(id) {
+            if let Some(stamp) = stamp {
+                self.jump(stamp, origin, tx);
+            }
+            return;
+        }
+        let page = if let Some(id) = &self.selected {
+            CitationOrigin::Meeting {
+                id: id.clone(),
+                all: self.ask_settings.saved_all,
+            }
+        } else if let Some(live) = self.live.as_ref().filter(|_| self.on_live()) {
+            CitationOrigin::Live {
+                recording_id: live.recording_id,
+                all: self.ask_settings.live_all,
+            }
+        } else {
+            CitationOrigin::Page(self.page())
+        };
+        let mut returns = std::mem::take(&mut self.citation_returns);
         self.select(id, tx);
         if let Some(stamp) = stamp {
             self.jump(stamp, origin.clone(), tx);
         }
         self.back = Some(origin.clone());
-        self.cite_back = Some((origin, page));
+        returns.push((origin, page));
+        self.citation_returns = returns;
     }
 
     /// Returns to the page an Ask answer was asked on after opening its citation, with the
@@ -1110,9 +1136,26 @@ impl State {
             });
             return;
         }
-        if let Some((key, origin)) = self.cite_back.take() {
+        if let Some((key, origin)) = self.citation_returns.pop() {
+            let returns = std::mem::take(&mut self.citation_returns);
             self.reset_navigation();
-            self.restore_citation_origin(origin);
+            let live_id = self.live.as_ref().map(|live| live.recording_id);
+            match origin {
+                CitationOrigin::Page(page) => self.restore_citation_origin(page),
+                CitationOrigin::Meeting { id, all } if self.meetings.iter().any(|m| m.id == id) => {
+                    self.select(&id, tx);
+                    self.set_ask_scope(all);
+                }
+                CitationOrigin::Live { recording_id, all } if live_id == Some(recording_id) => {
+                    self.open_live();
+                    self.set_ask_scope(all);
+                }
+                CitationOrigin::Meeting { .. } | CitationOrigin::Live { .. } => {
+                    self.restore_citation_origin(nav::Page::Meetings);
+                }
+            }
+            self.back = returns.last().map(|(key, _)| key.clone());
+            self.citation_returns = returns;
             self.thread_hidden = false;
             self.pending_thread = Some(PendingScroll {
                 key,
@@ -1730,7 +1773,7 @@ impl State {
                 if !known && let Some(handle) = &self.scan_tx {
                     handle.invalidate();
                 }
-                self.cancel_missing_summary(known, &meetings);
+                self.cancel_missing_summary(known, &meetings, &retained);
                 for meeting in &meetings {
                     if meeting.has_summary()
                         && meeting
