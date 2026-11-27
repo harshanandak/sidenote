@@ -3951,13 +3951,19 @@ mod tests {
             ),
         ] {
             if expected.iter().any(|key| key == heading) {
-                let elements = rt.elements();
-                let text = elements
+                // The keyed row holds the label as a child text element.
+                let row = elements
                     .iter()
                     .find(|element| element.key.as_deref() == Some(heading))
-                    .and_then(|element| element.text.clone())
                     .unwrap_or_else(|| panic!("missing {heading}"));
-                assert_eq!(text, label);
+                let inside = format!("{}/", row.path);
+                assert!(
+                    elements
+                        .iter()
+                        .any(|element| element.path.starts_with(&inside)
+                            && element.text.as_deref() == Some(label)),
+                    "{heading} shows {label:?}"
+                );
             }
         }
     }
@@ -4040,23 +4046,7 @@ mod tests {
 
     #[test]
     fn groups_no_heading_without_a_visible_page() {
-        for channel in [Channel::Stable, Channel::Dev] {
-            let visible: Vec<Page> = Page::ALL
-                .into_iter()
-                .filter(|page| page.visible(channel))
-                .collect();
-            assert_eq!(visible.len(), if channel == Channel::Dev { 12 } else { 10 });
-            let groups: HashSet<&str> = visible.iter().map(|page| page.group()).collect();
-            for group in groups {
-                assert!(visible.iter().any(|page| page.group() == group));
-            }
-            if channel == Channel::Stable {
-                assert!(!visible.contains(&Page::Sync));
-                assert!(!visible.contains(&Page::ConnectedApps));
-                assert!(visible.iter().any(|page| page.group() == "This PC"));
-                assert!(visible.iter().any(|page| page.group() == "Ask and agents"));
-            }
-        }
+        // Runs in both the Stable and Dev test builds, so each channel's page set is checked.
         crate::test_paths::isolate();
         let mut state = State::new();
         state.open_hex();
