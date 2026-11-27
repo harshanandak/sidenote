@@ -40,14 +40,15 @@ permissions:
   contents: read
 
 # Only a PR's newest head needs its proof; tag pushes and manual runs never cancel.
+# A label change other than release-proof does no work and cancels nothing.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof') && format('release-pr-{0}', github.event.pull_request.number) || format('release-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof') }}
 
 jobs:
   package:
     name: Package Windows release artifacts
-    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published
+    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof')
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
@@ -134,7 +135,7 @@ jobs:
 
   update-proof:
     name: Prove clean Windows install and update
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release-proof')
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release-proof') && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'release-proof')
     runs-on: windows-latest
     timeout-minutes: 60
     env: *release-env
