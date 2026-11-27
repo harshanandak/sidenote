@@ -2653,6 +2653,7 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
                 s.feature_error = None;
                 s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
             } else {
+                s.hex.shell.saved = None;
                 s.feature_error = Some("Could not save Tasks settings. Try again.".into());
             }
             s.hex.select_open = None;
@@ -4368,7 +4369,9 @@ mod tests {
     fn work_tasks_layout_save_failure_is_shown() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("local/ui.json")).unwrap();
-        let state = work_tasks_state(Some(root.path()));
+        let mut state = work_tasks_state(Some(root.path()));
+        // An earlier save's confirmation must not stay beside the error.
+        state.hex.shell.saved = Some(Instant::now() + Duration::from_secs(60));
         let mut rt = settings_runtime(state, (1334.0, 900.0));
         choose_tasks_layout(&mut rt, 1);
         assert_eq!(
