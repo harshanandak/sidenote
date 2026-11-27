@@ -2189,7 +2189,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
     let tasks_view = s.view == tasks::View::Tasks;
     let ask_typing = tx.focused() == Some("ask-input");
     let typing = if s.annotations.open {
-        false
+        ask_typing
     } else if tasks_view {
         ask_typing || s.tasks.typing() || s.search.focused
     } else if s.on_check() || s.on_memory() || s.on_hex() {
