@@ -1817,7 +1817,7 @@ fn title_row(s: &State, k: &Kit, narrow: bool, p: Palette, layer: &mut Vec<El>) 
         )
 }
 
-fn group_label(by: TaskGrouping) -> &'static str {
+pub(crate) fn group_label(by: TaskGrouping) -> &'static str {
     match by {
         TaskGrouping::Due => "Due date",
         TaskGrouping::Project => "Project",
@@ -4212,6 +4212,19 @@ impl State {
             return;
         }
         timing.ready();
+    }
+    /// Settings saves on the spot so it can show the result; the Group menu queues the same write.
+    pub(crate) fn save_grouping(&mut self, by: TaskGrouping) -> std::io::Result<()> {
+        self.tasks.grouping = by;
+        self.tasks.grouping_loaded = true;
+        self.tasks.store.save_grouping(by)
+    }
+    /// Settings changes only who is shown; the Open/Done filter keeps its saved value.
+    pub(crate) fn save_task_audience(&mut self) -> std::io::Result<()> {
+        let mut prefs = core::UiPrefs::load(&self.store.root);
+        prefs.tasks_mine = self.tasks.who == Who::Mine;
+        prefs.tasks_include_unassigned = self.tasks.include_unassigned;
+        prefs.save(&self.store.root)
     }
     /// The List / Board choice. It belongs to this PC, in `local/ui.json`, so it never syncs.
     fn set_layout(&mut self, layout: core::TasksLayout) {
