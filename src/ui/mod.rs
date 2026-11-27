@@ -250,7 +250,7 @@ pub struct PendingScroll {
 enum CitationOrigin {
     Page(nav::Page),
     Meeting { id: String, all: bool },
-    Live { all: bool },
+    Live { recording_id: u64, all: bool },
 }
 
 pub struct ListItem {
@@ -843,13 +843,13 @@ impl State {
         self.live_open = false;
         self.more_menu = None;
         self.meeting_ui.status_open = false;
+        self.back = None;
+        self.citation_returns.clear();
         if self.selected.take().is_some() {
             self.ask_settings.saved_all = false;
             self.transcript_open = false;
             self.meeting_tab = meeting::Tab::Summary;
             self.highlight = None;
-            self.back = None;
-            self.citation_returns.clear();
             self.question = TextEdit::new("");
             self.runner_open = false;
             self.load_saved();
@@ -1046,13 +1046,20 @@ impl State {
         if !self.meetings.iter().any(|m| m.id == id) {
             return;
         }
+        if self.selected.as_deref() == Some(id) {
+            if let Some(stamp) = stamp {
+                self.jump(stamp, origin, tx);
+            }
+            return;
+        }
         let page = if let Some(id) = &self.selected {
             CitationOrigin::Meeting {
                 id: id.clone(),
                 all: self.ask_settings.saved_all,
             }
-        } else if self.on_live() {
+        } else if let Some(live) = self.live.as_ref().filter(|_| self.on_live()) {
             CitationOrigin::Live {
+                recording_id: live.recording_id,
                 all: self.ask_settings.live_all,
             }
         } else {
@@ -1132,13 +1139,14 @@ impl State {
         if let Some((key, origin)) = self.citation_returns.pop() {
             let returns = std::mem::take(&mut self.citation_returns);
             self.reset_navigation();
+            let live_id = self.live.as_ref().map(|live| live.recording_id);
             match origin {
                 CitationOrigin::Page(page) => self.restore_citation_origin(page),
                 CitationOrigin::Meeting { id, all } if self.meetings.iter().any(|m| m.id == id) => {
                     self.select(&id, tx);
                     self.set_ask_scope(all);
                 }
-                CitationOrigin::Live { all } if self.live.is_some() => {
+                CitationOrigin::Live { recording_id, all } if live_id == Some(recording_id) => {
                     self.open_live();
                     self.set_ask_scope(all);
                 }
