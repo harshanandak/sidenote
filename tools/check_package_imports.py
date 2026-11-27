@@ -8,7 +8,8 @@ import struct
 import sys
 import tempfile
 from xml.etree import ElementTree
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
+import zlib
 
 
 PE_SUFFIXES = {".dll", ".exe"}
@@ -20,7 +21,7 @@ WINDOWS_DLLS = frozenset("""
     uxtheme.dll winhttp.dll ws2_32.dll
 """.split())
 VC143_X64_DLLS = {
-    "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+    "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll",
 }
 
 
@@ -89,16 +90,37 @@ def pe_imports(data):
     return machine, imports
 
 
-def check_binary(name, data, shipped, runtimes):
-    try:
-        machine, imports = pe_imports(data)
-    except (ValueError, struct.error) as error:
-        return [f"{name}: invalid PE ({error})"]
-    allowed = shipped | WINDOWS_DLLS
-    if machine == 0x8664 and "vcredist143-x64" in runtimes:
-        allowed |= VC143_X64_DLLS
-    return [f"{name}: missing imported DLL {dll}" for dll in sorted(imports - allowed)
-            if not dll.startswith(("api-ms-win-", "ext-ms-"))]
+def check_binaries(binaries, runtimes):
+    parsed = {}
+    shipped = set()
+    errors = []
+    for path, data in binaries:
+        if path.is_absolute() or any(
+            part.endswith((".", " ")) or any(char in part for char in '\\:<>"|?*')
+            for part in path.parts
+        ):
+            raise ValueError(f"cannot resolve Windows binary path {path}")
+        parent, name = path.parent.as_posix().lower(), path.name.lower()
+        if (parent, name) in parsed:
+            raise ValueError(f"ambiguous Windows binary path {path}")
+        machine, imports = None, ()
+        try:
+            machine, imports = pe_imports(data)
+        except (ValueError, struct.error) as error:
+            errors.append(f"{path}: invalid PE ({error})")
+        parsed[parent, name] = path, machine, imports
+        if machine is not None and path.suffix.casefold() == ".dll":
+            shipped.add((parent, name, machine))
+
+    for (parent, _), (path, machine, imports) in parsed.items():
+        allowed = WINDOWS_DLLS
+        if machine == 0x8664 and "vcredist143-x64" in runtimes:
+            allowed |= VC143_X64_DLLS
+        for dll in sorted(imports):
+            if (dll not in allowed and not dll.startswith(("api-ms-win-", "ext-ms-"))
+                    and (parent, dll, machine) not in shipped):
+                errors.append(f"{path}: missing imported DLL {dll}")
+    return errors
 
 
 def check_release(directory):
@@ -119,25 +141,20 @@ def check_release(directory):
         binaries = {entry: path for entry, path in members.items() if path.suffix.casefold() in PE_SUFFIXES}
         if not binaries:
             raise ValueError("full package contains no Windows binaries")
-        shipped = {path.name.casefold() for path in binaries.values() if path.suffix.casefold() == ".dll"}
-        errors = []
-        for entry, path in binaries.items():
-            errors.extend(check_binary(path, package.read(entry), shipped, runtimes))
+        errors = check_binaries(((path, package.read(entry)) for entry, path in binaries.items()), runtimes)
 
     # The setup executable must load before it can install any prerequisites.
     outer = sorted(path for path in directory.rglob("*") if path.is_file() and path.suffix.casefold() in PE_SUFFIXES)
-    shipped = {path.name.casefold() for path in outer if path.suffix.casefold() == ".dll"}
-    for path in outer:
-        errors.extend(check_binary(path.relative_to(directory), path.read_bytes(), shipped, ()))
+    errors.extend(check_binaries(((path.relative_to(directory), path.read_bytes()) for path in outer), ()))
     return errors, len(binaries) + len(outer)
 
 
-def fixture_pe(dll=None, *, delay=False):
+def fixture_pe(dll=None, *, delay=False, machine=0x8664):
     data = bytearray(0x400)
     data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, 0x80)
     data[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HHIIIHH", data, 0x84, 0x8664, 1, 0, 0, 0, 240, 0x2000)
+    struct.pack_into("<HHIIIHH", data, 0x84, machine, 1, 0, 0, 0, 240, 0x2000)
     optional = 0x98
     struct.pack_into("<H", data, optional, 0x20B)
     struct.pack_into("<I", data, optional + 60, 0x200)
@@ -155,39 +172,78 @@ def fixture_pe(dll=None, *, delay=False):
     return data
 
 
+def assert_check(root, label, diagnostic=None):
+    output = io.StringIO()
+    with redirect_stderr(output), redirect_stdout(output):
+        result = main([str(root)])
+    expected = int(diagnostic is not None)
+    if result != expected or (diagnostic and diagnostic not in output.getvalue()):
+        raise AssertionError(f"{label}: expected exit {expected}, got {result}\n{output.getvalue()}")
+
+
+def write_fixture(archive, files, runtimes=""):
+    manifest = (
+        '<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">'
+        f"<metadata><runtimeDependencies>{runtimes}</runtimeDependencies></metadata></package>"
+    )
+    with ZipFile(archive, "w", compression=ZIP_DEFLATED) as package:
+        package.writestr("fixture.nuspec", manifest)
+        for path, data in files:
+            package.writestr(path, data)
+
+
 def self_test():
     cases = (
-        ("VCRUNTIME140.dll", False, "", False, 1),
-        ("VCRUNTIME140.dll", False, "vcredist143-x64", False, 0),
-        ("VCRUNTIME140.dll", True, "vcredist143-x86", False, 1),
-        ("VCRUNTIME140.dll", True, "webview2,VCREDIST143-X64", False, 0),
-        ("unknown.dll", False, "vcredist143-x64", False, 1),
-        ("unknown.dll", True, "", False, 1),
-        ("unknown.dll", True, "", True, 0),
-        ("Kernel32.DLL", False, "", False, 0),
-        ("api-ms-win-crt-runtime-l1-1-0.dll", False, "", False, 0),
-        ("ext-ms-win-test-l1-1-0.dll", True, "", False, 0),
+        ("VCRUNTIME140.dll", False, "", True),
+        ("VCRUNTIME140.dll", False, "vcredist143-x64", False),
+        ("VCRUNTIME140.dll", True, "vcredist143-x86", True),
+        ("VCRUNTIME140.dll", True, "webview2,VCREDIST143-X64", False),
+        ("concrt140.dll", False, "vcredist143-x64", False),
+        ("unknown.dll", False, "vcredist143-x64", True),
+        ("unknown.dll", True, "", True),
+        ("Kernel32.DLL", False, "", False),
+        ("api-ms-win-crt-runtime-l1-1-0.dll", False, "", False),
+        ("ext-ms-win-test-l1-1-0.dll", True, "", False),
+    )
+    layouts = (
+        ("subfolder copy", "plugins/UNKNOWN.DLL", 0x8664, True),
+        ("wrong machine", "UNKNOWN.DLL", 0xAA64, True),
+        ("matching copy", "UNKNOWN.DLL", 0x8664, False),
     )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        for dll, delay, runtimes, shipped, expected in cases:
-            manifest = (
-                '<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">'
-                f"<metadata><runtimeDependencies>{runtimes}</runtimeDependencies></metadata></package>"
-            )
-            with ZipFile(root / "fixture-full.nupkg", "w") as package:
-                package.writestr("fixture.nuspec", manifest)
-                package.writestr("lib/app/nested/fixture.DLL", fixture_pe(dll, delay=delay))
-                if shipped:
-                    package.writestr(f"lib/app/{dll.upper()}", fixture_pe())
-            output = io.StringIO()
-            with redirect_stderr(output), redirect_stdout(output):
-                result = main([directory])
-            diagnostic = f"lib/app/nested/fixture.DLL: missing imported DLL {dll.casefold()}"
-            if result != expected or (expected and diagnostic not in output.getvalue()):
-                raise AssertionError(f"{dll}, delay={delay}, runtimes={runtimes!r}, shipped={shipped}: "
-                                     f"expected exit {expected}, got {result}\n{output.getvalue()}")
-    print(f"Package import self-test passed ({len(cases)} cases).")
+        archive = root / "fixture-full.nupkg"
+        importer = "lib/app/fixture.DLL"
+        for dll, delay, runtimes, missing in cases:
+            write_fixture(archive, [(importer, fixture_pe(dll, delay=delay))], runtimes)
+            diagnostic = f"{importer}: missing imported DLL {dll.casefold()}" if missing else None
+            assert_check(root, f"{dll}, delay={delay}, runtimes={runtimes!r}", diagnostic)
+
+        for label, copy, machine, missing in layouts:
+            write_fixture(archive, [(importer, fixture_pe("unknown.dll", delay=True)),
+                                    (f"lib/app/{copy}", fixture_pe(machine=machine))])
+            diagnostic = f"{importer}: missing imported DLL unknown.dll" if missing else None
+            assert_check(root, f"package {label}", diagnostic)
+
+        write_fixture(archive, [(importer, fixture_pe())])
+        for label, copy, machine, missing in layouts:
+            setup, dll = root / "Setup.exe", root / copy
+            setup.write_bytes(fixture_pe("unknown.dll"))
+            dll.parent.mkdir(parents=True, exist_ok=True)
+            dll.write_bytes(fixture_pe(machine=machine))
+            diagnostic = "Setup.exe: missing imported DLL unknown.dll" if missing else None
+            assert_check(root, f"outer {label}", diagnostic)
+            setup.unlink()
+            dll.unlink()
+
+        with ZipFile(archive) as package:
+            entry = package.getinfo(importer)
+        with archive.open("r+b") as stream:
+            # ZIP's fixed local header is 30 bytes. This fixture has no extra fields.
+            stream.seek(entry.header_offset + 30 + len(importer))
+            stream.write(b"\x07")  # Reserved DEFLATE block type.
+        assert_check(root, "corrupt deflate member", "Package import check failed: Error")
+    print(f"Package import self-test passed ({len(cases) + 2 * len(layouts) + 1} cases).")
 
 
 def main(argv=None):
@@ -201,7 +257,7 @@ def main(argv=None):
         return 0
     try:
         errors, count = check_release(args.package_directory)
-    except (BadZipFile, ElementTree.ParseError, OSError, ValueError) as error:
+    except (BadZipFile, ElementTree.ParseError, OSError, ValueError, zlib.error) as error:
         print(f"Package import check failed: {error}", file=sys.stderr)
         return 1
     if errors:
