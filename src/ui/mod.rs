@@ -2183,13 +2183,14 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
     // In Tasks a focused button (a tick just pressed) must not swallow J, K or X; only a
     // text box counts as typing there.
     let tasks_view = s.view == tasks::View::Tasks;
+    let ask_typing = tx.focused() == Some("ask-input");
     let typing = if s.annotations.open {
         false
     } else if tasks_view {
-        s.tasks.typing() || s.search.focused
+        ask_typing || s.tasks.typing() || s.search.focused
     } else if s.on_check() || s.on_memory() || s.on_hex() {
         // A pressed button keeps focus; only a text box counts as typing on these pages.
-        s.check.typing() || s.memory.typing() || s.hex.typing() || s.search.focused
+        ask_typing || s.check.typing() || s.memory.typing() || s.hex.typing() || s.search.focused
     } else if s.selected.is_some() {
         s.question.focused
             || s.transcript_filter.focused

@@ -2190,6 +2190,152 @@ fn the_ask_bar_is_centered_at_the_default_width() {
     the_bar_is_centered("the_ask_bar_is_centered_at_the_default_width", DEFAULT_SIZE);
 }
 
+type AskPage = (fn(&mut State), &'static str, &'static str);
+
+const ASK_PAGES: [AskPage; 4] = [
+    (
+        |s| s.set_view(tasks::View::Tasks),
+        "tasks-scroll",
+        "What is late this week?",
+    ),
+    (State::open_people, "people-scroll", "Who am I waiting on?"),
+    (State::open_memory, "memory-scroll", "What is in memory?"),
+    (State::open_check, "check-scroll", "Draft my daily update"),
+];
+
+fn ask_page_fixture(size: (f32, f32)) -> Runtime<State> {
+    let mut rt = page_at(size);
+    rt.on_key = Some(crate::ui::on_key);
+    rt.update(|s, _| {
+        s.hex_open = false;
+        s.config.features.tasks = true;
+        s.config.features.people = true;
+        s.config.features.memory = true;
+        s.config.features.daily_check = true;
+        scene_agents(s, ALL_AGENTS);
+    });
+    rt
+}
+
+#[test]
+fn ask_on_every_page_shows_the_dock() {
+    if in_parent("ask_on_every_page_shows_the_dock") {
+        return;
+    }
+    for size in [DEFAULT_SIZE, (390.0, 844.0)] {
+        let mut rt = ask_page_fixture(size);
+        for (open, scroll, _) in ASK_PAGES {
+            rt.update(|s, _| open(s));
+            rt.settle_all();
+            rt.frame(0.0);
+            let [_, scroll_y, _, scroll_h] = rect_of(&rt, scroll);
+            let [dock_x, dock_y, dock_w, _] = rect_of(&rt, "ask-overlay");
+            let [pill_x, pill_y, pill_w, pill_h] = rect_of(&rt, "ask-pill");
+            let [_, input_y, _, input_h] = rect_of(&rt, "ask-input");
+            assert!(scroll_y + scroll_h <= dock_y + 1.0, "{scroll} {size:?}");
+            assert_eq!(pill_h, 48.0, "{scroll} {size:?}");
+            assert!((pill_x + pill_w / 2.0 - dock_x - dock_w / 2.0).abs() <= 1.0);
+            assert!((input_y + input_h / 2.0 - pill_y - pill_h / 2.0).abs() <= 1.0);
+        }
+    }
+}
+
+#[test]
+fn ask_on_every_page_shows_one_chip_per_page() {
+    if in_parent("ask_on_every_page_shows_one_chip_per_page") {
+        return;
+    }
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    for (open, _, prompt) in ASK_PAGES {
+        rt.update(|s, _| {
+            open(s);
+            s.question = TextEdit::default();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let mut chips = elements
+            .iter()
+            .filter(|e| e.key.as_deref() == Some("ask-prompt"));
+        let label = format!("Ask: {prompt}");
+        assert_eq!(chips.next().unwrap().label.as_deref(), Some(label.as_str()));
+        assert!(chips.next().is_none(), "{prompt}");
+
+        tap(&mut rt, "ask-input");
+        for key in ["n", "/"] {
+            rt.key(KeyEvent {
+                key: Key::Text(key.into()),
+                mods: rune::Mods::default(),
+            });
+        }
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(rt.state.question.text, "n/");
+        assert!(rt.state.finder.is_none());
+        assert!(rt.state.tasks.panel.is_none());
+        assert!(rt.find("ask-prompt").is_none(), "{prompt}");
+    }
+}
+
+#[test]
+fn ask_on_every_page_uses_the_all_meetings_scope() {
+    if in_parent("ask_on_every_page_uses_the_all_meetings_scope") {
+        return;
+    }
+    let mut rt = ask_page_fixture(DEFAULT_SIZE);
+    for (open, scroll, _) in ASK_PAGES {
+        rt.update(|s, tx| s.select(MEETING, tx));
+        assert_eq!(rt.state.ask_key(), MEETING);
+        rt.update(|s, _| open(s));
+        assert_eq!(rt.state.ask_key(), core::ALL_KEY, "{scroll}");
+        assert_eq!(
+            rt.state.ask_settings.loaded_scope,
+            core::ALL_KEY,
+            "{scroll}"
+        );
+    }
+}
+
+#[test]
+fn ask_on_every_page_leaves_the_last_task_clear() {
+    if in_parent("ask_on_every_page_leaves_the_last_task_clear") {
+        return;
+    }
+    let mut rt = ask_page_fixture((390.0, 900.0));
+    rt.update(|s, _| {
+        s.set_view(tasks::View::Tasks);
+        let t = &mut s.tasks;
+        t.layout = core::TasksLayout::List;
+        t.done = core::DoneFilter::Open;
+        t.who = core::Who::Everyone;
+        t.overrides.manual = (1..=40)
+            .map(|n| core::ManualTask {
+                id: format!("task-{n}"),
+                task: format!("Follow up on item {n}"),
+                ..core::ManualTask::default()
+            })
+            .collect();
+        t.items = core::build_tasks(&[], &t.pipeline, &t.projects, &t.overrides, &t.checked);
+        t.items_changed();
+    });
+    let arranged = rt.state.tasks.arranged();
+    let last = *arranged.groups.last().unwrap().rows.last().unwrap();
+    let last = &rt.state.tasks.items[last];
+    let last_key = format!("ttask-{}-{}", last.meeting_id, last.index);
+    rt.settle_all();
+    rt.frame(0.0);
+    let doc_top = rect_of(&rt, "tasks-top")[1];
+    rt.update(|_, tx| tx.scroll_to_y("tasks-scroll", 10_000.0));
+    rt.settle_all();
+    rt.frame(0.0);
+    let [_, scroll_top, _, scroll_h] = rect_of(&rt, "tasks-scroll");
+    let [_, ask_top, _, _] = rect_of(&rt, "ask-overlay");
+    let [_, last_top, _, last_h] = rect_of(&rt, &last_key);
+    assert!(rect_of(&rt, "tasks-top")[1] < doc_top);
+    assert!(scroll_top + scroll_h <= ask_top + 1.0);
+    assert!(last_top >= scroll_top && last_top + last_h <= scroll_top + scroll_h);
+}
+
 #[test]
 fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     if in_parent("meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks") {

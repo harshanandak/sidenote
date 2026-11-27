@@ -410,7 +410,15 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         )
         .child(settings::tab_bar(s, p, false, Page::People, tab))
         .child(content(s, k, p, layer));
-    scroll(col().w_full().items_center().child(doc), "people-scroll")
+    col()
+        .grow(1.0)
+        .min_w(0.0)
+        .min_h(0.0)
+        .child(scroll(
+            col().w_full().items_center().child(doc),
+            "people-scroll",
+        ))
+        .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 pub(super) fn content(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {

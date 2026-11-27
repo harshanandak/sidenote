@@ -684,7 +684,7 @@ impl State {
         }
         let timing = (view == View::Tasks && self.view != view)
             .then(|| super::Operation::new(super::TimedAction::Tasks));
-        if self.companies.open {
+        if self.companies.open || (view == View::Tasks && self.selected.is_some()) {
             self.go_home();
         }
         self.annotations.open = false;
@@ -3745,19 +3745,17 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         );
     }
     pane = pane.child(super::diary::return_link(s, p));
-    let panel_el = panel(s, k, p, overlay, layer);
     let body = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
-    let Some(panel_el) = panel_el else {
-        return pane.child(body.child(list_column(s, k, p, narrow, list_w, layer)));
-    };
-    if overlay {
-        return pane.child(body.child(panel_el.grow(1.0)));
-    }
-    pane.child(
-        body.child(list_column(s, k, p, narrow, list_w, layer))
+    let body = match panel(s, k, p, overlay, layer) {
+        None => body.child(list_column(s, k, p, narrow, list_w, layer)),
+        Some(panel) if overlay => body.child(panel.grow(1.0)),
+        Some(panel) => body
+            .child(list_column(s, k, p, narrow, list_w, layer))
             .child(el().w(1.0).h_full().fill(p.line))
-            .child(panel_el.w(panel_w)),
-    )
+            .child(panel.w(panel_w)),
+    };
+    pane.child(body)
+        .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 fn list_column(
