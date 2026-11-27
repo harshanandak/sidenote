@@ -3,7 +3,7 @@ param(
     [string]$DotnetRoot = $env:DOTNET_ROOT,
     [string]$GnuBin = $env:RUST_GNU_BIN,
     [string]$ReleaseNotes = '',
-    [ValidateSet('stable', 'dev')] [string]$Channel
+    [ValidateSet('stable', 'dev', 'latest')] [string]$Channel
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
@@ -64,13 +64,17 @@ try {
     $version = [regex]::Match((Get-Content Cargo.toml -Raw), '(?m)^version = "([^"]+)"').Groups[1].Value
     if (-not $Channel) { $Channel = if ($version -match '-dev\.') { 'dev' } else { 'stable' } }
     $Channel = $Channel.ToLowerInvariant()
-    $versionPattern = if ($Channel -eq 'dev') { '^\d+\.\d+\.\d+-dev\.(0|[1-9]\d*)$' } else { '^\d+\.\d+\.\d+$' }
+    $versionPattern = switch ($Channel) {
+        'dev' { '^\d+\.\d+\.\d+-dev\.(0|[1-9]\d*)$' }
+        'latest' { '^\d+\.\d+\.\d+-dev\.(0|[1-9]\d*)\.main\.(0|[1-9]\d*)$' }
+        'stable' { '^\d+\.\d+\.\d+$' }
+    }
     if ($version -notmatch $versionPattern) { throw "Cargo.toml version does not match the $Channel release channel." }
     $vpkHelp = & vpk --skip-updates --help
     if ($LASTEXITCODE -ne 0 -or -not ($vpkHelp -match '^\s*Velopack CLI 0\.0\.1298,')) {
         throw 'Velopack CLI 0.0.1298 is required.'
     }
-    $features = if ($Channel -eq 'dev') { 'asr-runtime,dev' } else { 'asr-runtime' }
+    $features = if ($Channel -eq 'stable') { 'asr-runtime' } else { 'asr-runtime,dev' }
     $metadataJson = & cargo metadata --offline --locked --features $features --filter-platform x86_64-pc-windows-gnu --format-version 1
     if ($LASTEXITCODE) { throw 'Could not resolve locked dependency notices from the Cargo cache.' }
     $metadata = ($metadataJson -join "`n") | ConvertFrom-Json
@@ -82,8 +86,12 @@ try {
         $uncovered = @($noticesResult.uncovered | ForEach-Object { "$($_.name) $($_.version): $($_.license) ($($_.reason))" })
         throw "Dependency notices are incomplete: $($uncovered -join '; '). Coverage: $stage/DEPENDENCY_NOTICE_COVERAGE.json"
     }
-    & cargo +stable-x86_64-pc-windows-gnu build --release --workspace --locked --bins --target x86_64-pc-windows-gnu --features $features
-    if ($LASTEXITCODE) { throw 'Release build failed.' }
+    $previousDefaultChannel = $env:SIDENOTE_DEFAULT_CHANNEL
+    try {
+        $env:SIDENOTE_DEFAULT_CHANNEL = if ($Channel -eq 'latest') { 'latest' } else { $null }
+        & cargo +stable-x86_64-pc-windows-gnu build --release --workspace --locked --bins --target x86_64-pc-windows-gnu --features $features
+        if ($LASTEXITCODE) { throw 'Release build failed.' }
+    } finally { $env:SIDENOTE_DEFAULT_CHANNEL = $previousDefaultChannel }
     New-Item -ItemType Directory -Force -Path $feedPath | Out-Null
     Copy-Item -LiteralPath "$($metadata.target_directory)/x86_64-pc-windows-gnu/release/sidenote.exe" -Destination "$stage/sidenote.exe" -Force
     Copy-Item -LiteralPath "$($metadata.target_directory)/x86_64-pc-windows-gnu/release/sidenote-sync-worker.exe" -Destination "$stage/sidenote-sync-worker.exe" -Force
