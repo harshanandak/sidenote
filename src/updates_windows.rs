@@ -424,6 +424,22 @@ pub fn source_label() -> String {
         |p| p.display().to_string(),
     )
 }
+fn feed_error(folder: Option<&Path>, channel: Channel, error: &dyn std::fmt::Display) -> String {
+    match folder {
+        None => "Could not read the update feed. Check your connection and try again.".into(),
+        Some(folder) => {
+            let index = format!("releases.{}.json", channel_name(channel));
+            if !folder.join(&index).exists() {
+                format!("Could not read {index} in {}.", folder.display())
+            } else {
+                format!(
+                    "Could not read the update feed in {}: {error}",
+                    folder.display()
+                )
+            }
+        }
+    }
+}
 fn manager(channel: Channel) -> Result<UpdateManager, String> {
     let source: Box<dyn UpdateSource> = if let Some(feed) = feed() {
         if !feed.is_absolute() || feed.to_string_lossy().contains("://") {
@@ -485,7 +501,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         let mgr = manager(channel)?;
         let update = mgr
             .check_for_updates()
-            .map_err(|_| "Could not read the update feed. Check your connection and try again.")?;
+            .map_err(|error| feed_error(feed().as_deref(), channel, &error))?;
         match update {
             UpdateCheck::UpdateAvailable(mut update) => {
                 // Reconstructed delta ZIPs are not byte-identical to the feed's full SHA256.
@@ -2738,5 +2754,39 @@ if ($script:started) { exit 0 }; exit 3
                 "The update package is invalid."
             );
         }
+    }
+
+    #[test]
+    fn feed_error_names_the_missing_channel_index() {
+        let root = tempfile::tempdir().unwrap();
+        let error = "synthetic feed failure";
+        let message = feed_error(Some(root.path()), Channel::Dev, &error);
+        assert!(message.contains("releases.dev.json"), "{message}");
+        assert!(
+            message.contains(&root.path().display().to_string()),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn feed_error_reports_the_cause_when_the_index_exists() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("releases.dev.json"), "{}").unwrap();
+        let error = "synthetic feed failure";
+        let message = feed_error(Some(root.path()), Channel::Dev, &error);
+        assert!(
+            message.contains(&root.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("synthetic feed failure"), "{message}");
+    }
+
+    #[test]
+    fn feed_error_keeps_the_connection_message_for_the_public_feed() {
+        let error = "synthetic feed failure";
+        assert_eq!(
+            feed_error(None, Channel::Dev, &error),
+            "Could not read the update feed. Check your connection and try again."
+        );
     }
 }
