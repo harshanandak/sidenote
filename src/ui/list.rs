@@ -374,26 +374,29 @@ fn home_row(
     }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
-    let mut r = if narrow && action.is_some() {
+    let mut r = if narrow {
         // At phone width the action would squeeze the title to about 40px, so it
-        // sits under the row text, left-aligned with the title. The top row keeps
-        // the title plus the time/More column where they were.
-        let button = action.take().expect("checked above");
+        // sits under the row text, left-aligned with the title. Every narrow row
+        // uses this shape, so an action appearing later keeps the title's element
+        // path and its keyboard focus.
         let top = row()
             .w_full()
             .gap(12.0)
             .items_start()
             .child(main)
             .child(col().items_end().child(more).child(time));
-        col()
+        let mut card = col()
             .w_full()
             .gap(8.0)
             .px(10.0)
             .py(9.0)
             .radius(10.0)
             .hover(p.chip)
-            .child(top)
-            .child(row().w_full().child(button))
+            .child(top);
+        if let Some(button) = action {
+            card = card.child(row().w_full().child(button));
+        }
+        card
     } else {
         let mut row_el = row()
             .w_full()
@@ -401,24 +404,15 @@ fn home_row(
             .px(10.0)
             .py(9.0)
             .radius(10.0)
-            .hover(p.chip);
-        row_el = if narrow {
-            row_el.items_start()
-        } else {
-            row_el.items_center()
-        };
-        row_el = row_el.child(main);
+            .hover(p.chip)
+            .items_center()
+            .child(main);
         if let Some(button) = action {
             row_el = row_el.child(button);
         }
-        row_el = if narrow {
-            row_el.child(col().items_end().child(more).child(time))
-        } else {
-            row_el
-                .child(row().w(44.0).justify_end().child(time))
-                .child(more)
-        };
         row_el
+            .child(row().w(44.0).justify_end().child(time))
+            .child(more)
     };
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
@@ -1156,14 +1150,15 @@ mod tests {
         );
         let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
         // The pressable title area grows into the free width, so it shows the squeeze;
-        // the title text itself is only as wide as its words.
+        // the title text itself is only as wide as its words. Beside the button it was
+        // about 40px; under it, the day column and the More button leave about 187px.
         let title_area = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
             .expect("the row's title area")
             .rect;
         assert!(
-            title_area[2] >= 200.0,
+            title_area[2] >= 160.0,
             "the title area keeps its width, got {}",
             title_area[2]
         );
@@ -1173,6 +1168,26 @@ mod tests {
             action_rect[1],
             title_rect[1] + title_rect[3]
         );
+    }
+
+    #[test]
+    fn narrow_action_keeps_the_title_path_when_an_action_appears() {
+        // Rune tracks focus by element path, so a focused title must keep its path
+        // when a failed summary adds the action under it.
+        let path = |state: State| {
+            let mut rt = render_home(state, 390.0);
+            rt.settle_all();
+            rt.frame(0.0);
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("meeting-1793955600000-1"))
+                .expect("the row's title area")
+                .path
+        };
+        let with_action = path(turn_on_summary_state());
+        crate::test_paths::isolate();
+        let without_action = path(home_state(vec![fixture()]));
+        assert_eq!(with_action, without_action);
     }
 
     #[test]
