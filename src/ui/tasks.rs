@@ -1912,7 +1912,7 @@ fn status_filter(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
                     .on_select(move |s: &mut State| {
                         s.tasks.done = value;
                         s.tasks.close_menus();
-                        s.set_task_filters();
+                        s.save_task_filters();
                     }),
             );
         }
@@ -1952,7 +1952,7 @@ fn filters_menu(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
                 move |s: &mut State| {
                     s.tasks.who = who;
                     s.tasks.close_menus();
-                    s.set_task_filters();
+                    s.save_task_filters();
                 },
             ));
         }
@@ -1963,7 +1963,7 @@ fn filters_menu(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
                     .on_select(|s: &mut State| {
                         s.tasks.include_unassigned = !s.tasks.include_unassigned;
                         s.tasks.close_menus();
-                        s.set_task_filters();
+                        s.save_task_filters();
                     }),
             )
             .separator()
@@ -1974,7 +1974,7 @@ fn filters_menu(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
                 s.tasks.search = TextEdit::default();
                 s.tasks.clear_scope();
                 s.tasks.close_menus();
-                s.set_task_filters();
+                s.save_task_filters();
             }));
         menu = menu.separator().item(
             MenuItem::new("Hide older tasks...")
@@ -2006,7 +2006,17 @@ fn filters_menu(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             menu = menu.item(
                 MenuItem::new(group_label(by))
                     .checked(s.tasks.grouping == by)
-                    .on_select(move |s: &mut State| s.set_grouping(by)),
+                    .on_select(move |s: &mut State| {
+                        let timing = super::Operation::new(super::TimedAction::TaskFilter);
+                        s.tasks.filters_menu = false;
+                        s.tasks.grouping = by;
+                        s.tasks.grouping_loaded = true;
+                        s.publish_edit(super::edit_worker::Job::Grouping {
+                            store: s.tasks.store.clone(),
+                            by,
+                        });
+                        timing.ready();
+                    }),
             );
         }
     }
@@ -2691,7 +2701,7 @@ fn empty_note(s: &State, p: Palette) -> El {
                 s.tasks.done = DoneFilter::All;
                 s.tasks.search = TextEdit::default();
                 s.tasks.clear_scope();
-                s.set_task_filters();
+                s.save_task_filters();
             }),
         );
         if s.tasks.who == Who::Mine {
@@ -4191,35 +4201,30 @@ pub(super) fn shown_title<'a>(s: &'a State, t: &'a TaskItem) -> &'a str {
 }
 
 impl State {
-    pub(crate) fn set_grouping(&mut self, by: TaskGrouping) {
-        let timing = super::Operation::new(super::TimedAction::TaskFilter);
-        self.tasks.filters_menu = false;
-        self.tasks.grouping = by;
-        self.tasks.grouping_loaded = true;
-        self.publish_edit(super::edit_worker::Job::Grouping {
-            store: self.tasks.store.clone(),
-            by,
-        });
-        timing.ready();
-    }
-
-    fn set_task_filters(&mut self) {
-        if self.save_task_filters().is_err() {
-            self.tasks.notice = Some(SAVE_FAILED.into());
-        }
-    }
-
-    pub(crate) fn save_task_filters(&mut self) -> std::io::Result<()> {
+    fn save_task_filters(&mut self) {
         let timing = super::Operation::new(super::TimedAction::TaskFilter);
         let mut prefs = core::UiPrefs::load(&self.store.root);
         prefs.tasks_mine = self.tasks.who == Who::Mine;
         prefs.tasks_include_unassigned = self.tasks.include_unassigned;
         prefs.tasks_done = self.tasks.done;
-        let result = prefs.save(&self.store.root);
-        if result.is_ok() {
-            timing.ready();
+        if prefs.save(&self.store.root).is_err() {
+            self.tasks.notice = Some(SAVE_FAILED.into());
+            return;
         }
-        result
+        timing.ready();
+    }
+    /// Settings saves on the spot so it can show the result; the Group menu queues the same write.
+    pub(crate) fn save_grouping(&mut self, by: TaskGrouping) -> std::io::Result<()> {
+        self.tasks.grouping = by;
+        self.tasks.grouping_loaded = true;
+        self.tasks.store.save_grouping(by)
+    }
+    /// Settings changes only who is shown; the Open/Done filter keeps its saved value.
+    pub(crate) fn save_task_audience(&mut self) -> std::io::Result<()> {
+        let mut prefs = core::UiPrefs::load(&self.store.root);
+        prefs.tasks_mine = self.tasks.who == Who::Mine;
+        prefs.tasks_include_unassigned = self.tasks.include_unassigned;
+        prefs.save(&self.store.root)
     }
     /// The List / Board choice. It belongs to this PC, in `local/ui.json`, so it never syncs.
     fn set_layout(&mut self, layout: core::TasksLayout) {

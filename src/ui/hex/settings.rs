@@ -2731,7 +2731,14 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         s.tasks.store.load_grouping()
     };
     let grouping_failed = grouping.is_err();
-    let grouping_current = grouping.ok().map(tasks::group_label);
+    // Tasks groups by due date while Projects is off, whatever was saved.
+    let grouping_current = grouping
+        .ok()
+        .map(|by| match by {
+            TaskGrouping::Project if !s.config.features.projects => TaskGrouping::Due,
+            by => by,
+        })
+        .map(tasks::group_label);
     let grouping_select = work_select(
         s,
         "work-tasks-grouping-select",
@@ -2748,7 +2755,13 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         else {
             return;
         };
-        s.set_grouping(by);
+        if s.save_grouping(by).is_ok() {
+            s.feature_error = None;
+            s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
+        } else {
+            s.hex.shell.saved = None;
+            s.feature_error = Some("Could not save Tasks settings. Try again.".into());
+        }
         s.hex.select_open = None;
     })
     .build(&row_field_kit(k, p), layer);
@@ -2775,7 +2788,7 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         };
         s.tasks.who = who;
         s.tasks.include_unassigned = include_unassigned;
-        if s.save_task_filters().is_ok() {
+        if s.save_task_audience().is_ok() {
             s.feature_error = None;
             s.hex.shell.saved = Some(Instant::now() + Duration::from_secs(2));
         } else {
@@ -4585,7 +4598,7 @@ mod tests {
     }
 
     #[test]
-    fn work_tasks_grouping_row_updates_tasks_and_queues_the_save() {
+    fn work_tasks_grouping_row_updates_tasks_and_saves() {
         let root = tempfile::tempdir().unwrap();
         let mut state = work_tasks_state(Some(root.path()));
         state.config.features.projects = true;
@@ -4593,9 +4606,6 @@ mod tests {
         choose_select(&mut rt, "work-tasks-grouping-select-trigger", 5);
         assert_eq!(rt.state.tasks.grouping, TaskGrouping::Owner);
         assert!(rt.state.tasks.grouping_loaded);
-        while rt.state.edit_busy {
-            rt.frame(0.0);
-        }
         assert_eq!(
             rt.state.tasks.store.load_grouping().ok(),
             Some(TaskGrouping::Owner)
@@ -4626,13 +4636,17 @@ mod tests {
             (2, true, true, "Filters: Mine + unassigned"),
         ] {
             let root = tempfile::tempdir().unwrap();
-            let mut rt = settings_runtime(work_tasks_state(Some(root.path())), (1334.0, 900.0));
+            let mut state = work_tasks_state(Some(root.path()));
+            // Show must leave the saved Open filter alone, even when the page shows All.
+            state.tasks.done = sidenote::core::DoneFilter::All;
+            let mut rt = settings_runtime(state, (1334.0, 900.0));
             choose_select(&mut rt, "work-tasks-who-select-trigger", option);
             let prefs = UiPrefs::load(root.path());
             assert_eq!(
                 (prefs.tasks_mine, prefs.tasks_include_unassigned),
                 (mine, unassigned)
             );
+            assert_eq!(prefs.tasks_done, sidenote::core::DoneFilter::Open);
             rt.update(|s, _| s.set_view(tasks::View::Tasks));
             rt.settle_all();
             rt.frame(0.0);
@@ -4670,6 +4684,35 @@ mod tests {
                 "{key} is too wide"
             );
         }
+    }
+
+    #[test]
+    fn work_tasks_grouping_save_failure_is_shown() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local/task-grouping.json")).unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        state.tasks.grouping_loaded = true;
+        state.hex.shell.saved = Some(Instant::now() + Duration::from_secs(60));
+        let mut rt = settings_runtime(state, (1334.0, 900.0));
+        choose_select(&mut rt, "work-tasks-grouping-select-trigger", 4);
+        assert_eq!(
+            rt.state.feature_error.as_deref(),
+            Some("Could not save Tasks settings. Try again.")
+        );
+        assert!(rt.state.hex.shell.saved.is_none());
+    }
+
+    #[test]
+    fn work_tasks_grouping_shows_due_date_for_a_saved_project_without_projects() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("local")).unwrap();
+        let grouping = serde_json::to_string(&TaskGrouping::Project).unwrap();
+        std::fs::write(root.path().join("local/task-grouping.json"), grouping).unwrap();
+        let mut state = work_tasks_state(Some(root.path()));
+        state.config.features.projects = false;
+        let rt = settings_runtime(state, (1334.0, 900.0));
+        let elements = rt.elements();
+        assert!(row_shows_text(&elements, "work-tasks-grouping", "Due date"));
     }
 
     #[test]

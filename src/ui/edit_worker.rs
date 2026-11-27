@@ -237,7 +237,6 @@ pub enum Completion {
     },
     Preferences {
         teams: Option<core::Teams>,
-        grouping: bool,
         result: Result<(), SaveError>,
     },
     Tick {
@@ -435,7 +434,6 @@ impl State {
                     }
                     Job::Grouping { store, by } => Completion::Preferences {
                         teams: None,
-                        grouping: true,
                         result: store.save_grouping(by).map_err(|e| SaveError::from(&e)),
                     },
                     Job::TeamEdit {
@@ -445,12 +443,10 @@ impl State {
                     } => match store.edit_team(original.as_ref(), replacement.as_ref()) {
                         Ok(teams) => Completion::Preferences {
                             teams: Some(teams),
-                            grouping: false,
                             result: Ok(()),
                         },
                         Err(e) => Completion::Preferences {
                             teams: None,
-                            grouping: false,
                             result: Err(SaveError::from(&e)),
                         },
                     },
@@ -568,20 +564,10 @@ impl State {
                     .into(),
                 );
             }
-            Completion::Preferences {
-                teams,
-                grouping,
-                result,
-            } => match result {
+            Completion::Preferences { teams, result } => match result {
                 Ok(()) => {
                     self.hex.shell.saved =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
-                    if grouping
-                        && self.feature_error.as_deref()
-                            == Some("Could not save Tasks settings. Try again.")
-                    {
-                        self.feature_error = None;
-                    }
                     if let Some(teams) = teams {
                         self.tasks.teams = teams;
                         self.tasks.teams_notice = Some("Teams saved".into());
@@ -595,11 +581,6 @@ impl State {
                 Err(e) => {
                     self.tasks.teams_notice = Some(e.message().into());
                     self.tasks.notice = Some(e.message().into());
-                    if grouping && self.hex_open {
-                        self.hex.shell.saved = None;
-                        self.feature_error =
-                            Some("Could not save Tasks settings. Try again.".into());
-                    }
                 }
             },
             Completion::Tick { id, result } => match result {
