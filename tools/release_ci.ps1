@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 
 function Resolve-ReleaseIdentity {
     param([string]$Manifest, [string]$EventName, [string]$Ref,
-        [string]$RequestedTag, [string]$RequestedChannel)
+        [string]$RequestedTag, [string]$RequestedChannel, [string]$RunNumber)
 
     $package = [regex]::Match($Manifest, '(?ms)^\[package\][ \t]*\r?\n(.*?)(?=^\[|\z)').Groups[1].Value
     $version = [regex]::Match($package, '(?m)^version = "([^"]+)"\r?$').Groups[1].Value
@@ -28,6 +28,15 @@ function Resolve-ReleaseIdentity {
     $tag = "v$version"
 
     switch -CaseSensitive ($EventName) {
+        'workflow_run' {
+            if ($Ref -cne 'refs/heads/main' -or $RunNumber -cnotmatch '\A[1-9][0-9]*\z') {
+                throw 'Expected a main workflow run with a positive run number.'
+            }
+            if ($channel -cne 'dev') { throw 'Latest requires a Dev prerelease version in Cargo.toml.' }
+            $version = "$version.main.$RunNumber"
+            $tag = "v$version"
+            $channel = 'latest'
+        }
         'push' {
             if ($Ref -cne "refs/tags/$tag") { throw "Release tag must match Cargo.toml version ($tag)." }
         }
@@ -41,7 +50,7 @@ function Resolve-ReleaseIdentity {
         'pull_request' {
             if ($Ref -cnotmatch '\Arefs/pull/[1-9][0-9]*/merge\z') { throw 'Expected a PR merge ref for the packaging proof.' }
         }
-        default { throw 'Expected a tag push, manual dry run, or pull request.' }
+        default { throw 'Expected a tag push, main workflow run, manual dry run, or pull request.' }
     }
 
     [pscustomobject]@{ Tag = $tag; Version = $version; Channel = $channel }
@@ -143,6 +152,13 @@ function Invoke-SelfTest {
     }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $stable push 'refs/tags/v0.1.1' }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $dev push 'refs/tags/dev' }
+    $latest = Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/main' -RunNumber 7
+    if ($latest.Channel -cne 'latest' -or $latest.Tag -cne 'v0.1.1-dev.2.main.7' -or $latest.Version -cne '0.1.1-dev.2.main.7') {
+        throw 'Latest release identity did not match the expected version and channel.'
+    }
+    Assert-Rejected 'Expected a main workflow run' { Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/topic' -RunNumber 7 }
+    Assert-Rejected 'Expected a main workflow run' { Resolve-ReleaseIdentity $dev workflow_run 'refs/heads/main' -RunNumber '07' }
+    Assert-Rejected 'Latest requires a Dev prerelease' { Resolve-ReleaseIdentity $stable workflow_run 'refs/heads/main' -RunNumber 7 }
     Assert-Rejected 'Release tag must match' { Resolve-ReleaseIdentity $stable push 'refs/heads/v0.1.0' }
     Assert-Rejected 'Requested tag must match' { Resolve-ReleaseIdentity $dev workflow_dispatch 'refs/heads/main' 'v0.1.1' dev }
     Assert-Rejected 'Selected tag ref must match' {
@@ -251,7 +267,7 @@ if ($SelfTest) {
 
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw
-$build = Resolve-ReleaseIdentity $manifest $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:RELEASE_TAG $env:RELEASE_CHANNEL
+$build = Resolve-ReleaseIdentity $manifest $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:RELEASE_TAG $env:RELEASE_CHANNEL $env:GITHUB_RUN_NUMBER
 Write-Output "Validated $($build.Tag) for the $($build.Channel) channel."
 if ($env:GITHUB_OUTPUT) {
     "tag=$($build.Tag)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
@@ -264,6 +280,10 @@ if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory) -or (Test-Path -Liter
 $feed = [IO.Directory]::CreateTempSubdirectory('sidenote-release-feed-')
 Push-Location -LiteralPath $root
 try {
+    if ($build.Channel -ceq 'latest') {
+        . (Join-Path $PSScriptRoot 'release_version.ps1')
+        Set-SourceVersion $root $build.Version
+    }
     & cargo +stable-x86_64-pc-windows-gnu fetch --locked --target x86_64-pc-windows-gnu
     if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the locked Windows GNU dependencies.' }
     & (Join-Path $PSScriptRoot 'pack_release.ps1') -Feed $feed.FullName -Channel $build.Channel

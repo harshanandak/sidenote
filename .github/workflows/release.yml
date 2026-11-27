@@ -3,12 +3,17 @@ name: Windows release artifacts
 on:
   push:
     tags: ['v[0-9]*']
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   pull_request:
     paths:
       - .github/workflows/release.yml
       - tools/release_ci.ps1
       - tools/release_publish.sh
       - tools/release_update_proof.ps1
+      - tools/release_version.ps1
       - tools/install_release.ps1
       - tools/pack_release.ps1
       - src/main.rs
@@ -38,10 +43,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A rerun against an older main commit must not cancel current packaging.
+  group: >-
+    ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_sha == github.sha && 'release-latest-main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
+env:
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 jobs:
   package:
     name: ${{ matrix.task == 'package' && 'Package Windows release artifacts' || 'Prove clean Windows install and update' }}
-    if: (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published
+    if: >-
+      (github.event_name != 'push' || !github.event.deleted) && !inputs.prove_published &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_sha == github.sha))
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
@@ -59,7 +81,7 @@ jobs:
       - &checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - name: Resolve release identity
         id: identity
@@ -195,7 +217,7 @@ jobs:
 
   publish-dry-run:
     name: Dry-run Windows release publish
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -228,13 +250,13 @@ jobs:
   publish:
     name: Publish Windows release artifacts
     if: >-
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       needs.exact-package-proof.result == 'success' &&
       needs.exact-package-proof.outputs.artifact-id != '' &&
       needs.exact-package-proof.outputs.artifact-id == needs.package.outputs.artifact-id
     needs: [package, exact-package-proof]
     concurrency:
-      group: release-publish
+      group: ${{ github.event_name == 'workflow_run' && 'release-publish-latest' || 'release-publish' }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -254,7 +276,7 @@ jobs:
         run: sha256sum -c SHA256SUMS
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - name: Publish GitHub releases
         shell: bash

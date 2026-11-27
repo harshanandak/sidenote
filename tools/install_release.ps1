@@ -112,7 +112,7 @@ function Invoke-InstallCheck([string]$Expected) {
     if ($LASTEXITCODE -ne 0) { throw 'Install check failed' }
 }
 function Get-SetupPath {
-    $channel = if ($Version -match '-dev\.') { 'dev' } else { 'stable' }
+    $channel = if ($Version -match '\.main\.\d+$') { 'latest' } elseif ($Version -match '-dev\.') { 'dev' } else { 'stable' }
     $setup = Join-Path $Feed "sidenote-$channel-Setup.exe"
     if (-not $ProofInstallDirectory -and -not (Test-Path -LiteralPath $setup -PathType Leaf)) {
         return Join-Path $Feed 'sidenote-win-Setup.exe'

@@ -2,16 +2,23 @@
 set -euo pipefail
 
 [[ ${DRY_RUN:-} == 0 || ${DRY_RUN:-} == 1 ]] || { echo 'DRY_RUN must be exactly 0 or 1.' >&2; exit 1; }
-[[ $DRY_RUN != 0 || ${GITHUB_EVENT_NAME:-} == push ]] || { echo 'DRY_RUN=0 is allowed only for a tag push.' >&2; exit 1; }
+event=${GITHUB_EVENT_NAME:-}
+[[ $DRY_RUN != 0 || $event == push || $event == workflow_run ]] || { echo 'DRY_RUN=0 requires a tag push or a main CI completion.' >&2; exit 1; }
 
 tag=${RELEASE_TAG:?Set RELEASE_TAG}
 repo=${GITHUB_REPOSITORY:?Set GITHUB_REPOSITORY}
-sha=${GITHUB_SHA:?Set GITHUB_SHA}
+sha=${RELEASE_SHA:-${GITHUB_SHA:?Set GITHUB_SHA}}
 asset_dir=${ASSET_DIR:?Set ASSET_DIR}
 runner_temp=${RUNNER_TEMP:?Set RUNNER_TEMP}
 stable='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 dev='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.(0|[1-9][0-9]*)$'
-if [[ $tag =~ $stable ]]; then
+latest="${dev%$}\\.main\\.([1-9][0-9]*)\$"
+if [[ $event == workflow_run && $tag =~ $latest ]]; then
+    channel=latest
+elif [[ $event == workflow_run ]]; then
+    echo 'A main CI completion requires a Latest build identity.' >&2
+    exit 1
+elif [[ $tag =~ $stable ]]; then
     channel=stable
 elif [[ $tag =~ $dev ]]; then
     channel=dev
@@ -22,9 +29,11 @@ fi
 
 notes_source="docs/releases/$tag.md"
 notes_file="$runner_temp/sidenote-$tag-notes.md"
-if [[ -f $notes_source ]]; then
+if [[ $channel == latest ]]; then
+    printf 'Latest build %s from main commit %s.\n' "$tag" "$sha" > "$notes_file"
+elif [[ -f $notes_source ]]; then
     cat "$notes_source" > "$notes_file"
-elif [[ ${GITHUB_EVENT_NAME:-} == push ]]; then
+elif [[ $event == push ]]; then
     echo "Missing required release notes: $notes_source" >&2
     exit 1
 else
@@ -129,18 +138,27 @@ else
     publish_release+=(--prerelease --latest=false)
 fi
 
-versioned_lookup_status=0
-versioned_is_draft=$(lookup_or_missing 'release not found' "Failed to look up release $tag." gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft) || versioned_lookup_status=$?
-case $versioned_lookup_status in
-    0)
-        if [[ $versioned_is_draft == true ]]; then versioned_state=draft; else versioned_state=published; fi
-        ;;
-    1) versioned_state=missing ;;
-    *) exit 1 ;;
-esac
-echo "Versioned release branch: $versioned_state"
+versioned_state=rolling-only
+if [[ $channel != latest ]]; then
+    versioned_lookup_status=0
+    versioned_is_draft=$(lookup_or_missing 'release not found' "Failed to look up release $tag." gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft) || versioned_lookup_status=$?
+    case $versioned_lookup_status in
+        0)
+            if [[ $versioned_is_draft == true ]]; then versioned_state=draft; else versioned_state=published; fi
+            ;;
+        1) versioned_state=missing ;;
+        *) exit 1 ;;
+    esac
+    echo "Versioned release branch: $versioned_state"
+fi
 
-if [[ $DRY_RUN == 1 ]]; then
+if [[ $channel == latest ]]; then
+    main_sha=$(read_or_fail 'Failed to resolve main.' gh api "repos/$repo/git/ref/heads/main" --jq .object.sha) || exit 1
+    if [[ $main_sha != "$sha" ]]; then
+        echo 'Main advanced during packaging; skipping Latest publish.'
+        exit 0
+    fi
+elif [[ $DRY_RUN == 1 ]]; then
     echo 'Dry run: skipping remote tag identity check.'
 else
     resolved_tag_sha=$(remote_tag_sha) || exit 1
@@ -174,33 +192,41 @@ case $versioned_state in
         ;;
 esac
 
-if [[ $channel == dev ]]; then
-    rolling_create=(gh release create dev "${assets[@]}" --repo "$repo" --target "$sha" --title "Sidenote dev $tag" --notes-file "$notes_file" --prerelease --latest=false)
-    rolling_delete=(gh release delete dev --repo "$repo" --cleanup-tag --yes)
+if [[ $channel == dev || $channel == latest ]]; then
+    rolling_tag=dev
+    rolling_regex=$dev
+    rolling_parts=4
+    if [[ $channel == latest ]]; then
+        rolling_tag=latest-main
+        rolling_regex=$latest
+        rolling_parts=5
+    fi
+    rolling_prefix="Sidenote $channel "
+    rolling_create=(gh release create "$rolling_tag" "${assets[@]}" --repo "$repo" --target "$sha" --title "$rolling_prefix$tag" --notes-file "$notes_file" --prerelease --latest=false)
+    rolling_delete=(gh release delete "$rolling_tag" --repo "$repo" --cleanup-tag --yes)
     rolling_lookup_status=0
-    rolling_info=$(lookup_or_missing 'release not found' 'Failed to look up release dev.' gh release view dev --repo "$repo" --json isDraft,name --jq '(.isDraft | tostring) + " " + .name') || rolling_lookup_status=$?
+    rolling_info=$(lookup_or_missing 'release not found' "Failed to look up release $rolling_tag." gh release view "$rolling_tag" --repo "$repo" --json isDraft,name --jq '(.isDraft | tostring) + " " + .name') || rolling_lookup_status=$?
     read -r rolling_draft rolling_name <<<"${rolling_info:-}"
     case $rolling_lookup_status in
         0) rolling_state=exists ;;
         1) rolling_state=missing ;;
         *) exit 1 ;;
     esac
-    echo "Rolling dev release branch: $rolling_state"
+    echo "Rolling $rolling_tag release branch: $rolling_state"
     rolling_replace=1
     # A draft is an interrupted create: replace it even at the same version, or the feed stays down.
     if [[ $rolling_state == exists && $rolling_draft != false ]]; then
-        echo "Rolling dev release is a draft (isDraft=$rolling_draft); replacing it."
+        echo "Rolling $rolling_tag release is a draft (isDraft=$rolling_draft); replacing it."
     elif [[ $rolling_state == exists ]]; then
-        rolling_prefix='Sidenote dev '
         rolling_version=
         if [[ $rolling_name == "$rolling_prefix"* ]]; then rolling_version=${rolling_name#$rolling_prefix}; fi
-        if [[ -n $rolling_version ]] && cmp=$(version_cmp "$rolling_version" "$tag" 4 "$dev"); then
+        if [[ -n $rolling_version ]] && cmp=$(version_cmp "$rolling_version" "$tag" "$rolling_parts" "$rolling_regex"); then
             if [[ $cmp != -1 ]]; then
                 rolling_replace=0
-                echo "Rolling dev release is $rolling_version, the same as or newer than $tag; skipping rolling replacement."
+                echo "Rolling $rolling_tag release is $rolling_version, the same as or newer than $tag; skipping rolling replacement."
             fi
         else
-            echo "Rolling dev release name '$rolling_name' has no readable dev version; treating it as older."
+            echo "Rolling $rolling_tag release name '$rolling_name' has no readable $channel version; treating it as older."
         fi
     fi
     if (( rolling_replace )); then
@@ -209,11 +235,11 @@ if [[ $channel == dev ]]; then
             run_write "${rolling_delete[@]}"
         else
             ref_lookup_status=0
-            ref_info=$(lookup_or_missing 'not found|404' 'Failed to look up git ref tags/dev.' gh api "repos/$repo/git/ref/tags/dev") || ref_lookup_status=$?
+            ref_info=$(lookup_or_missing 'not found|404' "Failed to look up git ref tags/$rolling_tag." gh api "repos/$repo/git/ref/tags/$rolling_tag") || ref_lookup_status=$?
             case $ref_lookup_status in
                 0)
-                    echo 'Rolling dev tag ref exists without a release; deleting it before create.'
-                    run_write gh api -X DELETE "repos/$repo/git/refs/tags/dev"
+                    echo "Rolling $rolling_tag tag ref exists without a release; deleting it before create."
+                    run_write gh api -X DELETE "repos/$repo/git/refs/tags/$rolling_tag"
                     ;;
                 1) ;;
                 *) exit 1 ;;
