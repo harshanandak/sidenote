@@ -368,7 +368,9 @@ fn read_status(directory: &Path) -> Status {
         read_saved_status(directory),
         &directory.join("pipeline-install.pending"),
     );
-    if status.error.is_none() && directory.join("update-listener.resume").exists() {
+    if directory.join("update-listener.resume").exists()
+        && !directory.join("pipeline-install.pending").exists()
+    {
         status.phase = Phase::Error;
         status.error = Some(INSTALL_LISTENER_ERROR.into());
     }
@@ -494,6 +496,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
     }
     let mut publish = |status| publish(pipeline_status(status, &local("pipeline-install.pending")));
     let _check = exclusive("update-check.lock").map_err(|_| "Another update check is running.")?;
+    drop(update_operation_lock(&directory(), true)?);
     let channel = channel();
     let mut status = Status {
         channel: Some(channel_name(channel).into()),
@@ -502,6 +505,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         ..Default::default()
     };
     publish(status.clone());
+    let mut ready = None;
     let result = (|| {
         let mgr = manager(channel)?;
         let update = mgr
@@ -541,12 +545,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
                         .map_err(|_| "Could not download or verify the update. Try again.")
                 })?;
                 verify(&update.TargetFullRelease)?;
-                fs::write(
-                    local("update-ready.json"),
-                    serde_json::to_vec(&(channel_name(channel), &update.TargetFullRelease))
-                        .map_err(|_| "Could not save the update.")?,
-                )
-                .map_err(|_| "Could not save the update.")?;
+                ready = Some(update.TargetFullRelease);
                 status.phase = Phase::Ready;
                 status.progress = 100;
             }
@@ -555,6 +554,16 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         }
         Ok(())
     })();
+    let _hook = update_operation_lock(&directory(), true)?;
+    let result = result.and_then(|()| {
+        if let Some(asset) = ready {
+            let package = serde_json::to_vec(&(channel_name(channel), asset))
+                .map_err(|_| "Could not save the update.")?;
+            fs::write(local("update-ready.json"), package)
+                .map_err(|_| "Could not save the update.")?;
+        }
+        Ok(())
+    });
     if let Err(error) = result {
         status.phase = Phase::Error;
         status.error = Some(error);
@@ -1566,6 +1575,15 @@ fn acquire_hook_lock(directory: &Path) -> Result<Option<File>, String> {
         .map_err(|error| format!("Could not open the Sidenote install hook lock: {error}"))
 }
 
+const UPDATE_RECONCILING: &str = "Sidenote is finishing the previous update. Try again shortly.";
+fn update_operation_lock(directory: &Path, check_resume: bool) -> Result<File, String> {
+    let lock = acquire_hook_lock(directory)?.ok_or(UPDATE_RECONCILING)?;
+    if check_resume && directory.join("update-listener.resume").exists() {
+        return Err(UPDATE_RECONCILING.into());
+    }
+    Ok(lock)
+}
+
 fn reconcile_app_install(directory: &Path) -> Result<ReconcileOutcome, String> {
     let deadline = Instant::now() + INSTALL_HOOK_WORK_LIMIT;
     let pipeline_deadline = deadline - INSTALL_HOOK_RECOVERY_RESERVE;
@@ -1635,12 +1653,11 @@ fn after_update_status(status: Status, marker: &Path) -> Status {
     pipeline_status(status, marker)
 }
 pub fn restarted() {
-    if installed() {
-        let directory = directory();
-        if let Ok(Some(_lock)) = acquire_hook_lock(&directory) {
-            let _ =
-                save_reconcile_status(reconcile_app_install(&directory), &directory, save_status);
-        }
+    let directory = directory();
+    if installed()
+        && let Ok(Some(_lock)) = acquire_hook_lock(&directory)
+    {
+        let _ = save_reconcile_status(reconcile_app_install(&directory), &directory, save_status);
     }
 }
 fn restart_listener() {
@@ -1665,6 +1682,7 @@ pub fn apply(
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
+    let _hook = update_operation_lock(&directory(), !from_window)?;
     publish(Phase::Preparing);
     let args: Vec<_> = std::env::args().skip(1).collect();
     for pair in args.windows(2).filter(|pair| {
@@ -1743,12 +1761,28 @@ fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     }
     Ok(report)
 }
+fn cli_update_at(
+    directory: Option<&Path>,
+    args: &[std::ffi::OsString],
+    run: impl FnOnce(bool) -> Result<Status, String>,
+) -> Option<Result<Status, String>> {
+    let apply = args.iter().any(|a| a == "--update-apply");
+    if !apply && !args.iter().any(|a| a == "--update-check") {
+        return None;
+    }
+    Some((|| {
+        if let Some(directory) = directory {
+            drop(update_operation_lock(directory, true)?);
+        }
+        run(apply)
+    })())
+}
+
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
-    let mut persist = true;
+    let mut persist = false;
     let result = if args.iter().any(|a| a == "--update-window-start") {
         window_start_once(|_| {}).map(|outcome| {
-            persist = outcome != ReconcileOutcome::Busy;
-            if persist {
+            if outcome != ReconcileOutcome::Busy {
                 load()
             } else {
                 Status {
@@ -1758,16 +1792,21 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             }
         })
     } else if args.iter().any(|a| a == "--update-probe") {
+        persist = true;
         recording_idle().map(|_| load())
-    } else if args.iter().any(|a| a == "--update-apply") {
-        apply(false, vec!["--update-status".into()], |phase| {
-            let _ = save(&Status { phase, ..load() });
-        })
-        .map(|_| load())
-    } else if args.iter().any(|a| a == "--update-check") {
-        check(|_| {})
     } else {
-        Ok(load())
+        cli_update_at(installed().then(directory).as_deref(), args, |applying| {
+            if applying {
+                apply(false, vec!["--update-status".into()], |phase| {
+                    persist = true;
+                    let _ = save(&Status { phase, ..load() });
+                })
+                .map(|_| load())
+            } else {
+                check(|_| {})
+            }
+        })
+        .unwrap_or_else(|| Ok(load()))
     };
     let status = match result {
         Ok(s) => s,
@@ -1777,7 +1816,10 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             ..load()
         },
     };
-    if persist {
+    if persist
+        && installed()
+        && let Ok(_lock) = update_operation_lock(&directory(), true)
+    {
         let _ = save(&status);
     }
     let report = write_report(&status).unwrap_or_else(|_| report(&status));
