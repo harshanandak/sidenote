@@ -1079,7 +1079,7 @@ mod tests {
         assert!(
             rt.elements()
                 .iter()
-                .any(|e| e.text.as_deref() == Some(expected.as_str())),
+                .any(|e| e.text.as_deref() == Some(expected)),
             "the row counts read {expected}"
         );
     }
