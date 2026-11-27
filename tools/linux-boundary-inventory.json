@@ -399,7 +399,7 @@
 
   "src/ui/annotations/workflow.rs": "5009d591fc36df7aa19dd5d1f35ebf16fa46ebecc7f528a73d790c6083f76eb6",
 
-  "src/ui/area.rs": "22f010fd5f9090496d0ceb40ab9eac97da4e504ef244c2b8685cbfcd134d18d6",
+  "src/ui/area.rs": "3832f3d191273ae4d78ae0df36b19f047ef179f37eddeccf6fffc5262fe9a7af",
 
   "src/ui/area_scene.rs": "6fcec92bb48e84a1c987b20dec14ed1c033e2a3cc066b6ed430b028dcce1cc42",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "148a6134f759a6682c26c61e6fb80f867358e5b1d3ca64feee69a8336db0f5be",
 
-  "src/ui/hex/settings.rs": "0e1498f3942e5fa161770e0500f07913a8542219878c2080bb34ea4067194501",
+  "src/ui/hex/settings.rs": "c82273ff2ca1423a1edb5433ed8de5f5acf92444bfe6e372ae7ff0b20664b39f",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 

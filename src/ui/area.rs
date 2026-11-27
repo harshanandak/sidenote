@@ -509,7 +509,13 @@ impl State {
                 if !self.tasks.grouping_loaded
                     && let Some(grouping) = snapshot.task_grouping
                 {
-                    self.tasks.grouping = grouping;
+                    // Turning Projects off moves Project grouping to Due; a saved Project must too.
+                    self.tasks.grouping = match grouping {
+                        core::TaskGrouping::Project if !self.config.features.projects => {
+                            core::TaskGrouping::Due
+                        }
+                        grouping => grouping,
+                    };
                     self.tasks.grouping_loaded = true;
                 }
                 if let Some(notice) = snapshot.task_notice {
@@ -1181,6 +1187,31 @@ mod refresh_error_tests {
             s.apply_event(event);
         }
     }
+    #[test]
+    fn saved_project_grouping_loads_as_due_date_while_projects_are_off() {
+        super::super::hex::SKIP_INSTALL_DETECT.set(true);
+        let mut s = State::new();
+        super::super::hex::SKIP_INSTALL_DETECT.set(false);
+        wait(&mut s);
+        let root = tempfile::tempdir().unwrap();
+        s.tasks.store = core::TaskStore::new(root.path().to_path_buf());
+        s.tasks
+            .store
+            .save_grouping(core::TaskGrouping::Project)
+            .unwrap();
+        s.config.features.projects = false;
+        s.tasks.grouping_loaded = false;
+        s.refresh_areas();
+        wait(&mut s);
+        assert!(s.tasks.grouping_loaded);
+        assert_eq!(s.tasks.grouping, core::TaskGrouping::Due);
+        // The saved choice is kept for when Projects comes back on.
+        assert_eq!(
+            s.tasks.store.load_grouping().unwrap(),
+            core::TaskGrouping::Project
+        );
+    }
+
     #[test]
     fn refresh_failure_and_recovery_preserve_operation_errors() {
         super::super::hex::SKIP_INSTALL_DETECT.set(true);

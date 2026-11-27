@@ -2750,6 +2750,10 @@ fn work_tasks(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     // A queued Group menu save would land after this direct write and undo it.
     .disabled(grouping_failed || s.edit_busy)
     .on_choose(|s: &mut State, value: &str, _| {
+        s.hex.select_open = None;
+        if s.edit_busy {
+            return;
+        }
         let Some(by) = TASK_GROUPINGS
             .into_iter()
             .find(|by| tasks::group_label(*by) == value)
