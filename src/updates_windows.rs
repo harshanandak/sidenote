@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::windows::{fs::OpenOptionsExt, process::CommandExt},
+    os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -2579,6 +2579,7 @@ $script:migrated = $false
 
     #[test]
     fn mismatched_listener_task_is_never_started() {
+        use std::os::windows::process::CommandExt;
         let suffix = r#"
 } catch { if ($script:started) { exit 2 }; exit 1 }
 if ($script:started) { exit 0 }; exit 3
