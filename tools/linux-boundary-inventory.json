@@ -393,19 +393,19 @@
 
   "src/ui/ai_notes.rs": "c726bdde5e7d473845de9bea27710e2796b947b81d6386c4e9dfaf9cfdcf030c",
 
-  "src/ui/annotations.rs": "57135f864c587062439105f4a31ddfb1bc3fa08b533fa402aa2eb5b4774b25a7",
+  "src/ui/annotations.rs": "6d1c577d85b810b62327cae4db335943b98a303ceb4a2aa53db69ed88aa0b414",
 
   "src/ui/annotations/notebooks.rs": "b01a26b59d7c308ea9b6b071ff7c93afab8271d55ddfb4fe616c76411616645d",
 
   "src/ui/annotations/workflow.rs": "5009d591fc36df7aa19dd5d1f35ebf16fa46ebecc7f528a73d790c6083f76eb6",
 
-  "src/ui/area.rs": "98e13ced4fe3ce0b1ad44649aa25e29a25caf7dbfaea88e0f892985f81a3137e",
+  "src/ui/area.rs": "22f010fd5f9090496d0ceb40ab9eac97da4e504ef244c2b8685cbfcd134d18d6",
 
   "src/ui/area_scene.rs": "6fcec92bb48e84a1c987b20dec14ed1c033e2a3cc066b6ed430b028dcce1cc42",
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
-  "src/ui/ask_switch_tests.rs": "0d1dd308b31035458cb3b29dc5625843527dcf0e3394cce9d11e09f9378ae902",
+  "src/ui/ask_switch_tests.rs": "c7f45bf52caa9543e183a49db5191de6e41bab6f06cd5c7028674500d200c158",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -417,7 +417,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "4e01b4d8fa4e080c99d136d3f44b2e2c230ab4c4e96343db8be04738d85a7207",
+  "src/ui/hex.rs": "ee8a35537b8b13c999d938f060f0c4121512556f19e7c9240e43636049b8c0bb",
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "a377a336e02a769d04bc1f7042733b0e60c3169b51570e13d554c697b70f39f4",
+  "src/ui/mod.rs": "766f7958cae0c795609ea6deba11050ef4294f0d9aaa96bca6fa43c5b2f957ac",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
