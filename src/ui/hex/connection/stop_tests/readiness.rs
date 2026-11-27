@@ -2,6 +2,18 @@ use super::*;
 use sidenote::updates;
 
 const TASK_FIXTURE: &str = r#"
+function New-Object {
+    param([string]$ComObject)
+    if ($ComObject -ne 'Schedule.Service') { throw 'Unexpected COM request' }
+    $service = [PSCustomObject]@{}
+    $service | Add-Member ScriptMethod Connect {}
+    $service | Add-Member ScriptMethod GetFolder { $this }
+    $service | Add-Member ScriptMethod GetTask { $this }
+    $service | Add-Member ScriptMethod GetSecurityDescriptor {
+        'O:' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    }
+    $service
+}
 function Get-ScheduledTask {
     $root = $env:SIDENOTE_RECORDER_READY_TEST
     [IO.File]::WriteAllText((Join-Path $root 'validation-entered'), '')

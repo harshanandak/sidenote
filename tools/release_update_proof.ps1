@@ -246,6 +246,12 @@ function Install-ProofFixture($Fixture, [string]$SetupFeed, [string]$Version) {
     return @{ Listener = $listener; Pointer = $initialPointer }
 }
 
+function Assert-UpdatedStatus($Status) {
+    if ($Status.phase -cne 'Idle' -or $null -ne $Status.error) {
+        throw "Updated app reported phase '$($Status.phase)'. $($Status.error)"
+    }
+}
+
 function Invoke-SelfTest([string]$Root, [string]$Source) {
     $fixture = New-ProofFixture $Root $Source
     if ((Test-Path -LiteralPath $fixture.Install) -or (Test-Path -LiteralPath $fixture.Updates) -or
@@ -279,6 +285,10 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         throw 'Version substitution changed more than the Sidenote version.'
     }
     Assert-ChecksumRefusal 1 @{ phase = 'Error'; error = $checksumError }
+    Assert-UpdatedStatus @{ phase = 'Idle'; error = $null }
+    $unexpected = 'Synthetic listener refusal.'
+    try { Assert-UpdatedStatus @{ phase = 'Error'; error = $unexpected }; throw 'Expected an update error.' }
+    catch { if ($_.Exception.Message -cne "Updated app reported phase 'Error'. $unexpected") { throw } }
     foreach ($case in @(@(0, $checksumError), @(1, 'A different failure.'))) {
         try { Assert-ChecksumRefusal $case[0] @{ phase = 'Error'; error = $case[1] } }
         catch {
@@ -371,6 +381,10 @@ try {
     $buildFeed = if ($release) { Join-Path $root.FullName 'baseline-feed' } else { $feed }
     $feedSetup = Join-Path $buildFeed "sidenote-$channel-Setup.exe"
     $versions = if ($release) { @($n) } else { @($n, $next) }
+    $taskSource = Join-Path $source 'src/updates_windows.rs'
+    $taskChecker = [IO.File]::ReadAllText($taskSource)
+    $baselineChecker = $taskChecker.Replace('        $registered.SetSecurityDescriptor($sddl, 16) # TASK_DONT_ADD_PRINCIPAL_ACE', '')
+    if ($baselineChecker -ceq $taskChecker) { throw 'Could not preserve default task ownership in the baseline.' }
     $actions = $env:GITHUB_ACTIONS
     Push-Location -LiteralPath $source
     try {
@@ -378,6 +392,7 @@ try {
         & cargo +stable-x86_64-pc-windows-gnu fetch --locked --target x86_64-pc-windows-gnu
         if ($LASTEXITCODE) { throw 'Could not fetch the locked Windows GNU dependencies.' }
         foreach ($version in $versions) {
+            [IO.File]::WriteAllText($taskSource, $(if ($version -ceq $n) { $baselineChecker } else { $taskChecker }))
             Set-SourceVersion $source $version
             & (Join-Path $source 'tools/pack_release.ps1') -Feed $buildFeed -Channel $channel
             if ($version -ceq $n) { Copy-Item -LiteralPath $feedSetup -Destination $baselineSetup }
@@ -404,6 +419,12 @@ try {
     }
 
     $installed = Install-ProofFixture $fixture $baselineSetup $n
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $taskOwner = $scheduler.GetFolder('\').GetTask($fixture.Task).GetSecurityDescriptor(1)
+    if ([Security.AccessControl.RawSecurityDescriptor]::new($taskOwner).Owner.Value -ne 'S-1-5-32-544') {
+        throw 'The baseline task did not inherit Administrators ownership.'
+    }
     $listener = $installed.Listener
     $initialPointer = $installed.Pointer
     $reportPath = Join-Path $fixture.Updates 'update-report.json'
@@ -451,7 +472,7 @@ try {
         if ($report.current_version -ceq $next -and $report.peers_dir -ieq $fixture.Peers) { $report }
     } "The restarted app did not report $next."
     Assert-Report $fixture $updated $next
-    if ($updated.status.phase -cne 'Idle' -or $null -ne $updated.status.error) { throw 'Updated app reported an error.' }
+    Assert-UpdatedStatus $updated.status
     $newListener = Wait-Proof {
         Get-Listener $fixture | Where-Object { $_.ProcessId -ne $listener.ProcessId -and $_.CreationDate -ge $applyStarted }
     } 'The update did not restart the isolated listener.'

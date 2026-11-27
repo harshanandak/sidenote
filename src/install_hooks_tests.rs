@@ -7,35 +7,31 @@ fn wired(source: &str) -> bool {
     };
     let compact: String = builder.chars().filter(|c| !c.is_whitespace()).collect();
     [
-        ".on_after_install_fast_callback(|_|{ifsidenote::updates::after_update().is_err(){std::process::exit(1);}})",
-        ".on_after_update_fast_callback(|_|{ifsidenote::updates::after_update().is_err(){std::process::exit(1);}})",
+        r#".on_after_install_fast_callback(|_|{ifletErr(error)=sidenote::updates::after_install(){sidenote::listener::log_process(&format!("after-installhookfailedreason={error}"));eprintln!("{error}");std::process::exit(1);}})"#,
+        r#".on_after_update_fast_callback(|_|{ifletErr(error)=sidenote::updates::after_update_fast(){sidenote::listener::log_process(&format!("after-updatehookfailedreason={error}"));eprintln!("{error}");std::process::exit(1);}})"#,
         ".on_first_run(|_|{let_=sidenote::updates::after_update();})",
         ".on_restarted(|_|sidenote::updates::restarted())",
     ].iter().all(|route| compact.contains(route))
 }
 
 #[test]
-fn installed_callbacks_reconcile_and_fast_hooks_propagate_failure() {
-    assert!(wired(include_str!("main.rs")));
-}
-
-#[test]
-fn reverting_any_install_route_is_detected() {
+fn installed_callbacks_limit_handoff_to_setup_and_propagate_failure() {
     let source = include_str!("main.rs");
-    for name in [
-        "on_after_install_fast_callback",
-        "on_first_run",
-        "on_after_update_fast_callback",
-        "on_restarted",
+    assert!(wired(source));
+    for (route, replacement) in [
+        ("on_after_install_fast_callback", "after_install"),
+        ("on_first_run", "after_update"),
+        ("on_after_update_fast_callback", "after_update_fast"),
+        ("on_restarted", "restarted"),
     ] {
-        assert!(
-            !wired(&source.replacen(name, "old_registration_only_hook", 1)),
-            "{name}"
-        );
+        let (before, callback) = source.split_once(route).unwrap();
+        let changed = callback.replacen(replacement, "wrong_hook", 1);
+        assert!(!wired(&format!("{before}{route}{changed}")), "{route}");
+        if route.ends_with("_fast_callback") {
+            let changed = callback.replacen("std::process::exit(1);", "return;", 1);
+            assert!(!wired(&format!("{before}{route}{changed}")), "{route}");
+            let changed = callback.replacen("sidenote::listener::log_process", "skip_logging", 1);
+            assert!(!wired(&format!("{before}{route}{changed}")), "{route}");
+        }
     }
-    assert!(!wired(&source.replacen(
-        "std::process::exit(1);",
-        "return;",
-        1
-    )));
 }
