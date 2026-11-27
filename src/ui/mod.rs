@@ -2200,7 +2200,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
             || s.transcript_jump.focused
             || s.project_input.focused
     } else {
-        tx.focused().is_some_and(|key| !list::toolbar_button(key))
+        tx.focused().is_some()
     };
     // Ctrl+K opens the palette from any page, and again closes it. While it is open it owns
     // Up, Down, Enter, Tab and Escape, even if a click took the focus from its box.
@@ -2295,10 +2295,6 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         // On the home list the arrows move a cursor and Enter opens; beside a meeting they
         // step through meetings, as before.
         Key::Up | Key::Down => {
-            // Leave a focused toolbar button so the next Enter opens the row, not the button.
-            if tx.focused().is_some_and(list::toolbar_button) {
-                tx.blur();
-            }
             s.move_cursor(if e.key == Key::Up { -1 } else { 1 }, tx);
             if home {
                 s.keyboard = true;

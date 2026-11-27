@@ -448,16 +448,6 @@ fn title_more(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
 /// The key of the open Filter popover, so only one menu is ever open.
 const FILTER_MENU: &str = "meetings-filter";
 
-pub(super) fn toolbar_button(key: &str) -> bool {
-    matches!(
-        key,
-        "meetings-view-all"
-            | "meetings-view-with-tasks"
-            | "meetings-view-with-decisions"
-            | "meetings-filter"
-    )
-}
-
 /// One toolbar row under the title: the list-local view tabs, the persistent search
 /// field, and one Filter button whose popover lists only existing project filters.
 fn toolbar(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
@@ -503,7 +493,13 @@ fn view_tab(s: &State, label: &str, key: &str, view: MeetingsView, p: Palette) -
         } else {
             rune::Color::TRANSPARENT
         })
-        .on_press(move |s: &mut State| s.set_meetings_view(view))
+        .on_press_tx(move |s: &mut State, tx| {
+            s.set_meetings_view(view);
+            // A clicked tab gives focus back to the page, so the arrows and Enter drive the list.
+            if !tx.by_keys() {
+                tx.blur();
+            }
+        })
 }
 
 fn filter_button(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
@@ -949,6 +945,8 @@ mod tests {
         assert!(rt.state.search.focused);
         key(&mut rt, Key::Down);
         assert_eq!(rt.state.cursor, 1);
+        rt.settle_all();
+        rt.frame(0.0);
         let elements = rt.elements();
         let row = elements
             .iter()
