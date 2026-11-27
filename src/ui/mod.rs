@@ -1074,13 +1074,8 @@ impl State {
             }
             nav::Page::Hex => hex::settings::reopen(self),
             nav::Page::Annotations => self.open_annotations(),
-            nav::Page::Companies => {
-                self.go_home();
-                self.companies.open = true;
-                self.question = TextEdit::default();
-                self.load_saved();
-                self.nav_done();
-            }
+            // The sidebar's own entry: checks the People switch and reloads the catalog.
+            nav::Page::Companies => self.open_company(self.companies.selected.clone()),
         }
     }
 

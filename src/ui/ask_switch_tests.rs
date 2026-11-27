@@ -2404,6 +2404,9 @@ fn ask_on_every_page_leaves_the_last_task_clear() {
     assert!(last_top >= scroll_top && last_top + last_h <= scroll_top + scroll_h);
 }
 
+/// One page Ask sits on: how to open it, and what Back must land on.
+struct CitationOrigin(&'static str, fn(&mut State), nav::Page, Option<nav::Filter>);
+
 /// Ask answers carry meeting citations; opening one and pressing back returns to the page
 /// the answer was asked on, with the answer showing.
 #[test]
@@ -2413,31 +2416,31 @@ fn citation_back_returns_to_origin() {
     }
     const QUESTION: &str = "What did we decide?";
     const ANSWER: &str = "The beta ships on Friday.";
-    let pages: [(&str, fn(&mut State), nav::Page, Option<nav::Filter>); 9] = [
-        ("home", |s| s.go_home(), nav::Page::Home, None),
-        (
+    let pages = [
+        CitationOrigin("home", |s| s.go_home(), nav::Page::Home, None),
+        CitationOrigin(
             "meetings",
             |s| s.go_meetings(),
             nav::Page::Meetings,
             Some(nav::Filter::All),
         ),
-        (
+        CitationOrigin(
             "tasks",
             |s| s.set_view(tasks::View::Tasks),
             nav::Page::Tasks,
             None,
         ),
-        ("people", State::open_people, nav::Page::People, None),
-        ("memory", State::open_memory, nav::Page::Memory, None),
-        ("check", State::open_check, nav::Page::Check, None),
-        ("settings", State::open_hex, nav::Page::Hex, None),
-        (
+        CitationOrigin("people", State::open_people, nav::Page::People, None),
+        CitationOrigin("memory", State::open_memory, nav::Page::Memory, None),
+        CitationOrigin("check", State::open_check, nav::Page::Check, None),
+        CitationOrigin("settings", State::open_hex, nav::Page::Hex, None),
+        CitationOrigin(
             "annotations",
             State::open_annotations,
             nav::Page::Annotations,
             None,
         ),
-        (
+        CitationOrigin(
             "areas",
             |s| s.set_filter(nav::Filter::Areas),
             nav::Page::Meetings,
@@ -2445,7 +2448,7 @@ fn citation_back_returns_to_origin() {
         ),
     ];
     let mut rt = ask_page_fixture(DEFAULT_SIZE);
-    for (name, open, want, filter) in pages {
+    for CitationOrigin(name, open, want, filter) in pages {
         let cite = format!("cite:{MEETING}");
         rt.update(|s, _| {
             open(s);
@@ -2481,13 +2484,22 @@ fn citation_back_returns_to_origin() {
         if let Some(filter) = filter {
             assert!(rt.state.filter == filter, "{name}");
         }
-        let texts: Vec<_> = rt
-            .elements()
+        // The answer must be on screen, not merely mounted under a clipped thread.
+        let [_, top, _, height] = rect_of(&rt, "thread-scroll");
+        let elements = rt.elements();
+        let question = elements
             .iter()
-            .filter_map(|e| e.text.as_deref())
-            .collect();
-        assert!(texts.contains(&QUESTION), "{name}");
-        assert!(rt.find(&cite).is_some(), "{name}");
+            .find(|e| e.text.as_deref() == Some(QUESTION))
+            .unwrap_or_else(|| panic!("{name}: question missing"))
+            .rect;
+        assert!(
+            question[1] >= top && question[1] + question[3] <= top + height,
+            "{name}"
+        );
+        let (_, cite_y) = rt
+            .find(&cite)
+            .unwrap_or_else(|| panic!("{name}: citation missing"));
+        assert!(cite_y >= top && cite_y <= top + height, "{name}");
     }
 }
 
