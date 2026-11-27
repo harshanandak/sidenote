@@ -36,9 +36,7 @@ function Copy-VerifiedPackageFiles([string]$Directory, [string]$Feed) {
     }
     if (-not $names.Count) { throw 'SHA256SUMS is empty.' }
     # Publishing uploads every file in the directory, so each one must be covered.
-    $unlisted = @(Get-ChildItem -LiteralPath $Directory -Force | Where-Object {
-        $_.Name -cne 'SHA256SUMS' -and -not $names.Contains($_.Name)
-    })
+    $unlisted = @(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -cne 'SHA256SUMS' -and -not $names.Contains($_.Name) })
     if ($unlisted.Count) { throw "Unlisted package file: $($unlisted[0].Name)." }
 }
 
@@ -300,8 +298,10 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
     foreach ($case in @(
         @{ Entry = $entry.Replace('sidenote-dev-Setup.exe', '../sidenote-dev-Setup.exe'); Error = 'Invalid SHA256SUMS entry.' }
         @{ Entry = "$('0' * 64)  sidenote-dev-Setup.exe"; Error = 'SHA256SUMS mismatch: sidenote-dev-Setup.exe.' }
+        @{ Entry = $entry; Stray = $true; Error = 'Unlisted package file: stray.txt.' }
     )) {
         [IO.File]::WriteAllText($sum, $case.Entry)
+        if ($case['Stray']) { [IO.File]::WriteAllText((Join-Path $packages 'stray.txt'), 'Unlisted bytes') }
         $rejected = $false
         try { Copy-VerifiedPackageFiles $packages (Join-Path $Root 'verified') | Out-Null }
         catch {
@@ -310,15 +310,6 @@ function Invoke-SelfTest([string]$Root, [string]$Source) {
         }
         if (-not $rejected) { throw 'Package checksum verification accepted invalid input.' }
     }
-    [IO.File]::WriteAllText($sum, $entry)
-    [IO.File]::WriteAllText((Join-Path $packages 'stray.txt'), 'Unlisted bytes')
-    $rejected = $false
-    try { Copy-VerifiedPackageFiles $packages (Join-Path $Root 'verified') | Out-Null }
-    catch {
-        if ($_.Exception.Message -cne 'Unlisted package file: stray.txt.') { throw }
-        $rejected = $true
-    }
-    if (-not $rejected) { throw 'Package checksum verification accepted an unlisted file.' }
     Write-Output 'Release update fixture, report and refusal self-test passed.'
     Write-Output 'Release package checksum self-test passed.'
 }
