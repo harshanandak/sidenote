@@ -243,6 +243,7 @@ function Invoke-SelfTest {
     Write-Output 'Release identity, asset allow-list and checksum self-test passed.'
 }
 
+if ($MyInvocation.InvocationName -eq '.') { return }
 if ($SelfTest) {
     Invoke-SelfTest
     return
