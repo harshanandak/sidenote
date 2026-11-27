@@ -18,6 +18,10 @@ use velopack::{
     sources::{FileSource, UpdateSource},
 };
 
+#[path = "updates_windows/install_state.rs"]
+mod install_state;
+use install_state::install_pending_pipeline;
+
 // Velopack's HttpSource constructs an unbounded default agent internally.
 #[derive(Clone)]
 struct HttpSource {
@@ -364,13 +368,8 @@ pub fn load() -> Status {
     read_status(&directory())
 }
 fn read_status(directory: &Path) -> Status {
-    let mut status = pipeline_status(
-        read_saved_status(directory),
-        &directory.join("pipeline-install.pending"),
-    );
-    if directory.join("update-listener.resume").exists()
-        && !directory.join("pipeline-install.pending").exists()
-    {
+    let mut status = pipeline_status(read_saved_status(directory), directory);
+    if install_state::listener_pending(directory) && !install_state::pipeline_pending(directory) {
         status.phase = Phase::Error;
         status.error = Some(INSTALL_LISTENER_ERROR.into());
     }
@@ -388,8 +387,8 @@ fn read_saved_status(directory: &Path) -> Status {
         })
         .unwrap_or_default()
 }
-fn pipeline_status(mut status: Status, marker: &Path) -> Status {
-    if marker.exists() {
+fn pipeline_status(mut status: Status, directory: &Path) -> Status {
+    if install_state::pipeline_pending(directory) {
         if matches!(status.phase, Phase::Idle | Phase::Manual) {
             status.phase = Phase::Error;
         }
@@ -401,7 +400,7 @@ fn save(status: &Status) -> io::Result<()> {
     if !installed() {
         return Ok(());
     }
-    let status = pipeline_status(status.clone(), &local("pipeline-install.pending"));
+    let status = pipeline_status(status.clone(), &directory());
     save_status(&status)
 }
 fn save_status(status: &Status) -> io::Result<()> {
@@ -504,7 +503,8 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
     if !installed() {
         return Ok(load());
     }
-    let mut publish = |status| publish(pipeline_status(status, &local("pipeline-install.pending")));
+    let directory = directory();
+    let mut publish = |status| publish(pipeline_status(status, &directory));
     let _check = exclusive("update-check.lock").map_err(|_| "Another update check is running.")?;
     let channel = channel();
     let mut status = Status {
@@ -571,7 +571,7 @@ pub fn check(mut publish: impl FnMut(Status)) -> Result<Status, String> {
         status.phase = Phase::Error;
         status.error = Some(error);
     }
-    status = pipeline_status(status, &local("pipeline-install.pending"));
+    status = pipeline_status(status, &directory);
     publish(status.clone());
     save(&status).map_err(|_| "Could not save update status.")?;
     Ok(status)
@@ -1258,7 +1258,7 @@ fn start_installed(
 ) -> Result<bool, String> {
     let guard = InstallGuard::for_startup(directory, started).map_err(InstallAdmission::message)?;
     let _check = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
-    if directory.join("update-listener.resume").exists() {
+    if guard.listener_pending() {
         reconcile(&guard, started)?;
         return Ok(pending_update());
     }
@@ -1305,7 +1305,7 @@ fn complete_pipeline_install(
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<(), String> {
     let directory = guard.directory;
-    install_pending_pipeline(&directory.join("pipeline-install.pending"), install, || {
+    install_pending_pipeline(guard, install, || {
         let mut status = read_saved_status(directory);
         if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
             if status.phase == Phase::Error {
@@ -1320,22 +1320,6 @@ fn complete_pipeline_install(
         Ok(())
     })
     .map(|_| ())
-}
-fn install_pending_pipeline(
-    marker: &Path,
-    install: impl FnOnce() -> Result<(), String>,
-    clear_status: impl FnOnce() -> Result<(), String>,
-) -> Result<bool, String> {
-    if !marker.exists() {
-        return Ok(false);
-    }
-    if fs::read(marker).map_err(|_| PIPELINE_INSTALL_ERROR)? != VERSION.as_bytes() {
-        return Err(PIPELINE_INSTALL_ERROR.into());
-    }
-    install()?;
-    clear_status()?;
-    fs::remove_file(marker).map_err(|_| PIPELINE_INSTALL_ERROR)?;
-    Ok(true)
 }
 
 fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<(), String> {
@@ -1665,7 +1649,6 @@ fn reconcile_and_save(
     let result = preflight().and_then(|()| reconcile_install(guard, pipeline, listener));
     let directory = guard.directory;
     let status = read_status(directory);
-    let pending = directory.join("pipeline-install.pending");
     let error = match &result {
         Err(error) => Some(error),
         Ok(work) => work.error(),
@@ -1677,7 +1660,7 @@ fn reconcile_and_save(
             error: Some(error.clone()),
             ..status
         },
-        None => after_update_status(status, &pending),
+        None => after_update_status(status, directory),
     };
     let saved = guard
         .save(&status, make_report)
@@ -1695,35 +1678,21 @@ fn reconcile_install(
     pipeline: impl FnOnce() -> Result<(), String>,
     listener: impl FnOnce() -> Result<(), String>,
 ) -> Result<Reconciliation, String> {
-    let directory = guard.directory;
-    let receipt = directory.join("install-hook.complete");
-    let pending = directory.join("pipeline-install.pending");
-    let current =
-        fs::read(&receipt).ok().as_deref() == Some(VERSION.as_bytes()) && !pending.exists();
-    if receipt.exists() {
-        fs::remove_file(&receipt).map_err(|_| "Could not retire install hook completion.")?;
-    }
-    fs::write(&pending, VERSION).map_err(|_| PIPELINE_INSTALL_ERROR)?;
-    fs::write(directory.join("update-listener.resume"), b"resume")
-        .map_err(|_| INSTALL_LISTENER_ERROR)?;
+    let changed = guard.begin_reconciliation()?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = pipeline();
     let listener = listener();
     if pipeline.is_ok() && listener.is_ok() {
-        fs::write(receipt, VERSION).map_err(|_| "Could not save install hook completion.")?;
-        let resume = directory.join("update-listener.resume");
-        if resume.exists() {
-            fs::remove_file(resume).map_err(|_| "Could not clear listener restart state.")?;
-        }
+        guard.finish_reconciliation()?;
     }
     Ok(Reconciliation {
-        changed: !current,
+        changed,
         pipeline,
         listener,
     })
 }
-fn after_update_status(status: Status, marker: &Path) -> Status {
-    let status = if status.version == VERSION && !marker.exists() {
+fn after_update_status(status: Status, directory: &Path) -> Status {
+    let status = if status.version == VERSION && !install_state::pipeline_pending(directory) {
         Status {
             checked: status.checked,
             ..Default::default()
@@ -1731,16 +1700,16 @@ fn after_update_status(status: Status, marker: &Path) -> Status {
     } else {
         status
     };
-    pipeline_status(status, marker)
+    pipeline_status(status, directory)
 }
 pub fn restarted() {
     let _ = after_update();
 }
-fn restart_listener() {
-    if local("update-listener.resume").exists() {
-        let _ = fs::remove_file(local("update-listener.stop"));
-        if recover_listener().is_ok() {
-            let _ = fs::remove_file(local("update-listener.resume"));
+fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(), String>) {
+    if guard.listener_pending() {
+        let _ = fs::remove_file(guard.directory.join("update-listener.stop"));
+        if recover().is_ok() {
+            let _ = guard.clear_listener_pending();
         } else {
             let _ = save(&Status { phase: Phase::Error, error: Some("The update finished, but the listener could not restart. Check its Sidenote task.".into()), ..load() });
         }
@@ -1763,31 +1732,37 @@ pub fn apply(
     }) {
         restart_args.extend(pair.iter().cloned());
     }
-    let _check =
-        exclusive("update-check.lock").map_err(|_| "Wait for the update download to finish.")?;
+    apply_installed(&directory(), from_window, listener_stopping, |guard| {
+        apply_ready(guard, restart_args, publish)
+    })
+}
+
+fn apply_installed(
+    directory: &Path,
+    from_window: bool,
+    listener_stopping: impl FnOnce() -> bool,
+    apply_ready: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
+) -> Result<(), String> {
+    let _check = exclusive_at(&directory.join("update-check.lock"))
+        .map_err(|_| "Wait for the update download to finish.")?;
     let _window = if from_window {
         None
     } else {
         Some(
-            exclusive("update-window.lock")
+            exclusive_at(&directory.join("update-window.lock"))
                 .map_err(|_| "Close the Sidenote window before using the update command.")?,
         )
     };
-    let _gate = exclusive("update-activity.lock")
+    let _gate = exclusive_at(&directory.join("update-activity.lock"))
         .map_err(|_| "Wait for Ask, routing and notes jobs to finish before installing.")?;
-    let directory = directory();
-    let guard = if from_window {
-        None
-    } else {
-        Some(InstallGuard::acquire(&directory).map_err(InstallAdmission::message)?)
-    };
+    let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
     let _listener = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
-    let result = apply_ready(restart_args, publish);
-    if let (Some(guard), Err(error)) = (&guard, &result) {
-        save_apply_error(guard, error);
+    let result = apply_ready(&guard);
+    if !from_window && let Err(error) = &result {
+        save_apply_error(&guard, error);
     }
     result
 }
@@ -1797,7 +1772,11 @@ fn save_apply_error(guard: &InstallGuard<'_>, error: &str) {
     status.error = Some(error.into());
     let _ = guard.save(&status, report);
 }
-fn apply_ready(restart_args: Vec<String>, mut publish: impl FnMut(Phase)) -> Result<(), String> {
+fn apply_ready(
+    guard: &InstallGuard<'_>,
+    restart_args: Vec<String>,
+    mut publish: impl FnMut(Phase),
+) -> Result<(), String> {
     publish(Phase::Preparing);
     let channel = channel();
     let mgr = manager(channel)?;
@@ -1805,7 +1784,8 @@ fn apply_ready(restart_args: Vec<String>, mut publish: impl FnMut(Phase)) -> Res
     verify(&asset)?;
     recording_idle()?;
     task_command(false)?;
-    fs::write(local("update-listener.resume"), b"resume")
+    guard
+        .mark_listener_pending()
         .map_err(|_| "Could not save listener restart state.")?;
     publish(Phase::StoppingListener);
     write_stop(std::process::id()).map_err(|_| "Could not stop the listener.")?;
@@ -1833,7 +1813,7 @@ fn apply_ready(restart_args: Vec<String>, mut publish: impl FnMut(Phase)) -> Res
         Ok(())
     });
     if let Err(error) = result {
-        restart_listener();
+        restart_listener(guard, recover_listener);
         return Err(error.into());
     }
     std::process::exit(0)
@@ -1961,13 +1941,14 @@ mod tests {
     fn reconcile_install(
         directory: &Path,
         preflight: impl Fn() -> Result<(), String>,
-        pipeline: impl FnOnce() -> Result<(), String>,
+        pipeline: impl FnOnce(&InstallGuard<'_>) -> Result<(), String>,
         listener: impl FnOnce() -> Result<(), String>,
     ) -> Result<bool, String> {
         preflight()?;
         let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
         preflight()?;
-        super::reconcile_install(&guard, pipeline, listener).and_then(Reconciliation::hook_result)
+        super::reconcile_install(&guard, || pipeline(&guard), listener)
+            .and_then(Reconciliation::hook_result)
     }
 
     #[test]
@@ -2089,10 +2070,10 @@ mod tests {
                 reconcile_install(
                     root.path(),
                     || Ok(()),
-                    || {
+                    |guard| {
                         calls.borrow_mut().push("pipeline");
                         install_pending_pipeline(
-                            &root.path().join("pipeline-install.pending"),
+                            guard,
                             || {
                                 fs::write(&script, "new script").unwrap();
                                 Ok(())
@@ -2125,23 +2106,18 @@ mod tests {
         for failed_step in ["pipeline", "listener"] {
             let root = tempfile::tempdir().unwrap();
             let started = std::cell::Cell::new(false);
-            let pipeline = || {
-                install_pending_pipeline(
-                    &root.path().join("pipeline-install.pending"),
-                    || Ok(()),
-                    || Ok(()),
-                )
-                .map(|_| ())
+            let pipeline = |guard: &InstallGuard<'_>| {
+                install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ())
             };
             assert!(
                 reconcile_install(
                     root.path(),
                     || Ok(()),
-                    || {
+                    |guard| {
                         if failed_step == "pipeline" {
                             Err(PIPELINE_INSTALL_ERROR.into())
                         } else {
-                            pipeline()
+                            pipeline(guard)
                         }
                     },
                     || {
@@ -2172,9 +2148,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
+        let guard = InstallGuard::acquire(root.path()).unwrap();
         assert!(
             install_pending_pipeline(
-                &marker,
+                &guard,
                 || pipeline_script_result(Some(PIPELINE_NOT_CONFIGURED_CODE)),
                 || Ok(()),
             )
@@ -2193,9 +2170,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
+        let guard = InstallGuard::acquire(root.path()).unwrap();
         assert_eq!(
             install_pending_pipeline(
-                &marker,
+                &guard,
                 || pipeline_script_result(Some(1)),
                 || panic!("failed install cleared status"),
             )
@@ -2207,7 +2185,7 @@ mod tests {
             read_status(root.path()).error.as_deref(),
             Some(PIPELINE_INSTALL_ERROR)
         );
-        assert!(install_pending_pipeline(&marker, || Ok(()), || Ok(())).unwrap());
+        assert!(install_pending_pipeline(&guard, || Ok(()), || Ok(())).unwrap());
         assert!(!marker.exists());
     }
 
@@ -2224,14 +2202,7 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                || {
-                    install_pending_pipeline(
-                        &root.path().join("pipeline-install.pending"),
-                        || Ok(()),
-                        || Ok(()),
-                    )
-                    .map(|_| ())
-                },
+                |guard| install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ()),
                 || Err("listener failed".into())
             )
             .is_err()
@@ -2241,14 +2212,7 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                || {
-                    install_pending_pipeline(
-                        &root.path().join("pipeline-install.pending"),
-                        || Ok(()),
-                        || Ok(()),
-                    )
-                    .map(|_| ())
-                },
+                |guard| install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ()),
                 || Ok(())
             )
             .unwrap()
@@ -2261,13 +2225,8 @@ mod tests {
         fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         // Simulate a failed status save: the existing resume marker must still expose failure.
         fs::create_dir(root.path().join("updates.json")).unwrap();
-        let pipeline = || {
-            install_pending_pipeline(
-                &root.path().join("pipeline-install.pending"),
-                || Ok(()),
-                || Ok(()),
-            )
-            .map(|_| ())
+        let pipeline = |guard: &InstallGuard<'_>| {
+            install_pending_pipeline(guard, || Ok(()), || Ok(())).map(|_| ())
         };
         assert!(
             reconcile_install(
@@ -2329,7 +2288,7 @@ mod tests {
             reconcile_install(
                 root.path(),
                 || Ok(()),
-                || {
+                |_| {
                     fs::remove_file(root.path().join("pipeline-install.pending")).unwrap();
                     Ok(())
                 },
@@ -2345,9 +2304,10 @@ mod tests {
         let marker = root.path().join("pipeline-install.pending");
         let status_path = root.path().join("updates.json");
         fs::write(&marker, VERSION).unwrap();
+        let guard = InstallGuard::acquire(root.path()).unwrap();
         assert!(
             install_pending_pipeline(
-                &marker,
+                &guard,
                 || Err(PIPELINE_INSTALL_ERROR.into()),
                 || panic!("failed install cleared status")
             )
@@ -2365,7 +2325,7 @@ mod tests {
                     phase: phase.clone(),
                     ..Default::default()
                 },
-                &marker,
+                root.path(),
             );
             assert_eq!(status.phase, phase);
             assert_eq!(status.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
@@ -2377,7 +2337,7 @@ mod tests {
         };
         fs::write(&status_path, serde_json::to_vec(&status).unwrap()).unwrap();
         for _ in 0..2 {
-            let status = after_update_status(read_status(root.path()), &marker);
+            let status = after_update_status(read_status(root.path()), root.path());
             assert_eq!(status.phase, Phase::Error);
             assert_eq!(status.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
             assert_eq!(status.version, VERSION);
@@ -2391,20 +2351,20 @@ mod tests {
         fs::write(&marker, "older version").unwrap();
         assert!(
             install_pending_pipeline(
-                &marker,
+                &guard,
                 || panic!("wrong version installed"),
                 || panic!("wrong version cleared status")
             )
             .is_err()
         );
-        let reset = pipeline_status(Status::default(), &marker);
+        let reset = pipeline_status(Status::default(), root.path());
         assert_eq!(reset.phase, Phase::Error);
         assert_eq!(reset.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
         // Only successful completion removes the marker, enabling the normal reset.
         fs::write(&marker, VERSION).unwrap();
-        assert!(install_pending_pipeline(&marker, || Ok(()), || Ok(())).unwrap());
+        assert!(install_pending_pipeline(&guard, || Ok(()), || Ok(())).unwrap());
         assert!(!marker.exists());
-        let cleared = after_update_status(read_status(root.path()), &marker);
+        let cleared = after_update_status(read_status(root.path()), root.path());
         assert_eq!(cleared.phase, Phase::Idle);
         assert!(cleared.error.is_none());
         assert_eq!(cleared.checked.as_deref(), Some("synthetic check"));
@@ -2427,9 +2387,10 @@ mod tests {
         )
         .unwrap();
         let installs = std::cell::Cell::new(0);
+        let guard = InstallGuard::acquire(root.path()).unwrap();
         let run = |interrupt| {
             install_pending_pipeline(
-                &marker,
+                &guard,
                 || {
                     installs.set(installs.get() + 1);
                     Ok(())

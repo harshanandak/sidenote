@@ -161,3 +161,56 @@ fn hook_lock_only_sharing_violation_is_busy() {
         assert!(matches!(admission, InstallAdmission::Io(_)));
     }
 }
+
+#[test]
+fn window_and_cli_apply_wait_for_install_admission_before_handoff() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let _guard = InstallGuard::acquire(path).unwrap();
+    for from_window in [true, false] {
+        let error = apply_installed(
+            path,
+            from_window,
+            || panic!("apply inspected the listener while the hook owned recovery"),
+            |_| panic!("apply reached handoff while the hook owned recovery"),
+        )
+        .unwrap_err();
+        assert_eq!(error, InstallAdmission::Busy.message());
+        assert!(!path.join("update-listener.resume").exists());
+    }
+}
+
+#[test]
+fn window_apply_rollback_retires_resume_with_the_same_guard() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let pending = path.join("pipeline-install.pending");
+    let resume = path.join("update-listener.resume");
+    let stop = path.join("update-listener.stop");
+    fs::write(&pending, VERSION).unwrap();
+
+    let result = apply_installed(
+        path,
+        true,
+        || false,
+        |guard| {
+            guard.mark_listener_pending().unwrap();
+            fs::write(&stop, "synthetic stop request").unwrap();
+            restart_listener(guard, || {
+                assert!(matches!(
+                    InstallGuard::acquire(path),
+                    Err(InstallAdmission::Busy)
+                ));
+                assert_eq!(fs::read(&resume).unwrap(), b"resume");
+                assert!(!stop.exists());
+                Ok(())
+            });
+            Err("synthetic handoff failure".into())
+        },
+    );
+
+    assert_eq!(result.unwrap_err(), "synthetic handoff failure");
+    assert!(!resume.exists());
+    assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
+    assert!(InstallGuard::acquire(path).is_ok());
+}
