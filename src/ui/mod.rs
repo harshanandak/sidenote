@@ -253,7 +253,7 @@ pub struct ListItem {
     pub hit: Option<SearchHit>,
 }
 pub struct ListGroup {
-    pub label: String,
+    pub date: Option<chrono::NaiveDate>,
     pub items: Vec<ListItem>,
 }
 
@@ -754,7 +754,7 @@ impl State {
                     })
                     .collect();
                 (!items.is_empty()).then_some(ListGroup {
-                    label: g.label,
+                    date: g.date,
                     items,
                 })
             })
