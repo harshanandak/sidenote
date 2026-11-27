@@ -1,5 +1,8 @@
 use super::VERSION;
-use serde::{Deserialize, Serialize, de::IgnoredAny};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{IgnoredAny, IntoDeserializer},
+};
 use std::{collections::BTreeMap, fs, io, path::Path};
 
 pub(super) const FILE: &str = "install-state.json";
@@ -36,10 +39,21 @@ pub(super) enum Diagnostic {
 pub(super) struct Record {
     pub(super) schema_version: u32,
     pub(super) app_version: String,
+    #[serde(deserialize_with = "deserialize_work")]
     pub(super) listener_work: ListenerWork,
+    #[serde(deserialize_with = "deserialize_work")]
     pub(super) pipeline_work: PipelineWork,
     pub(super) listener_diagnostic: Option<Diagnostic>,
     pub(super) pipeline_diagnostic: Option<Diagnostic>,
+}
+
+// Decode the wire value as a string before letting the enum resolve its variant.
+fn deserialize_work<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(String::deserialize(deserializer)?.into_deserializer())
 }
 
 #[derive(Deserialize)]
