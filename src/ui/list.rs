@@ -317,19 +317,10 @@ fn home_row(
         .grow(1.0)
         .min_w(0.0)
         .on_press_tx(move |s: &mut State, tx| s.select(&id, tx));
-    let mut r = row()
-        .w_full()
-        .gap(12.0)
-        .px(10.0)
-        .py(9.0)
-        .radius(10.0)
-        .hover(p.chip);
-    r = if narrow {
-        r.items_start()
-    } else {
-        r.items_center()
-    };
-    r = r.child(main);
+    // The row action ("Try again", "Choose an agent", "Turn on Meeting summary",
+    // "Use first 4 hours"). Same key, label and press in both layouts; only its
+    // placement changes.
+    let mut action: Option<El> = None;
     if problem && let Some(job) = &notes_job {
         let setup = matches!(
             job.state,
@@ -350,7 +341,7 @@ fn home_row(
             job.retry_request()
         };
         let needs_page = matches!(job.state, core::notes::JobState::ContextTooLong { .. });
-        r = r.child(
+        action = Some(
             super::area::button(
                 if setup {
                     if matches!(job.state, core::notes::JobState::NoHelper)
@@ -383,11 +374,53 @@ fn home_row(
     }
     let more = super::more::menu(s, k, m, "row", p, layer);
     let time = roles::meta(at, p);
-    r = if narrow {
-        r.child(col().items_end().child(more).child(time))
+    let mut r: El;
+    if narrow && action.is_some() {
+        // At phone width the action would squeeze the title to about 40px, so it
+        // sits under the row text, left-aligned with the title. The top row keeps
+        // the title plus the time/More column where they were.
+        let button = action.take().expect("checked above");
+        let top = row()
+            .w_full()
+            .gap(12.0)
+            .items_start()
+            .child(main)
+            .child(col().items_end().child(more).child(time));
+        r = col()
+            .w_full()
+            .gap(8.0)
+            .px(10.0)
+            .py(9.0)
+            .radius(10.0)
+            .hover(p.chip)
+            .child(top)
+            .child(row().w_full().child(button));
     } else {
-        r.child(row().w(44.0).justify_end().child(time)).child(more)
-    };
+        let mut row_el = row()
+            .w_full()
+            .gap(12.0)
+            .px(10.0)
+            .py(9.0)
+            .radius(10.0)
+            .hover(p.chip);
+        row_el = if narrow {
+            row_el.items_start()
+        } else {
+            row_el.items_center()
+        };
+        row_el = row_el.child(main);
+        if let Some(button) = action {
+            row_el = row_el.child(button);
+        }
+        row_el = if narrow {
+            row_el.child(col().items_end().child(more).child(time))
+        } else {
+            row_el
+                .child(row().w(44.0).justify_end().child(time))
+                .child(more)
+        };
+        r = row_el;
+    }
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
         r = r.fill(p.chip);
@@ -1073,6 +1106,92 @@ mod tests {
             elements
                 .iter()
                 .any(|e| e.text.as_deref() == Some("Meeting too long for a summary"))
+        );
+    }
+
+    /// A home state whose single row shows "Turn on Meeting summary": a NoHelper
+    /// job with Claude found, so the row action offers the one-tap setup.
+    fn turn_on_summary_state() -> State {
+        crate::test_paths::isolate();
+        let meeting = fixture();
+        let id = meeting.id.clone();
+        let mut state = home_state(vec![meeting]);
+        state.ai_notes.found = vec![(core::notes::Helper::Claude, true)];
+        state.ai_notes.jobs.insert(
+            id,
+            serde_json::from_str(r#"{"state":"no_helper"}"#).unwrap(),
+        );
+        state
+    }
+
+    fn title_and_action(
+        elements: &[rune::ElementInfo],
+        title: &str,
+        action_key: &str,
+    ) -> ([f32; 4], [f32; 4]) {
+        let title_rect = elements
+            .iter()
+            .find(|e| e.text.as_deref() == Some(title))
+            .unwrap_or_else(|| panic!("the row title {title}"))
+            .rect;
+        let action_rect = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(action_key))
+            .unwrap_or_else(|| panic!("the row action {action_key}"))
+            .rect;
+        (title_rect, action_rect)
+    }
+
+    #[test]
+    fn narrow_action_sits_below_the_title_at_phone_width() {
+        let title = fixture().title.clone();
+        let action_key = "notes-list-action-1793955600000-1";
+        let mut rt = render_home(turn_on_summary_state(), 390.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements.iter().any(|e| e.key.as_deref() == Some(action_key)
+                && e.label.as_deref() == Some("Turn on Meeting summary")),
+            "the row keeps its action key and label"
+        );
+        let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
+        assert!(
+            title_rect[2] >= 200.0,
+            "the title keeps its width, got {}",
+            title_rect[2]
+        );
+        assert!(
+            action_rect[1] >= title_rect[1] + title_rect[3],
+            "the action sits below the title (action top {}, title bottom {})",
+            action_rect[1],
+            title_rect[1] + title_rect[3]
+        );
+    }
+
+    #[test]
+    fn narrow_action_stays_beside_the_title_when_wide() {
+        let title = fixture().title.clone();
+        let action_key = "notes-list-action-1793955600000-1";
+        let mut rt = render_home(turn_on_summary_state(), 1334.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements.iter().any(|e| e.key.as_deref() == Some(action_key)
+                && e.label.as_deref() == Some("Turn on Meeting summary")),
+            "the row keeps its action key and label"
+        );
+        let (title_rect, action_rect) = title_and_action(&elements, &title, action_key);
+        let title_bottom = title_rect[1] + title_rect[3];
+        let action_bottom = action_rect[1] + action_rect[3];
+        assert!(
+            action_rect[1] < title_bottom && action_bottom > title_rect[1],
+            "the action stays on the title's line when wide (action {}..{}, title {}..{})",
+            action_rect[1],
+            action_bottom,
+            title_rect[1],
+            title_bottom
         );
     }
 
