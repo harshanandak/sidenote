@@ -1279,9 +1279,8 @@ mod tests {
 
     #[test]
     fn meeting_typography_matches_design_sizes() {
-        assert_eq!(title_style(false).size, 26.0);
-        assert_eq!(READ.size, 13.5);
-        assert_eq!(REPLY.size, 13.0);
+        let sizes = (title_style(false).size, READ.size, REPLY.size);
+        assert_eq!(sizes, (26.0, 13.5, 13.0));
     }
 
     fn element(rt: &Runtime<State>, key: &str) -> rune::ElementInfo {

@@ -3539,7 +3539,8 @@ fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
     for (before, after) in [(facts, people), (people, chip)] {
         assert!(
             after[1] >= before[1] + before[3]
-                || (after[1] >= before[1] && after[0] >= before[0] + before[2]),
+                || (after[0] >= before[0] + before[2]
+                    && after[1] + after[3] / 2.0 == before[1] + before[3] / 2.0),
             "{after:?} follows {before:?}"
         );
     }
