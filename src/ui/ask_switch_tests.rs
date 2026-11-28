@@ -82,6 +82,8 @@ fn ask_option_menu_keyboard_selects_and_escape_closes() {
         (Key::Down, "All meetings", true, false),
         (Key::Enter, "Ask options", false, true),
         (Key::Text(" ".into()), "All meetings", true, true),
+        (Key::Text(" ".into()), "Ask options", false, true),
+        (Key::Text(" ".into()), "All meetings", true, true),
         (Key::Escape, "Ask options", false, true),
     ] {
         rt.key(key.into());

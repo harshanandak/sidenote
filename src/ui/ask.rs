@@ -188,10 +188,8 @@ fn submit(s: &mut State, question: &str, tx: &mut Tx) {
 
 #[rustfmt::skip]
 fn type_in_question(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
-    let typing = matches!(&e.key, Key::Text(_)) && !((e.mods.cmd || e.mods.ctrl) && (cfg!(target_os = "macos") || !e.mods.alt));
-    if typing { s.ask_settings.scope_open = false; s.question.key(e, None); keep_question_focus(s, tx); }
-    typing
-}
+    let typing = matches!(&e.key, Key::Text(t) if t != " ") && !((e.mods.cmd || e.mods.ctrl) && (cfg!(target_os = "macos") || !e.mods.alt)); // Space presses the focused row.
+    if typing { s.ask_settings.scope_open = false; s.question.key(e, None); keep_question_focus(s, tx); } typing }
 
 pub(super) fn focus_open(s: &mut State, tx: &mut Tx) -> bool {
     let open = s.question.focused
