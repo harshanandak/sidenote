@@ -280,7 +280,7 @@ impl HexState {
     }
 
     /// Hex answered that it is not running. A missing, slow or expired answer is not this.
-    fn stopped(&self) -> bool {
+    pub(super) fn stopped(&self) -> bool {
         matches!(self.status, Some(Err(HexError::HexNotRunning)))
     }
 
@@ -710,7 +710,9 @@ impl State {
         );
         // Keep capability retries, install detection and visibility handling on every sample.
         self.hex_status_at(r, sent);
+        let stop_finished = self.hex_finish_observed_stop();
         changed
+            || stop_finished
             || self.live.is_some()
             || before
                 != (
@@ -1038,14 +1040,16 @@ impl State {
         if self.hex.record_busy {
             return;
         }
-        self.hex.record_busy = true;
-        self.hex.error = None;
-        self.hex_spawn(|engine| Msg::RecheckResume(sample_status(|| engine.status_for_command())));
+        self.hex_queue_record_command(|s| {
+            s.hex_spawn(|engine| Msg::RecheckResume(sample_status(|| engine.status_for_command())))
+        });
     }
     pub(super) fn hex_recheck_start(&mut self) {
-        self.hex.record_busy = true;
-        self.hex.error = None;
-        self.hex_spawn(|engine| Msg::RecheckStart(sample_status(|| engine.status_for_command())));
+        if !self.hex_queue_record_command(|s| {
+            s.hex_spawn(|engine| Msg::RecheckStart(sample_status(|| engine.status_for_command())))
+        }) {
+            self.hex.connection.finish_action();
+        }
     }
 
     pub fn hex_recording(&self) -> bool {
@@ -1078,7 +1082,18 @@ impl State {
         self.hex.record_busy || self.hex_stop_pending()
     }
 
-    pub fn hex_record_start(&mut self) {
+    fn hex_queue_record_command(&mut self, submit: impl FnOnce(&Self) -> bool) -> bool {
+        self.hex.record_busy = true;
+        self.hex.error = None;
+        if submit(self) {
+            return true;
+        }
+        self.hex.record_busy = false;
+        self.hex.error = Some("Could not start the Hex recording command. Try again.");
+        false
+    }
+
+    pub fn hex_record_start(&mut self) -> bool {
         if !super::updates::listener_ready(self)
             || self.hex_record_busy()
             || self.hex.connection.slow(&self.hex.status)
@@ -1089,13 +1104,13 @@ impl State {
                 .state()
                 .is_some_and(|state| state.labs.state("meetings") == Some(false))
         {
-            return;
+            return false;
         }
-        self.hex.record_busy = true;
-        self.hex.error = None;
         let cached = self.hex.caps.clone().unwrap_or_default();
         self.hex.connection.action_stage("request_sent");
-        self.hex_spawn(move |e| Msg::Done(Action::Start, e.record_start(None, &cached)));
+        self.hex_queue_record_command(move |s| {
+            s.hex_spawn(move |e| Msg::Done(Action::Start, e.record_start(None, &cached)))
+        })
     }
 
     pub fn hex_record_stop(&mut self, displayed_id: Option<String>) {
@@ -2355,6 +2370,29 @@ pub(super) mod notes_stop_tests {
     use std::{fs, path::Path, process::Command};
 
     const PART: &str = "100-1";
+
+    #[test]
+    fn recording_command_failures_and_late_idle_clear_recording_busy() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        assert!(!state.hex_queue_record_command(|s| {
+            assert!(s.hex_record_busy());
+            false
+        }));
+        assert!(!state.hex_record_busy());
+        assert!(!state.hex_record_busy() && !state.hex_recording());
+        state.hex.caps_version = Some("test".into());
+        state.live = Some(super::super::live::Live::scene(Phase::Paused, None));
+        state.hex_observed_event(sample_status(|| Ok(status(true))));
+        assert!(state.hex_recording());
+        let now = Instant::now();
+        state.hex_begin_stop(0, now);
+        state.hex_stop_tick(now + Duration::from_secs(31), &mut Tx::default());
+        assert!(state.hex_stop_unconfirmed() && state.hex_record_busy());
+        state.hex_observed_event(sample_status(|| Ok(status(false))));
+        assert!(!state.hex_stop_pending());
+        assert!(!state.hex_record_busy() && !state.hex_recording());
+    }
 
     fn fixture(name: &str) -> Option<State> {
         if std::env::var("SIDENOTE_NOTES_STOP_TEST").as_deref() != Ok(name) {

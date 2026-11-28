@@ -352,6 +352,7 @@ impl State {
         }
         m.pending_start_ms = Some(chrono::Utc::now().timestamp_millis());
         if m.save(&root).is_err() {
+            m.pending_start_ms = None;
             self.hex.error = Some("Could not save meeting before Resume.");
             return;
         }
@@ -360,7 +361,9 @@ impl State {
             self.live_open = true;
         }
         // Keep the page and its notes; the next status supplies the new Hex part id.
-        self.hex_record_start();
+        if !self.hex_record_start() {
+            self.parts_start_failed();
+        }
     }
     pub(in crate::ui) fn meeting_generate(&mut self) {
         if self.hex_stop_pending() {
