@@ -451,7 +451,7 @@
 
   "src/ui/memory/settled.rs": "de41d04607b3d7e97544ffffea73837ce69afa18f2fd8d2170e7561b1f859728",
 
-  "src/ui/mod.rs": "88b5bfd6a16bd263f7b86e128239d5db46b0a6d56cb2b1a83205e99f157875fe",
+  "src/ui/mod.rs": "ba140f86b4f609fa839329df975d3b1fbc582f1ba0acafb7eabac6e34485c862",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -459,7 +459,7 @@
 
   "src/ui/project_merge.rs": "90932e67967138d3a7ab461d059a8c6fd0009ce728af4fb92cc381f170fafcd6",
 
-  "src/ui/recording_state_tests.rs": "52ee96e88bd3909f81d2be2e5759eebfeafd5554f432ff2157694fbb6bdf93cf",
+  "src/ui/recording_state_tests.rs": "681eb2a06e77f11fee4e6f9c5740be3fedef10a87d4b632a8ecd5376c5ef4d4f",
 
   "src/ui/refresh.rs": "6155fe2948d3fbbcaf4447b0419afe182fe544adbc87d7a29ae57f73e8f6bd21",
 

@@ -1420,12 +1420,9 @@ mod tests {
                 "to_settle": [{"question":"Who will bring extra maps?"}],
             });
             if long {
-                data["people"] = serde_json::json!([
-                    "Maya Patel, Ravi Mehta, Priya Rao, Amir Khan, Zoe Phillips, Inez Flores, Lena Chen, Asha Iyer, Omar Ali, and Nora Weiss"
-                ]);
+                data["people"] = serde_json::json!(["Volunteer coordinator ".repeat(8)]);
                 data["topics"] = serde_json::json!(vec![data["topics"][0].clone(); 18]);
-                data["todo"] =
-                    serde_json::json!([{"task": "Prepare the welcome table", "status": "done"}]);
+                data["todo"] = serde_json::json!([{"task":"Set up table","status":"done"}]);
                 data["to_settle"] = serde_json::json!(vec![data["to_settle"][0].clone(); 24]);
             }
             std::fs::write(folder.join("english-summary.json"), data.to_string()).unwrap();
@@ -1438,6 +1435,7 @@ mod tests {
         rt.set_system_dark(dark);
         rt.update(|s, _| {
             s.meetings.retain(|m| ids.contains(&m.id.as_str()));
+            s.config.features.projects = false;
             s.go_meetings();
             s.sidebar_open.set(size.0 > 390.0);
             while s.areas.refresh_pending {
@@ -1589,7 +1587,7 @@ mod tests {
                         section_absent(&rt, "meeting-english-only");
                         element(&rt, "meeting-engine-status");
                         section_focus(&mut rt, "meeting-status");
-                        section_key(&mut rt, Key::Enter);
+                        section_key(&mut rt, Key::Text(" ".into()));
                         assert!(element(&rt, "meeting-status-settings").focused);
                         section_key(&mut rt, Key::Escape);
                         assert!(element(&rt, "meeting-status").focused);
@@ -1643,11 +1641,11 @@ mod tests {
                 };
                 let before = snapshot(&rt);
                 assert!(before[0].1 > 0.0 && before[1].1 > 0.0);
-                assert!(element(&rt, "ask-input").focused);
+                assert!(rt.state.question.focused);
                 header_status_update(&mut rt, &id);
                 element(&rt, "meeting-engine-status");
                 assert_eq!(snapshot(&rt), before);
-                assert!(element(&rt, "ask-input").focused);
+                assert!(rt.state.question.focused);
                 let [x, y, _, _] = element(&rt, "meeting-title").rect;
                 rt.pointer_move(x + 2.0, y + 2.0);
                 section_key(&mut rt, Key::Text("Maps".into()));
@@ -1659,6 +1657,9 @@ mod tests {
                 assert!(!wide || x + w <= element(&rt, rail).rect[0]);
                 press_visible(&mut rt, "meeting-transcript");
                 press_visible(&mut rt, "transcript-filter");
+                assert!(rt.state.transcript_filter.focused);
+                header_status_update(&mut rt, &id);
+                assert!(rt.state.transcript_filter.focused);
                 section_key(&mut rt, Key::Text("maps".into()));
                 assert_eq!(rt.state.transcript_filter.text, "maps");
                 press_visible(&mut rt, "meeting-hide-transcript");

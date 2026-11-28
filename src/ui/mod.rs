@@ -2432,23 +2432,17 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
 
 fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
     (s.on_memory() && s.memory.browse).then(|| {
+        let crumb = widgets::breadcrumb("Memory", "All", "memory-breadcrumb", p, |s| {
+            s.close_record();
+            s.memory.browse = false;
+        });
         row()
-            .gap(4.0)
             .items_center()
             .min_w(0.0)
             .w_full()
             .px(14.0)
             .py(4.0)
-            .child(widgets::breadcrumb(
-                "Memory",
-                "All",
-                "memory-breadcrumb",
-                p,
-                |s| {
-                    s.close_record();
-                    s.memory.browse = false;
-                },
-            ))
+            .child(crumb)
     })
 }
 
