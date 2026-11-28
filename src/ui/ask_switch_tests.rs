@@ -2807,6 +2807,14 @@ fn ask_card_model_chip_opens_the_picker_above_the_card() {
         focus_ask_card(&mut rt);
         tap(&mut rt, "ask-model");
         assert!(rt.state.on_hex());
+        assert_eq!(
+            rt.state
+                .pending_scroll
+                .as_ref()
+                .map(|scroll| scroll.key.as_str()),
+            Some("ask-connection")
+        );
+        assert!(rt.find("ask-connection").is_some());
         rt.update(|s, _| {
             s.ask_open = true;
             s.runner_error = Some("Synthetic model error".into());
@@ -2830,6 +2838,8 @@ fn ask_card_blur_and_escape_collapse_but_a_draft_stays_open() {
             } else {
                 rt.update(|_, tx| tx.blur());
             }
+            rt.frame(0.0);
+            assert!(!rt.state.question.focused);
             poll_ask_bar(&mut rt);
             assert_eq!(rect_of(&rt, "ask-pill"), rest);
         }
@@ -2838,6 +2848,7 @@ fn ask_card_blur_and_escape_collapse_but_a_draft_stays_open() {
         settle_ask_bar(&mut rt);
         let card = rect_of(&rt, "ask-pill");
         rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
         poll_ask_bar(&mut rt);
         assert_eq!(rect_of(&rt, "ask-pill"), card);
     }
@@ -2853,17 +2864,25 @@ fn ask_card_keeps_recording_controls_and_the_live_transcript_rule() {
             rt.update(|s, _| {
                 s.go_home();
                 scene_live_dock(s, phase, false, false);
+                s.hex.status = (phase == "recording").then(|| Ok(hex_engine_recording()));
             });
             settle_ask_bar(&mut rt);
             for key in [key, "meeting-transcript"] {
                 rt.update(|_, tx| tx.focus(key, true));
+                rt.frame(0.0);
+                assert!(element(&rt, key).focused, "{phase}: {key}");
                 poll_ask_bar(&mut rt);
                 assert!(rt.state.ask_open);
                 let lead = rect_of(&rt, key);
-                assert!(inside(lead, rect_of(&rt, "ask-field")));
+                let field = rect_of(&rt, "ask-field");
+                assert!(inside(lead, field));
+                assert!(inside(rect_of(&rt, "ask-send"), field));
                 let input = rect_of(&rt, "ask-input");
                 assert!(lead[0] + lead[2] <= input[0]);
                 assert!(input[2] >= 40.0);
+                if phase == "recording" {
+                    assert!(input[2] >= 90.0);
+                }
             }
         }
         rt.update(|s, tx| {
@@ -2872,6 +2891,7 @@ fn ask_card_keeps_recording_controls_and_the_live_transcript_rule() {
         });
         settle_ask_bar(&mut rt);
         rt.update(|_, tx| tx.focus("meeting-transcript", true));
+        rt.frame(0.0);
         poll_ask_bar(&mut rt);
         assert!(element(&rt, "meeting-transcript").focused);
         assert!(!rt.state.ask_open);
@@ -2886,11 +2906,14 @@ fn ask_card_hover_does_not_take_keyboard_focus() {
     for (mut rt, _) in ask_card_pages() {
         focus_ask_card(&mut rt);
         rt.key(Key::Text("A".into()).into());
+        rt.frame(0.0);
         for key in ["ask-model", "ask-pill", "ask-send"] {
             let (x, y) = rt.find(key).unwrap();
             rt.pointer_move(x, y);
             settle_ask_bar(&mut rt);
+            assert!(rt.state.question.focused, "hovering {key}");
             rt.key(Key::Text("x".into()).into());
+            rt.frame(0.0);
         }
         assert_eq!(rt.state.question.text, "Axxx");
     }
@@ -2903,6 +2926,7 @@ fn ask_card_keeps_the_input_mounted_across_open_and_close() {
     }
     for (mut rt, _) in ask_card_pages() {
         let path = element(&rt, "ask-input").path;
+        let rest = rect_of(&rt, "ask-pill");
         let caret = |rt: &Runtime<State>| (rt.state.question.anchor, rt.state.question.focus);
         rt.update(|_, tx| tx.focus("ask-input", true));
         settle_ask_bar(&mut rt);
@@ -2910,14 +2934,28 @@ fn ask_card_keeps_the_input_mounted_across_open_and_close() {
         poll_ask_bar(&mut rt);
         assert_eq!(element(&rt, "ask-input").path, path);
         assert_eq!(caret(&rt), before);
-        rt.key(Key::Text("A draft".into()).into());
+        let draft = "A draft";
+        rt.key(Key::Text(draft.into()).into());
+        rt.frame(0.0);
         let typed = caret(&rt);
+        assert_ne!(typed, before);
         rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
         poll_ask_bar(&mut rt);
         assert_eq!(element(&rt, "ask-input").path, path);
         assert_eq!(caret(&rt), typed);
-        rt.update(|s, _| s.question = TextEdit::default());
-        settle_ask_bar(&mut rt);
+        rt.update(|_, tx| tx.focus("ask-input", true));
+        rt.frame(0.0);
+        rt.key(Key::End.into());
+        for _ in draft.chars() {
+            rt.key(Key::Backspace.into());
+        }
+        rt.frame(0.0);
+        assert!(rt.state.question.text.is_empty());
+        rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
+        poll_ask_bar(&mut rt);
+        assert_eq!(rect_of(&rt, "ask-pill"), rest);
         assert_eq!(element(&rt, "ask-input").path, path);
         assert_eq!(caret(&rt), before);
     }
