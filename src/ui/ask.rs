@@ -892,6 +892,9 @@ fn model_label(runner: &core::Runner, model: Option<&str>) -> String {
 /// runs and the choice has changed since it started, it says "Next answer: ...", so the
 /// answer on screen is never mistaken for the new choice.
 pub(super) fn picker_label(s: &State) -> String {
+    if s.ask_settings.connection.settings.enabled {
+        return short_model(s);
+    }
     let current = choice_label(s, s.ask_runner_name(), s.ask_model().as_deref());
     match s.asks.get(&s.ask_key()) {
         Some(run)
