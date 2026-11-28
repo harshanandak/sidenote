@@ -7,8 +7,8 @@ use super::{
     roles,
     theme::Palette,
     widgets::{
-        ButtonDisabled, ButtonRole, button, hairline, menu_row, menu_separator, pressable,
-        quiet_button,
+        ButtonDisabled, ButtonRole, button, hairline, menu_row, menu_row_base, menu_separator,
+        pressable, quiet_button,
     },
 };
 use regex::{Captures, Regex};
@@ -589,18 +589,15 @@ impl AskMenu {
 }
 
 fn ask_menu_row(name: impl Into<String>, p: Palette, detail: Option<&str>) -> El {
-    menu_row(name, p, detail, None, None)
-        .focus_fill(p.sel)
-        .focus_ring(2.0, -2.0, p.accent)
+    ask_menu_focus(menu_row(name, p, detail, None, None), p)
 }
 
-fn ask_menu_checked(
-    name: impl Into<String>,
-    p: Palette,
-    detail: Option<&str>,
-    checked: bool,
-) -> El {
-    let item = ask_menu_row(name, p, detail)
+fn ask_menu_focus(row: El, p: Palette) -> El {
+    row.focus_fill(p.sel).focus_ring(2.0, -2.0, p.accent)
+}
+
+fn ask_menu_checked(row: El, p: Palette, checked: bool) -> El {
+    let item = row
         .role("menuitemcheckbox")
         .checked(checked)
         .focus_selected(checked);
@@ -759,8 +756,8 @@ fn scope_choices(s: &State, p: Palette, chip: bool) -> AskMenu {
     );
     if !s.companies.open {
         let this = s.ask_current_live() || s.ask_meeting_id().is_some();
-        let this_meeting =
-            ask_menu_checked("This meeting", p, None, this).key("ask-options-this-meeting");
+        let this_meeting = ask_menu_checked(ask_menu_row("This meeting", p, None), p, this)
+            .key("ask-options-this-meeting");
         let this_meeting = if s.selected.is_none() && !s.live_scope_available() {
             ask_menu_disabled(this_meeting)
         } else {
@@ -770,7 +767,7 @@ fn scope_choices(s: &State, p: Palette, chip: bool) -> AskMenu {
         menu.section("Ask scope", p);
         menu.item(this_meeting);
         menu.item(
-            ask_menu_checked("All meetings", p, None, !this)
+            ask_menu_checked(ask_menu_row("All meetings", p, None), p, !this)
                 .key("ask-options-all-meetings")
                 .on_press(|s: &mut State| s.set_ask_scope(true)),
         );
@@ -859,8 +856,16 @@ fn choice_label(s: &State, name: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
+fn picker_choice(name: &str, p: Palette, detail: Option<&str>, checked: bool) -> El {
+    // The pointer can still be over a row when the options menu becomes the picker.
+    let row = menu_row_base(name, p, detail, None, None)
+        .hover(p.chip)
+        .focus_within_flat();
+    ask_menu_checked(ask_menu_focus(row, p), p, checked)
+}
+
 pub(super) fn picker_model_row(label: &str, p: Palette, chosen: bool) -> El {
-    ask_menu_checked(label, p, None, chosen).help(label.to_owned())
+    picker_choice(label, p, None, chosen).help(label.to_owned())
 }
 
 fn runner_choice(s: &State, p: Palette) -> AskMenu {
@@ -873,7 +878,7 @@ fn runner_choice(s: &State, p: Palette) -> AskMenu {
     let mut menu = AskMenu::default();
     let default = choice_label(s, default_runner.as_deref(), default_model.as_deref());
     menu.item(
-        ask_menu_checked("Default", p, Some(&default), !overridden)
+        picker_choice("Default", p, Some(&default), !overridden)
             .key(PICKER_DEFAULT_KEY)
             .on_press(|s: &mut State| s.choose_ask_default()),
     );
@@ -901,7 +906,7 @@ fn runner_choice(s: &State, p: Palette) -> AskMenu {
         let value = s.ask_thinking();
         for level in core::ask_options::Thinking::ALL {
             menu.item(
-                ask_menu_checked(level.label(), p, None, level == value)
+                picker_choice(level.label(), p, None, level == value)
                     .key(format!("{PICKER_KEY}-thinking-{}", level.label()))
                     .on_press(move |s: &mut State| {
                         s.set_ask_thinking(level);

@@ -228,14 +228,11 @@ fn ask_model_picker_click_starts_arrow_navigation_at_default() {
     let groups = ask_settings::picker_groups(&rt.state);
     assert!(groups.len() >= 2 && groups[0].2.len() >= 2);
     assert!(element(&rt, "ask-model-picker-default").focused);
-    // Rune reveals a pointer-opened menu's current focus before advancing it.
-    for label in ["Default", groups[0].2[0].0.as_str()] {
-        rt.key(Key::Down.into());
-        rt.frame(0.2);
-        let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
-        assert_eq!(focused.label.as_deref(), Some(label));
-        assert!(focused.focus_visible);
-    }
+    rt.key(Key::Down.into());
+    rt.frame(0.2);
+    let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
+    assert_eq!(focused.label.as_deref(), Some(groups[0].2[0].0.as_str()));
+    assert!(focused.focus_visible);
 }
 
 #[test]
