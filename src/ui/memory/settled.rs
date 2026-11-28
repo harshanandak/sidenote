@@ -246,21 +246,26 @@ pub fn all(s: &State, p: Palette, narrow: bool) -> El {
         "settle-all-scroll",
     )
 }
-/// The current meeting view and the dev.13 Reading rail share this count and navigation.
 pub fn meeting_footer(s: &State, m: &core::Meeting, p: Palette) -> El {
-    if !s.config.features.memory {
-        return el();
-    }
-    let count = s
-        .memory
-        .settled
-        .iter()
-        .filter(|row| row.entry.source_meeting_id == m.id && !row.undone)
-        .count();
-    // Nothing settled from this meeting: there is nothing to say and nothing to open.
+    let count = meeting_count(s, m);
     if count == 0 {
         return el();
     }
+    meeting_link(m, count, p).mt(18.0)
+}
+
+pub(in crate::ui) fn meeting_count(s: &State, m: &core::Meeting) -> usize {
+    if !s.config.features.memory {
+        return 0;
+    }
+    s.memory
+        .settled
+        .iter()
+        .filter(|row| row.entry.source_meeting_id == m.id && !row.undone)
+        .count()
+}
+
+pub(in crate::ui) fn meeting_link(m: &core::Meeting, count: usize, p: Palette) -> El {
     let id = m.id.clone();
     crate::ui::widgets::link(
         format!(
@@ -271,7 +276,6 @@ pub fn meeting_footer(s: &State, m: &core::Meeting, p: Palette) -> El {
     )
     .key("meeting-settle-memory")
     .self_start()
-    .mt(18.0)
     .on_press(move |s: &mut State| {
         s.open_memory();
         s.memory.settle_all = true;

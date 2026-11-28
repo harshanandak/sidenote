@@ -187,7 +187,14 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     if !reduced {
         icon = icon.transition(Transition::blur_replace().springs(pair::SNAP));
     }
-    let mut shell = shell(&t.row, wide, p).child(tick(&t, icon, narrow, p));
+    let rail = matches!(density, Density::Rail);
+    let shell = shell(&t.row, wide, p);
+    let shell = if rail {
+        shell.px(0.0).py(0.0).gap(8.0)
+    } else {
+        shell
+    };
+    let mut shell = shell.child(tick(&t, icon, narrow, p));
     if let Some(toggle) = t.toggle {
         shell = shell.on_key(move |s: &mut State, event, _| {
             if matches!(&event.key, rune::Key::Text(key) if key == " ") {
@@ -198,15 +205,27 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
         });
     }
     let color = if done { p.faint } else { p.ink };
-    let role = if done { roles::SMALL } else { roles::NAME };
+    let role = match (rail, done) {
+        (true, _) => roles::Role {
+            lh: 18.0,
+            ..roles::SMALL
+        },
+        (_, true) => roles::SMALL,
+        _ => roles::NAME,
+    };
     let mut name = title(t.row.title, role, color, if narrow { 3 } else { 2 });
     if done {
         name = name.strike(0, t.row.title.len(), None);
     }
     let fade = Spring::new(0.18, 0.0);
     let spring = if reduced { fade } else { SETTLE };
-    let body = copy().child(name.motion(spring));
-    let owner_ink = t.owner.filter(|_| !done).map_or(p.faint, |_| p.soft);
+    let body = copy()
+        .gap(if rail { 0.0 } else { 2.0 })
+        .child(name.motion(spring));
+    let owner_ink = t
+        .owner
+        .filter(|_| !done && !rail)
+        .map_or(p.faint, |_| p.soft);
     let owner = (t.owner.unwrap_or("No owner"), owner_ink, 400.0);
     let dates = t.due.into_iter().flat_map(|(label, urgency, guessed)| {
         let (ink, weight) = date_style(p, done, urgency);
@@ -217,6 +236,18 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     let save = save_line(t.row.save, p);
     if !wide {
         let details = meta(p, [owner].into_iter().chain(dates).chain(status));
+        let details = if rail {
+            details.font(
+                roles::Role {
+                    size: 11.5,
+                    lh: 16.0,
+                    ..roles::META
+                }
+                .style(),
+            )
+        } else {
+            details
+        };
         return shell.child(body.child(details).children(save));
     }
     let grey = if done { p.faint } else { p.soft };
