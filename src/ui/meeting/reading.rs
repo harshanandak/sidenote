@@ -1191,12 +1191,10 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         );
     }
     // The thread stays in the notes column. The compact controls center in the page's Ask span.
-    const WIDE_ASK_RIGHT: f32 = 358.0;
+    // Centre on strip plus notes, like the strip arm below: the notes column moved with the
+    // recentred grid, so the bar lands where it already was without any further bias math.
     let center_offset = if wide {
-        let width = super::page_w(s);
-        let ask_center = (WIDE_SIDE + width - WIDE_ASK_RIGHT) / 2.0;
-        let notes_center = (width - WIDE_PAGE).max(0.0) / 2.0 + WIDE_SIDE + COLUMN / 2.0;
-        ask_center - notes_center
+        -WIDE_SIDE / 2.0
     } else if strip {
         -STRIP / 2.0
     } else {
@@ -1239,9 +1237,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
         .max_w(TASKS)
         .grow(0.0)
         .ml(GAP);
-        let body = grid(main, WIDE_SIDE, GRID + WIDE_SIDE, marks)
-            .ml(-WIDE_SIDE)
-            .child(tasks);
+        let body = grid(main, WIDE_SIDE, GRID_W, marks).child(tasks);
         columns = columns.justify_center().child(frame.child(body));
     } else if strip {
         // Narrower than the grid but wide enough for the strip: the notes keep their column and
@@ -1266,7 +1262,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     );
     if strip {
         let frame = if wide {
-            wide_frame()
+            row().w(GRID_W).min_w(GRID_W).max_w(GRID_W).pl(WIDE_SIDE)
         } else {
             row().w(STRIP + COLUMN).pl(STRIP)
         };
@@ -1294,7 +1290,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
 }
 
 fn wide_frame() -> El {
-    row().w_full().max_w(WIDE_PAGE).px(WIDE_SIDE)
+    row().w(GRID_W).min_w(GRID_W).max_w(GRID_W)
 }
 
 fn grid(notes: El, strip: f32, width: f32, marks: Option<El>) -> El {
