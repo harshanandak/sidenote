@@ -1043,11 +1043,16 @@ fn pane_room(s: &State) -> f32 {
         - measured_height("meeting-reading-notice")
 }
 
-pub(in crate::ui) fn transcript_needs_thread_room(s: &State) -> bool {
-    // The thread stays measurable when its slot no longer takes up room.
-    let full_dock = measured_height("meeting-bottom-bar") - measured_height("ask-thread-slot")
-        + measured_height("ask-thread");
-    pane_room(s) - full_dock < transcript_min_height()
+fn transcript_ask_dock(s: &State, room: f32, minimum: f32) -> (bool, f32) {
+    let dock = rune::memo::layout_with("meeting-bottom-bar", |rect| rect[3]);
+    let slot = measured_height("ask-thread-slot");
+    let compact = dock.map_or(0.0, |height| height - slot);
+    // The thread stays measurable when its slot is out of flow.
+    let full = compact + measured_height("ask-thread");
+    let expanded = !s.thread_hidden || s.asks.contains_key(&s.ask_key());
+    // A citation can enter from another page before the meeting dock has been measured.
+    let yield_thread = expanded && (dock.is_none() || room - full < minimum);
+    (yield_thread, if yield_thread { compact } else { full })
 }
 
 pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
@@ -1060,19 +1065,21 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let phone = super::phone(s);
     const DOCK_MARGIN: f32 = 6.0;
     const DIVIDER_MARGIN: f32 = 8.0;
-    let (transcript_only, surface_height) = if s.transcript_open {
+    let (transcript_only, surface_height, yield_thread) = if s.transcript_open {
         let minimum = transcript_min_height();
         let desired = transcript_height(s).max(minimum);
-        let available = pane_room(s) - measured_height("meeting-bottom-bar");
+        let pane = pane_room(s);
+        let (yield_thread, dock_height) = transcript_ask_dock(s, pane, minimum);
+        let available = pane - dock_height;
         let shared = available
             - measured_height("meeting-header")
             - DOCK_MARGIN
             - if phone { 1.0 + DIVIDER_MARGIN } else { 0.0 };
         let transcript_only = shared < minimum;
         let room = if transcript_only { available } else { shared };
-        (transcript_only, desired.min(room.max(0.0)))
+        (transcript_only, desired.min(room.max(0.0)), yield_thread)
     } else {
-        (false, 0.0)
+        (false, 0.0, false)
     };
     let overlay_thread =
         phone && !s.transcript_open && !s.thread_hidden && !s.saved.messages.is_empty();
@@ -1204,7 +1211,10 @@ pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
             p,
             layer,
             crate::ui::live::parts_control(s, p),
-            center_offset,
+            ask::ReadingPlacement {
+                center_offset,
+                yield_thread,
+            },
         ));
     main = main.child(if overlay_thread {
         dock.pin(Some(0.0), None, Some(0.0), Some(0.0))
