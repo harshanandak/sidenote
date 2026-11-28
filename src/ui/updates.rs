@@ -708,13 +708,24 @@ pub(super) fn acknowledge_drawn_confirmation(rt: &rune::Runtime<State>) -> bool 
     if rt.find(CONFIRMATION_NOTICE).is_none() {
         return false;
     }
-    let marker = rt.state.update_seen_marker(version);
     // A failed write is retried on the next frame, so a later launch does not repeat the notice.
-    match std::fs::create_dir_all(rt.state.store.root.join("local"))
-        .and_then(|()| std::fs::File::create_new(marker))
-    {
-        Ok(_) => true,
-        Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+    rt.state.mark_update_seen(version)
+}
+
+impl State {
+    fn mark_update_seen(&self, version: &str) -> bool {
+        match std::fs::create_dir_all(self.store.root.join("local"))
+            .and_then(|()| std::fs::File::create_new(self.update_seen_marker(version)))
+        {
+            Ok(_) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+        }
+    }
+    fn dismiss_update_confirmation(&mut self) {
+        // Dismissing ends the frame retries, so it makes one last attempt to save the marker.
+        if let Some(version) = self.updates.updated_version.take() {
+            self.mark_update_seen(&version);
+        }
     }
 }
 
@@ -746,7 +757,7 @@ pub fn notice(s: &State, p: Palette) -> Option<El> {
                     .child(message.role("status"))
                     .children((!restarting).then(|| {
                         super::widgets::quiet_button("Dismiss", "update-notice-dismiss", p)
-                            .on_press(|s: &mut State| s.updates.updated_version = None)
+                            .on_press(State::dismiss_update_confirmation)
                     })),
             ),
     )
@@ -997,7 +1008,7 @@ mod listener_tests {
     }
 
     #[test]
-    fn failed_seen_marker_write_is_retried() {
+    fn failed_seen_marker_write_is_retried_through_dismiss() {
         let root = tempfile::tempdir().unwrap();
         write_confirmation_target(root.path(), "2.0.0");
         std::fs::write(root.path().join("local"), b"").unwrap();
@@ -1006,7 +1017,8 @@ mod listener_tests {
         assert!(!acknowledge_drawn_confirmation(&window));
 
         std::fs::remove_file(root.path().join("local")).unwrap();
-        assert!(acknowledge_drawn_confirmation(&window));
+        window.update(|s, _| s.dismiss_update_confirmation());
+        assert_update_confirmation(&mut window, None);
         assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
     }
 
