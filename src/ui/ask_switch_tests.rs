@@ -2289,8 +2289,23 @@ fn poll_ask_bar(rt: &mut Runtime<State>) {
     settle_ask_bar(rt);
 }
 
-fn assert_ask_send_fill(rt: &Runtime<State>, color: rune::Color, alpha: f32) {
-    assert_eq!(ask_bar_paint(rt, "ask-send").fill, color.premul(alpha));
+fn assert_ask_button_paint(rt: &Runtime<State>, key: &str, fill: rune::Color, ink: rune::Color) {
+    let paint = ask_bar_paint(rt, key);
+    assert_eq!(paint.fill, fill.premul(1.0));
+    let [x, y, w, h] = paint.rect;
+    let glyph = rt
+        .instances
+        .iter()
+        .find(|i| {
+            let [gx, gy, gw, gh] = i.rect;
+            i.params[1] == rune::render::KIND_GLYPH
+                && gx >= x
+                && gy >= y
+                && gx + gw <= x + w
+                && gy + gh <= y + h
+        })
+        .unwrap_or_else(|| panic!("missing icon for {key}"));
+    assert_eq!(glyph.fill, ink.premul(1.0));
 }
 
 fn begin_ask_bar_run(rt: &mut Runtime<State>) {
@@ -2320,7 +2335,7 @@ fn ask_bar_idle_state_on_home_and_tasks() {
         assert_eq!(rect_of(rt, "ask-pill")[3], 48.0);
         assert_eq!(rect_of(rt, "ask-send")[3], 32.0);
         assert!(element(rt, "ask-send").inert);
-        assert_ask_send_fill(rt, p.button_fill, 0.5);
+        assert_ask_button_paint(rt, "ask-send", p.chip, p.faint);
     });
 }
 
@@ -2417,13 +2432,13 @@ fn ask_bar_focus_rings_the_pill_without_moving_it() {
 fn ask_bar_typing_turns_send_active() {
     on_ask_bar_pages("ask_bar_typing_turns_send_active", |rt, p| {
         rt.update(|s, _| s.question = TextEdit::new("x"));
-        settle_ask_bar(rt);
+        rt.frame(0.0);
         assert!(!element(rt, "ask-send").inert);
-        assert_ask_send_fill(rt, p.button_fill, 1.0);
+        assert_ask_button_paint(rt, "ask-send", p.button_fill, p.button_ink);
         rt.update(|s, _| s.question = TextEdit::new(" \t "));
-        settle_ask_bar(rt);
+        rt.frame(0.0);
         assert!(element(rt, "ask-send").inert);
-        assert_ask_send_fill(rt, p.button_fill, 0.5);
+        assert_ask_button_paint(rt, "ask-send", p.chip, p.faint);
     });
 }
 
@@ -2434,6 +2449,7 @@ fn ask_bar_sending_swaps_send_for_stop() {
         begin_ask_bar_run(rt);
         assert!(rt.find("ask-send").is_none());
         assert_eq!(element(rt, "ask-stop").label.as_deref(), Some("Stop"));
+        assert_ask_button_paint(rt, "ask-stop", p.chip, p.ink);
         assert!(rt.find("ask-progress").is_some());
         assert_ask_bar_edge(rt, p.line, (4.0, 18.0), p);
     });

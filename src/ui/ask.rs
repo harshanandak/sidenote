@@ -842,6 +842,13 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
         .size(DOCK_BUTTON, DOCK_BUTTON)
         .shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
+    let quiet = Palette {
+        button_fill: p.chip,
+        button_ink: p.ink,
+        button_primary_hover: p.button_hover,
+        button_primary_pressed: p.button_pressed,
+        ..p
+    };
     if pending {
         let run = s.asks.get(&s.ask_key());
         let stopping = run.is_some_and(|r| r.cancel.stopped());
@@ -851,8 +858,8 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
                 &super::icons::STOP,
                 "Stop",
                 "ask-stop",
-                super::widgets::ButtonRole::Secondary,
-                p,
+                super::widgets::ButtonRole::Primary,
+                quiet,
             )
             .help(format!("Stop {who}"))
             .size(DOCK_BUTTON, DOCK_BUTTON)
@@ -873,15 +880,23 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
         "Ask (Enter)",
         "ask-send",
         super::widgets::ButtonRole::Primary,
-        p,
+        if empty {
+            Palette {
+                button_ink: p.faint,
+                ..quiet
+            }
+        } else {
+            p
+        },
     )
     .size(DOCK_BUTTON, DOCK_BUTTON)
     .radius(DOCK_BUTTON / 2.0)
     .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
     .transition(replace)
+    // Keep the fill and arrow in sync with availability on the first frame.
+    .motion(Spring::NONE)
     .disabled(empty)
-    .dim(if empty { 0.5 } else { 1.0 })
     .on_press_tx(|s: &mut State, tx| {
         let q = s.question.text.clone();
         submit(s, &q, tx);
