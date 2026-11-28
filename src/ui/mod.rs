@@ -2485,6 +2485,7 @@ fn page_header(s: &State, p: theme::Palette, sidebar: theme::Palette, narrow: bo
     let tools_p = if drawer { sidebar } else { p };
     let show_compact = !docked && !s.sidebar_is_open();
     let tools = row()
+        .key("page-header-tools")
         .gap(2.0)
         .items_center()
         .children((!docked).then(|| nav::toggle(s, tools_p)))

@@ -2264,4 +2264,39 @@ mod tests {
             assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
         }
     }
+
+    #[test]
+    fn phone_drawer_toggle_keeps_search_focus() {
+        // The tools row keeps a stable key, so opening or closing the phone drawer
+        // must not move focus off the search button.
+        fn focused_key(rt: &rune::Runtime<State>) -> Option<String> {
+            rt.elements()
+                .into_iter()
+                .find(|element| element.focused)
+                .and_then(|element| element.key)
+        }
+        for dark in [false, true] {
+            let context = format!("dark {dark}");
+            let mut rt = identity_rt(390.0, 844.0, dark);
+            rt.set_full_keyboard_access(true);
+            settle(&mut rt);
+            assert!(!rt.state.sidebar_is_open(), "{context}");
+            for _ in 0..20 {
+                if focused_key(&rt).as_deref() == Some("nav-search") {
+                    break;
+                }
+                rt.key(rune::Key::Tab.into());
+                settle(&mut rt);
+            }
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+            key_backslash(&mut rt);
+            assert!(rt.state.sidebar_is_open(), "{context}");
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 1, "{context}");
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+            key_backslash(&mut rt);
+            assert!(!rt.state.sidebar_is_open(), "{context}");
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+        }
+    }
 }
