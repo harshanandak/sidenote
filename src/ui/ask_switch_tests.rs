@@ -105,7 +105,7 @@ fn ask_option_menu_fits_at_phone_width() {
 
 fn assert_open_ask_panel_fits(rt: &mut Runtime<State>, key: &str, label: &str) {
     rt.settle_all();
-    rt.frame(0.0);
+    rt.frame(0.5);
     let panel = element(rt, key);
     assert_eq!(panel.label.as_deref(), Some(label));
     assert!(panel.opacity > 0.99 && !panel.exiting && !panel.inert);
@@ -118,7 +118,10 @@ fn assert_open_ask_panel_fits(rt: &mut Runtime<State>, key: &str, label: &str) {
 fn ask_option_menu_keyboard_focus_has_contrast_in_both_themes() {
     for dark in [false, true] {
         let mut rt = home_ask(DEFAULT_SIZE, dark);
-        tap(&mut rt, "ask-options");
+        rt.update(|_, tx| tx.focus("ask-options", true));
+        rt.frame(0.0);
+        rt.key(Key::Enter.into());
+        rt.frame(0.2);
         rt.key(Key::Up.into());
         rt.settle_all();
         rt.frame(0.0);
@@ -135,10 +138,11 @@ fn ask_option_menu_keyboard_focus_has_contrast_in_both_themes() {
                 .iter()
                 .any(|i| on_row(i.rect) && i.fill == p.sel.premul(1.0))
         );
+        let focus_ring = p.accent.premul(1.0);
         assert!(
             rt.instances
                 .iter()
-                .any(|i| on_row(i.rect) && i.border == p.accent.premul(1.0))
+                .any(|i| on_row(i.rect) && i.border == focus_ring)
         );
         let contrast = |color: rune::Color| {
             let a = color.luminance() + 0.05;
