@@ -862,7 +862,8 @@ impl State {
             return;
         }
         let idle_or_stopped = self.hex.stopped()
-            || matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status));
+            || (running
+                && matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status)));
         let pending_expired = idle_or_stopped
             && !busy
             && live
