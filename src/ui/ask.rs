@@ -186,10 +186,14 @@ fn submit(s: &mut State, question: &str, tx: &mut Tx) {
 pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
     let open = s.question.focused
         || tx.focused().is_some_and(|key| {
+            // The meeting page also uses this key for a tab outside the pill.
+            let live_transcript = key == "meeting-transcript" && s.on_live();
             matches!(
                 key,
                 "ask-model" | "ask-endpoint-settings" | "ask-options" | "ask-send" | "ask-stop"
-            ) || key.starts_with("ask-options-")
+            ) || matches!(key, "meeting-pause" | "meeting-resume" | "meeting-generate")
+                || live_transcript
+                || key.starts_with("ask-options-")
         });
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
@@ -877,7 +881,7 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
     .preserve_focus_on_press(true)
     .transition(replace)
     .disabled(empty)
-    .dim(if s.ask_has_text { 1.0 } else { 0.5 })
+    .dim(if empty { 0.5 } else { 1.0 })
     .on_press_tx(|s: &mut State, tx| {
         let q = s.question.text.clone();
         submit(s, &q, tx);
@@ -1085,9 +1089,9 @@ pub fn overlay_with(
             .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
     }));
     let (ring, shadow_y, shadow_blur) = pill_edge(s.ask_open, s.ask_errors.contains_key(&id), p);
-    let pill = if s.ask_open { pill } else { pill.hover(p.chip) };
     let pill = pill
         .fill(p.card)
+        .hover(if s.ask_open { p.card } else { p.chip })
         .border(1.0, ring)
         .shadow(shadow_y, shadow_blur, p.shadow)
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))

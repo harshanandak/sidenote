@@ -322,7 +322,6 @@ pub struct State {
     /// The Ask bar is open: its box has focus. It follows `question.focused` one commit late, from
     /// `poll`, because a click into a field is a settle commit and those land without motion.
     pub ask_open: bool,
-    pub ask_has_text: bool,
     pub runner_open: bool,
     pub ask_settings: ask_settings::AskSettings,
     /// The Ask thread folded down to its header, so the meeting gets the room back.
@@ -582,7 +581,6 @@ impl State {
             runner_found,
             agents_rechecked: false,
             ask_open: false,
-            ask_has_text: false,
             runner_open: false,
             ask_settings: ask_settings::AskSettings::new(&prefs),
             thread_hidden: false,
@@ -2200,11 +2198,6 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
             s.ask_settings.warm_signature.clear();
         }
         s.ask_open = ask_open;
-        changed = true;
-    }
-    let has_text = !s.question.text.trim().is_empty();
-    if s.ask_has_text != has_text {
-        s.ask_has_text = has_text;
         changed = true;
     }
     if !headless {

@@ -2341,6 +2341,50 @@ fn ask_bar_hover_fills_the_pill_with_chip() {
 }
 
 #[test]
+fn ask_bar_blur_does_not_flash_hover() {
+    on_ask_bar_pages("ask_bar_blur_does_not_flash_hover", |rt, p| {
+        tap(rt, "ask-input");
+        assert_eq!(ask_bar_paint(rt, "ask-pill").fill, p.chip.premul(1.0));
+        poll_ask_bar(rt);
+        rt.pointer_move(0.0, 0.0);
+        rt.frame(0.0);
+        rt.frame(0.2);
+        rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
+        rt.update_if(|s, tx| poll(s, 0.0, tx));
+        assert!(!rt.state.ask_open);
+        let card = p.card.premul(1.0);
+        for dt in [0.0, 0.016, 0.016, 0.016] {
+            rt.frame(dt);
+            let fill = ask_bar_paint(rt, "ask-pill").fill;
+            let matches = fill.iter().zip(card).all(|(a, b)| (a - b).abs() < 1e-6);
+            assert!(matches, "{fill:?} differs from card {card:?}");
+        }
+    });
+}
+
+#[test]
+fn ask_bar_live_transcript_focus_suppresses_hover() {
+    if in_parent("ask_bar_live_transcript_focus_suppresses_hover") {
+        return;
+    }
+    let mut rt = page();
+    rt.update(|s, _| {
+        s.go_home();
+        scene_live_dock(s, "transcript", false, false);
+    });
+    settle_ask_bar(&mut rt);
+    let p = theme::palette(Env::default().system_dark);
+    let (x, _) = rt.find("ask-input").unwrap();
+    rt.pointer_move(x, rect_of(&rt, "ask-pill")[1] + 3.0);
+    rt.update(|_, tx| tx.focus("meeting-transcript", true));
+    rt.frame(0.0);
+    poll_ask_bar(&mut rt);
+    assert!(element(&rt, "meeting-transcript").focused);
+    assert_eq!(ask_bar_paint(&rt, "ask-pill").fill, p.card.premul(1.0));
+}
+
+#[test]
 fn ask_bar_focus_rings_the_pill_without_moving_it() {
     if in_parent("ask_bar_focus_rings_the_pill_without_moving_it") {
         return;
@@ -2375,11 +2419,9 @@ fn ask_bar_typing_turns_send_active() {
         rt.update(|s, _| s.question = TextEdit::new("x"));
         settle_ask_bar(rt);
         assert!(!element(rt, "ask-send").inert);
-        assert_ask_send_fill(rt, p.button_fill, 0.5);
-        poll_ask_bar(rt);
         assert_ask_send_fill(rt, p.button_fill, 1.0);
         rt.update(|s, _| s.question = TextEdit::new(" \t "));
-        poll_ask_bar(rt);
+        settle_ask_bar(rt);
         assert!(element(rt, "ask-send").inert);
         assert_ask_send_fill(rt, p.button_fill, 0.5);
     });
