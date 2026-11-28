@@ -271,12 +271,11 @@ fn recording_clock_stays_visible_on_the_live_page() {
         s.listener_finished(Ok(()));
     });
     hex_records(&mut rt);
-    // No bar spans the window: the page header sits in the content column with no control and
-    // no caption buttons to hold, so it takes no height, and the sidebar starts at the top.
+    // The selected recording uses the Meeting Reading header beside the docked sidebar.
     let header = element(&rt, "page-header");
     let nav = element(&rt, "nav");
     assert!(rt.find("top-bar").is_none());
-    assert_eq!(header.rect[3], 0.0);
+    assert_eq!(header.rect[3], 48.0);
     assert_eq!(nav.rect[1], 0.0);
     assert!(header.rect[0] >= nav.rect[0] + nav.rect[2]);
     tap(&mut rt, "nav-new-menu");

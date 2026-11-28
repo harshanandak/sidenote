@@ -70,8 +70,7 @@ pub const SIDE: f32 = 24.0;
 /// The widest the other reading pages get; lines stay near 80 characters.
 pub const PAGE_COLUMN: f32 = 760.0;
 
-/// The page width below which the meeting page uses a 16 gutter, a 24 title and a control row
-/// above the wrapping facts.
+/// The page width below which the reading page uses a 16 px gutter.
 pub const PHONE: f32 = 600.0;
 /// The phone layout's page gutter.
 pub const PHONE_SIDE: f32 = 16.0;

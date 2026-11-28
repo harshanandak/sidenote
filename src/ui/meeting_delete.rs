@@ -1103,7 +1103,7 @@ mod tests {
             store.receipt(&second_transaction).unwrap().phase,
             Phase::Restored
         );
-        tap(&mut rt, "meeting-breadcrumb-parent");
+        tap(&mut rt, "nav-meetings");
         assert!(rt.state.selected.is_none());
         open_deleted_from_title(&mut rt);
         let Some(Dialog::Deleted { rows, .. }) = &rt.state.delete_ui.dialog else {
