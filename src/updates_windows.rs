@@ -370,12 +370,25 @@ pub fn load() -> Status {
     read_status(&directory())
 }
 fn read_status(directory: &Path) -> Status {
-    let mut status = pipeline_status(read_saved_status(directory), directory);
-    if install_state::listener_pending(directory) && !install_state::pipeline_pending(directory) {
-        status.phase = Phase::Error;
-        status.error = Some(INSTALL_LISTENER_ERROR.into());
+    let status = read_saved_status(directory);
+    match install_state::status_record(directory) {
+        Ok((record, canonical))
+            if record.needs_listener_recovery() && (canonical || !record.pipeline_pending()) =>
+        {
+            Status {
+                phase: Phase::Error,
+                error: Some(INSTALL_LISTENER_ERROR.into()),
+                ..status
+            }
+        }
+        Ok((record, _)) if record.pipeline_pending() => with_pipeline_debt(status),
+        Err(error) => Status {
+            phase: Phase::Error,
+            error: Some(error),
+            ..status
+        },
+        Ok(_) => status,
     }
-    status
 }
 fn read_saved_status(directory: &Path) -> Status {
     fs::read(directory.join("updates.json"))
@@ -389,13 +402,18 @@ fn read_saved_status(directory: &Path) -> Status {
         })
         .unwrap_or_default()
 }
-fn pipeline_status(mut status: Status, directory: &Path) -> Status {
+fn pipeline_status(status: Status, directory: &Path) -> Status {
     if install_state::pipeline_pending(directory) {
-        if matches!(status.phase, Phase::Idle | Phase::Manual) {
-            status.phase = Phase::Error;
-        }
-        status.error = Some(PIPELINE_INSTALL_ERROR.into());
+        with_pipeline_debt(status)
+    } else {
+        status
     }
+}
+fn with_pipeline_debt(mut status: Status) -> Status {
+    if matches!(status.phase, Phase::Idle | Phase::Manual) {
+        status.phase = Phase::Error;
+    }
+    status.error = Some(PIPELINE_INSTALL_ERROR.into());
     status
 }
 fn save(status: &Status) -> io::Result<()> {
@@ -409,14 +427,22 @@ fn save_status(status: &Status) -> io::Result<()> {
     if !installed() {
         return Ok(());
     }
-    save_status_at(&directory(), status, report)
+    save_status_at(&directory(), status, false, report)
 }
 fn save_status_at(
     directory: &Path,
     status: &Status,
+    reconcile_error: bool,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> io::Result<()> {
-    write_json(&directory.join("updates.json"), status)?;
+    let path = directory.join("updates.json");
+    if reconcile_error {
+        let mut saved = serde_json::to_value(status)?;
+        saved["reconcile_error"] = true.into();
+        write_json(&path, &saved)?;
+    } else {
+        write_json(&path, status)?;
+    }
     write_json(&directory.join("update-report.json"), &make_report(status))
 }
 fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
@@ -1457,7 +1483,7 @@ impl From<io::Error> for InstallAdmission {
 impl InstallAdmission {
     fn message(self) -> String {
         match self {
-            Self::Busy => "Another install hook is reconciling Sidenote. Try again.".into(),
+            Self::Busy => install_state::CONTENTION.into(),
             Self::Io(error) => format!("Could not open the Sidenote install lock: {error}"),
         }
     }
@@ -1497,7 +1523,7 @@ impl<'a> InstallGuard<'a> {
         status: &Status,
         make_report: impl FnOnce(&Status) -> serde_json::Value,
     ) -> io::Result<()> {
-        save_status_at(self.directory, status, make_report)
+        save_status_at(self.directory, status, false, make_report)
     }
 }
 
@@ -1640,7 +1666,7 @@ fn reconcile_and_save(
     let result =
         preflight().and_then(|()| reconcile_install(guard, pipeline, listener, &make_report));
     let directory = guard.directory;
-    let status = read_status(directory);
+    let status = read_saved_status(directory);
     let error = match &result {
         Err(error) => Some(error),
         Ok(work) => work.error(),
@@ -1654,8 +1680,7 @@ fn reconcile_and_save(
         },
         None => after_update_status(status, directory),
     };
-    let saved = guard
-        .save(&status, make_report)
+    let saved = save_status_at(directory, &status, error.is_some(), make_report)
         .map_err(|_| "Could not save installation status.".to_owned());
     result.and_then(|work| {
         if work.error().is_none() {
@@ -1690,7 +1715,13 @@ fn reconcile_install(
     })
 }
 fn after_update_status(status: Status, directory: &Path) -> Status {
-    let status = if status.version == VERSION && !install_state::pipeline_pending(directory) {
+    let status = if status.version == VERSION
+        && !install_state::pipeline_pending(directory)
+        && status
+            .error
+            .as_deref()
+            .is_none_or(|error| install_state::owns_error(directory, error))
+    {
         Status {
             checked: status.checked,
             ..Default::default()
@@ -1709,7 +1740,11 @@ fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(
         if recover().is_ok() {
             let _ = guard.clear_listener_pending();
         } else {
-            let _ = save(&Status { phase: Phase::Error, error: Some("The update finished, but the listener could not restart. Check its Sidenote task.".into()), ..load() });
+            let _ = save(&Status {
+                phase: Phase::Error,
+                error: Some(install_state::ROLLBACK.into()),
+                ..load()
+            });
         }
     }
 }
@@ -1836,6 +1871,20 @@ fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     }
     Ok(report)
 }
+fn status_cli(directory: &Path, make_report: impl Fn(&Status) -> serde_json::Value) -> i32 {
+    let guard = InstallGuard::acquire(directory);
+    let status = read_status(directory);
+    if let Ok(_guard) = guard {
+        let _ = write_json(&directory.join("update-report.json"), &make_report(&status));
+    }
+    finish_cli(&status, make_report)
+}
+
+fn finish_cli(status: &Status, make_report: impl FnOnce(&Status) -> serde_json::Value) -> i32 {
+    println!("{}", make_report(status));
+    i32::from(status.phase == Phase::Error)
+}
+
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     let result = if args.iter().any(|a| a == "--update-window-start") {
         window_start(|_| {}).map(|_| load())
@@ -1843,22 +1892,19 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
         recording_idle().map(|_| load())
     } else if args.iter().any(|a| a == "--update-apply") {
         apply(false, vec!["--update-status".into()], |phase| {
-            let _ = save(&Status { phase, ..load() });
+            let _ = save(&Status {
+                phase,
+                error: None,
+                ..load()
+            });
         })
         .map(|_| load())
     } else if args.iter().any(|a| a == "--update-check") {
         check(|_| {})
+    } else if installed() {
+        return status_cli(&directory(), report);
     } else {
-        let directory = directory();
-        if installed()
-            && let Ok(_guard) = InstallGuard::acquire(&directory)
-        {
-            let status = read_status(&directory);
-            let _ = write_report(&status);
-            Ok(status)
-        } else {
-            Ok(load())
-        }
+        Ok(load())
     };
     let status = match result {
         Ok(s) => s,
@@ -1868,8 +1914,7 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             ..load()
         },
     };
-    println!("{}", report(&status));
-    i32::from(status.phase == Phase::Error)
+    finish_cli(&status, report)
 }
 
 #[cfg(test)]

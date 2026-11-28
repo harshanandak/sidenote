@@ -1,14 +1,82 @@
+use super::install_record::{Diagnostic, ListenerWork, PipelineWork, Record, read};
 use super::{INSTALL_LISTENER_ERROR, InstallGuard, PIPELINE_INSTALL_ERROR, VERSION};
 use std::{fs, io, path::Path};
 
 const RECEIPT: &str = "install-hook.complete";
 const PIPELINE: &str = "pipeline-install.pending";
 const RESUME: &str = "update-listener.resume";
+pub(super) const CONTENTION: &str = "Another install hook is reconciling Sidenote. Try again.";
+pub(super) const ROLLBACK: &str =
+    "The update finished, but the listener could not restart. Check its Sidenote task.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PipelineCompletion {
     Complete,
     NotConfigured,
+}
+
+impl Record {
+    fn from_legacy(directory: &Path) -> Self {
+        let saved = saved_status(directory);
+        let listener_diagnostic = saved["error"]
+            .as_str()
+            .filter(|error| listener_error(error, &saved))
+            .map(|_| Diagnostic::ListenerRecovery);
+        Self {
+            schema_version: 1,
+            app_version: VERSION.into(),
+            listener_work: if listener_pending(directory) {
+                ListenerWork::Pending
+            } else {
+                ListenerWork::Complete
+            },
+            pipeline_work: if pipeline_pending(directory) {
+                PipelineWork::Pending
+            } else {
+                PipelineWork::Complete
+            },
+            listener_diagnostic,
+            pipeline_diagnostic: (saved["error"].as_str() == Some(PIPELINE_INSTALL_ERROR))
+                .then_some(Diagnostic::PipelineInstall),
+        }
+    }
+
+    pub(super) fn needs_listener_recovery(&self) -> bool {
+        self.app_version != VERSION || self.listener_work == ListenerWork::Pending
+    }
+
+    pub(super) fn pipeline_pending(&self) -> bool {
+        self.pipeline_work == PipelineWork::Pending
+    }
+}
+
+fn saved_status(directory: &Path) -> serde_json::Value {
+    fs::read(directory.join("updates.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn listener_error(error: &str, saved: &serde_json::Value) -> bool {
+    match error {
+        CONTENTION | PIPELINE_INSTALL_ERROR => false,
+        INSTALL_LISTENER_ERROR | ROLLBACK => true,
+        _ => saved["reconcile_error"] == true && saved["error"].as_str() == Some(error),
+    }
+}
+
+pub(super) fn owns_error(directory: &Path, error: &str) -> bool {
+    matches!(error, CONTENTION | PIPELINE_INSTALL_ERROR)
+        || listener_error(error, &saved_status(directory))
+}
+
+pub(super) fn status_record(directory: &Path) -> Result<(Record, bool), String> {
+    let record = read(directory)?;
+    let canonical = record.is_some();
+    Ok((
+        record.unwrap_or_else(|| Record::from_legacy(directory)),
+        canonical,
+    ))
 }
 
 // Display and feed status can sample the legacy files without install admission.
