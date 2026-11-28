@@ -46,6 +46,15 @@ fn click_new(rt: &mut Runtime<State>) {
     }
     tap(rt, "new-meeting");
 }
+fn dismiss_new_menu(rt: &mut Runtime<State>) {
+    rt.key(Key::Escape.into());
+    rt.frame(0.2);
+    assert!(rt.find("new-meeting").is_none());
+    if rt.state.drawer_open.get() {
+        tap(rt, "sidebar-toggle");
+    }
+    assert!(!rt.state.drawer_open.get());
+}
 fn fixture_runtime() -> (Fixture, Runtime<State>) {
     fixture_runtime_at(WIDE, false)
 }
@@ -308,6 +317,7 @@ fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str
     finish_busy(rt);
     assert_eq!(api.data.lock().unwrap().starts, 1);
     assert_eq!(session(rt).id, first);
+    dismiss_new_menu(rt);
     write_notes(rt, "matrix no-id notes");
     start_fixture(api, "starting", None);
     deliver_status(rt);
@@ -512,10 +522,7 @@ fn record_new_meeting_waits_for_running_status(api: &Fixture, rt: &mut Runtime<S
     click_new(rt);
     finish_busy(rt);
     assert_eq!(api.data.lock().unwrap().starts, 1);
-    tap(rt, "nav-new-menu");
-    if rt.state.drawer_open.get() {
-        tap(rt, "sidebar-toggle");
-    }
+    dismiss_new_menu(rt);
     api.data.lock().unwrap().meeting_state = Some("recording");
     deliver_status(rt);
     assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Recording);
