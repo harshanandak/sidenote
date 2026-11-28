@@ -1018,7 +1018,8 @@ mod listener_tests {
 
         std::fs::remove_file(root.path().join("local")).unwrap();
         window.update(|s, _| s.dismiss_update_confirmation());
-        assert_update_confirmation(&mut window, None);
+        // The dismissed notice fades out, so check the state rather than the next frame.
+        assert_eq!(window.state.updates.updated_version, None);
         assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
     }
 
