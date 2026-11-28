@@ -993,16 +993,9 @@ fn card_open(s: &State) -> bool {
 #[rustfmt::skip]
 fn quick_chips(s: &State, p: Palette, compact: bool, reading: bool) -> El {
     let control = roles::MEETING_CONTROL;
-    let chip = |e: El| {
-        pressable(e)
-            .h(24.0).px(10.0).radius(12.0)
-            .hover(p.button_hover).preserve_focus_on_press(true)
-    };
-    let more = chip(
-        row().items_center().gap(2.0)
-            .child(control.line("More", p.soft))
-            .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)),
-    )
+    let chip = |e: El| pressable(e).h(24.0).px(10.0).radius(12.0).hover(p.button_hover).preserve_focus_on_press(true);
+    let more = chip(row().items_center().gap(2.0).child(control.line("More", p.soft))
+        .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)))
     .key(OPTIONS_KEY).label("Ask options")
     .description("Choose the question scope or a suggested prompt.");
     let more = super::widgets::menu_trigger(more, s.ask_settings.scope_open, p, |s| {
@@ -1015,17 +1008,11 @@ fn quick_chips(s: &State, p: Palette, compact: bool, reading: bool) -> El {
         .map(|(index, prompt)| {
             chip(row().items_center().child(control.line(prompt, p.ink)))
                 .key(format!("ask-quick-{index}")).label(format!("Ask: {prompt}"))
-                .min_w(0.0).fill(p.chip).shrink()
-                .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
+                .min_w(0.0).fill(p.chip).shrink().on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
         });
-    row().w_full().h(QUICK_ROW).px(6.0).pb(8.0)
-        .items_center().gap(6.0)
-        .children(chips)
-        .child(more)
-        .child(rune::el().grow(1.0))
-        .children((!compact).then(|| {
-            roles::MEETING_META.line(scope_text(s), p.faint).key("ask-scope")
-        }))
+    row().w_full().h(QUICK_ROW).px(6.0).pb(8.0).items_center().gap(6.0)
+        .children(chips).child(more).child(rune::el().grow(1.0))
+        .children((!compact).then(|| roles::MEETING_META.line(scope_text(s), p.faint).key("ask-scope")))
 }
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.

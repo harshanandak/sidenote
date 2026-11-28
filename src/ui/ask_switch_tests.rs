@@ -2469,6 +2469,9 @@ fn ask_page_fixture(size: (f32, f32)) -> Runtime<State> {
         s.config.features.daily_check = true;
         s.config.features.annotations = true;
         s.config.features.projects = true;
+        s.sidebar_open.set(size.0 > super::nav::COLLAPSE_AT);
+        s.sidebar_sized.set(true);
+        s.meeting_ui.tabs = true;
         scene_agents(s, ALL_AGENTS);
         s.ai_notes.scene = true;
     });
@@ -2698,6 +2701,16 @@ fn quick_count(rt: &Runtime<State>) -> usize {
     (0..3)
         .filter(|i| rt.find(&format!("ask-quick-{i}")).is_some())
         .count()
+}
+fn quick_want(rt: &Runtime<State>) -> usize {
+    3 - usize::from(rt.state.app_w.get() - super::nav::width(&rt.state) < 652.0)
+}
+fn ask_editor(rt: &Runtime<State>) -> rune::ElementInfo {
+    let path = element(rt, "ask-input").path;
+    rt.elements()
+        .into_iter()
+        .find(|e| e.path.starts_with(&path) && e.key.as_deref() == Some("input"))
+        .unwrap()
 }
 fn stay_on_meeting(_: &mut State) {}
 fn size_theme(mut check: impl FnMut((f32, f32), bool)) {
@@ -3128,7 +3141,7 @@ fn ask_card_focus_shows_quick_asks_and_more_on_every_page() {
     quick_cases(|size, dark, open| {
         let rt = quick_fixture(size, dark, open);
         let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
-        let shown = if size.0 == 1334.0 { 3 } else { 2 };
+        let shown = quick_want(&rt);
         assert_eq!(quick_count(&rt), shown);
         assert!(key_count(&rt, "ask-prompt") == 0 && rt.find("ask-options").is_some());
         let card = rect_of(&rt, "ask-pill");
@@ -3170,7 +3183,7 @@ fn ask_card_chip_row_fits_at_every_width() {
         for width in [1334.0, 900.0, 700.0, 390.0] {
             let height = if width == 390.0 { 844.0 } else { 900.0 };
             let rt = quick_fixture((width, height), dark, State::go_home);
-            assert_eq!(quick_count(&rt), if width >= 900.0 { 3 } else { 2 });
+            assert_eq!(quick_count(&rt), quick_want(&rt));
             assert_quick_row_fits(&rt);
         }
         let rt = quick_fixture((1334.0, 900.0), dark, |s| s.meeting_ui.tabs = false);
@@ -3192,7 +3205,7 @@ fn ask_card_quick_chip_press_sends_and_keeps_focus() {
         tap(&mut rt, "ask-quick-0");
         assert_eq!(rt.state.saved.messages.last().unwrap().text, &prompt[5..]);
         assert!(!rt.state.asks.is_empty());
-        assert!(rt.state.question.focused && element(&rt, "ask-input").focused);
+        assert!(rt.state.question.focused && ask_editor(&rt).focused);
         poll_ask_bar(&mut rt);
         assert!(rt.state.ask_open && rect_of(&rt, "ask-pill")[3] > 48.0);
     });
@@ -3215,7 +3228,7 @@ fn ask_card_more_menu_lists_the_rest_scope_and_all_prompts() {
             }
             let menu = rect_of(&rt, "ask-options-menu");
             assert!(bottom(menu) <= rect_of(&rt, "ask-options")[1] + 0.5);
-            let shown = if size.0 == 1334.0 { 3 } else { 2 };
+            let shown = quick_want(&rt);
             let got = rt
                 .elements()
                 .into_iter()
@@ -3236,7 +3249,7 @@ fn ask_card_more_menu_lists_the_rest_scope_and_all_prompts() {
                 rt.key(Key::Text("x".into()).into());
                 rt.frame(0.0);
                 poll_ask_bar(&mut rt);
-                assert!(rt.find("ask-options-menu").is_none() && element(&rt, "ask-input").focused);
+                assert!(rt.find("ask-options-menu").is_none() && ask_editor(&rt).focused);
             }
         }
     });
