@@ -1050,7 +1050,7 @@ pub(in crate::ui) fn transcript_needs_thread_room(s: &State) -> bool {
     pane_room(s) - full_dock < transcript_min_height()
 }
 
-pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
+pub fn pane(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
     let Some(m) = s.current() else {
         return col();
     };
@@ -1183,17 +1183,28 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 ),
         );
     }
+    // The thread stays in the notes column. The compact controls center in the page's Ask span.
+    const WIDE_ASK_RIGHT: f32 = 358.0;
+    let center_offset = if wide {
+        let width = super::page_w(s);
+        let ask_center = (WIDE_SIDE + width - WIDE_ASK_RIGHT) / 2.0;
+        let notes_center = (width - WIDE_PAGE).max(0.0) / 2.0 + WIDE_SIDE + COLUMN / 2.0;
+        ask_center - notes_center
+    } else if strip {
+        -STRIP / 2.0
+    } else {
+        0.0
+    };
     let dock = col()
         .key("meeting-bottom-bar")
         .w_full()
-        .child(ask::overlay_with(
+        .child(ask::reading_overlay(
             s,
             k,
             p,
-            narrow,
             layer,
             crate::ui::live::parts_control(s, p),
-            None,
+            center_offset,
         ));
     main = main.child(if overlay_thread {
         dock.pin(Some(0.0), None, Some(0.0), Some(0.0))
