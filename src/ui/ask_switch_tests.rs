@@ -2862,7 +2862,7 @@ fn ask_card_model_chip_opens_the_picker_above_the_card() {
             s.runner_error = Some("Synthetic model error".into());
         });
         settle_ask_bar(&mut rt);
-        assert!(rt.find("ask-model").is_none());
+        assert!(rt.find("ask-model").is_some());
     }
 }
 
@@ -3370,10 +3370,11 @@ fn ask_on_every_page_shows_one_chip_per_page() {
     }
     let mut rt = ask_page_fixture(DEFAULT_SIZE);
     for (open, _, prompt) in ASK_PAGES {
-        rt.update(|s, _| {
+        rt.update(|s, tx| {
             open(s);
             s.question = TextEdit::default();
             s.ask_open = false;
+            tx.blur();
         });
         rt.settle_all();
         rt.frame(0.0);

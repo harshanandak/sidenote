@@ -767,7 +767,7 @@ fn open_model_picker(s: &mut State, tx: &mut Tx) {
 }
 
 fn model_chip_visible(s: &State) -> bool {
-    card_open(s) && s.runner_error.is_none()
+    card_open(s) && (s.ask_settings.connection.settings.enabled || s.runner_error.is_none())
 }
 
 fn model_chip(
@@ -1003,21 +1003,18 @@ fn quick_chips(s: &State, p: Palette, compact: bool, reading: bool) -> El {
             .child(control.line("More", p.soft))
             .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)),
     )
-    .key(OPTIONS_KEY)
-    .label("Ask options")
+    .key(OPTIONS_KEY).label("Ask options")
     .description("Choose the question scope or a suggested prompt.");
     let more = super::widgets::menu_trigger(more, s.ask_settings.scope_open, p, |s| {
         s.ask_settings.scope_open = !s.ask_settings.scope_open;
-    })
-    .focus_ring(1.0, 1.0, p.faint);
+    }).focus_ring(1.0, 1.0, p.faint);
     let chips = prompt_list(s)
         .into_iter()
         .take(quick_chip_count(s, reading))
         .enumerate()
         .map(|(index, prompt)| {
             chip(row().items_center().child(control.line(prompt, p.ink)))
-                .key(format!("ask-quick-{index}"))
-                .label(format!("Ask: {prompt}"))
+                .key(format!("ask-quick-{index}")).label(format!("Ask: {prompt}"))
                 .min_w(0.0).fill(p.chip).shrink()
                 .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
         });
