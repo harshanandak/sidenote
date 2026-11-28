@@ -898,7 +898,7 @@ impl State {
                         }
                     }
                     Err(e) => {
-                        if matches!(action, Action::Start) {
+                        if matches!(action, Action::Start) && self.hex.recording().is_none() {
                             self.parts_start_failed();
                         }
                         self.hex.error = Some(match (&action, &e) {
@@ -1050,6 +1050,20 @@ impl State {
 
     pub fn hex_recording(&self) -> bool {
         self.hex.recording().is_some()
+    }
+
+    /// A fresh status confirms that Hex is recording and gives the part Sidenote can own.
+    pub(super) fn hex_confirmed_recording(&self) -> bool {
+        !self.hex_status_unknown()
+            && matches!(&self.hex.status, Some(Ok(state)) if state.meeting_state == "recording"
+                && state.recording.as_ref().and_then(|r| r.id.as_deref()).is_some_and(|id| !id.is_empty()))
+    }
+
+    pub(super) fn pending_recording_start(&self) -> bool {
+        self.live
+            .as_ref()
+            .and_then(|live| live.session.as_ref())
+            .is_some_and(|m| m.pending_start_ms.is_some())
     }
 
     pub(super) fn hex_stop_confirmed(&self) -> bool {

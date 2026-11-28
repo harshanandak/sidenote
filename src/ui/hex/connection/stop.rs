@@ -17,7 +17,7 @@ pub(in crate::ui) fn scene(s: &mut State, timed_out: bool) {
     });
 }
 
-pub(super) fn terminal(state: &EngineState) -> bool {
+pub(in crate::ui) fn terminal(state: &EngineState) -> bool {
     state.recording.is_none()
         && matches!(
             state.meeting_state.as_str(),
