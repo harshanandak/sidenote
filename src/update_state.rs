@@ -13,6 +13,7 @@ pub enum Phase {
     Manual,
     Preparing,
     StoppingListener,
+    Restarting,
     Checking,
     Available,
     Downloading,

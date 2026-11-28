@@ -2776,6 +2776,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         });
     }
     meeting_delete::overlay(s, p, &mut layer);
+    layer.extend(updates::notice(s, p));
     rune_kit::root(app, layer)
 }
 
@@ -4926,6 +4927,12 @@ pub fn run() {
     }
     let trace = sidenote::env_var("SIDENOTE_TRACE_FIRST_FRAME");
     let refresh_handle = app.handle();
+    let mut confirmation_drawn = false;
+    app = app.on_frame_drawn(move |rt| {
+        if !confirmation_drawn {
+            confirmation_drawn = updates::acknowledge_drawn_confirmation(rt);
+        }
+    });
     let mut first_frame = false;
     app = app.on_frame_encoded(move |f| {
         if f.outcome() == rune::FrameOutcome::Drawn {

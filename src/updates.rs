@@ -7,3 +7,5 @@ mod implementation;
 #[cfg(windows)]
 pub(crate) use implementation::verify_sha256;
 pub use implementation::*;
+
+pub const CONFIRMATION_TARGET: &str = "update-confirmation.json";

@@ -1788,7 +1788,15 @@ pub fn apply(
         from_window,
         listener_stopping,
         report,
-        |guard| apply_ready(guard, restart_args, publish),
+        |guard| {
+            apply_ready(
+                from_window,
+                publish,
+                |publish| handoff_update(guard, restart_args, publish),
+                std::thread::sleep,
+            )?;
+            std::process::exit(0)
+        },
     )
 }
 
@@ -1844,11 +1852,26 @@ fn wait_for_listener_stop() -> Result<Option<File>, &'static str> {
 }
 
 fn apply_ready(
-    guard: &InstallGuard<'_>,
-    restart_args: Vec<String>,
+    from_window: bool,
     mut publish: impl FnMut(Phase),
+    handoff: impl FnOnce(&mut dyn FnMut(Phase)) -> Result<(), String>,
+    paint: impl FnOnce(Duration),
 ) -> Result<(), String> {
     publish(Phase::Preparing);
+    handoff(&mut publish)?;
+    if from_window {
+        publish(Phase::Restarting);
+        // Give the window time to paint before Update.exe takes over.
+        paint(Duration::from_millis(750));
+    }
+    Ok(())
+}
+
+fn handoff_update(
+    guard: &InstallGuard<'_>,
+    restart_args: Vec<String>,
+    publish: &mut dyn FnMut(Phase),
+) -> Result<(), String> {
     let channel = channel();
     let mgr = manager(channel)?;
     let asset = pending_asset(&mgr, channel).ok_or("Check for updates before installing.")?;
@@ -1863,6 +1886,11 @@ fn apply_ready(
     let stopped = wait_for_listener_stop();
     let result = stopped.and_then(|_listener| {
         recording_idle().map_err(|_| "Recording started. Try again when it is finished.")?;
+        write_json(
+            &guard.directory.join(crate::updates::CONFIRMATION_TARGET),
+            &asset.Version,
+        )
+        .map_err(|_| "Could not save the update confirmation target.")?;
         mgr.wait_exit_then_apply_updates(&asset, true, true, restart_args)
             .map_err(|_| "Could not start the update. Try again.")?;
         // Update.exe now waits for this process to exit, and nothing here can cancel it.
@@ -1874,11 +1902,10 @@ fn apply_ready(
         }
         Ok(())
     });
-    if let Err(error) = result {
+    result.map_err(|error| {
         restart_listener(guard, recover_listener);
-        return Err(error.into());
-    }
-    std::process::exit(0)
+        error.into()
+    })
 }
 fn report(status: &Status) -> serde_json::Value {
     serde_json::json!({"current_version":VERSION,"reported_at":chrono::Utc::now().to_rfc3339(),
@@ -2502,6 +2529,39 @@ mod tests {
     #[test]
     fn successful_pipeline_retry_resumes_without_reporting_failure() {
         assert!(finish_window_start(Ok(()), |_| panic!("unexpected failure"), || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn window_apply_publishes_restarting_after_handoff_and_before_paint_delay() {
+        for (from_window, accepted) in [(true, true), (true, false), (false, true)] {
+            let phases = std::cell::RefCell::new(Vec::new());
+            let painted = std::cell::Cell::new(false);
+            let result = apply_ready(
+                from_window,
+                |phase| phases.borrow_mut().push(phase),
+                |publish| {
+                    publish(Phase::StoppingListener);
+                    assert_eq!(
+                        *phases.borrow(),
+                        [Phase::Preparing, Phase::StoppingListener]
+                    );
+                    accepted
+                        .then_some(())
+                        .ok_or_else(|| "handoff failed".into())
+                },
+                |delay| {
+                    assert_eq!(delay, Duration::from_millis(750));
+                    assert_eq!(phases.borrow().last(), Some(&Phase::Restarting));
+                    painted.set(true);
+                },
+            );
+            assert_eq!(result.is_ok(), accepted);
+            assert_eq!(painted.get(), from_window && accepted);
+            assert_eq!(
+                phases.borrow().contains(&Phase::Restarting),
+                from_window && accepted
+            );
+        }
     }
 
     // The stalled peer exits when the operation returns; no detached request or worker remains.

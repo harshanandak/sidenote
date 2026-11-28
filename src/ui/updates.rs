@@ -9,6 +9,9 @@ use sidenote::core::{CHANNEL, Channel};
 use sidenote::listener::heartbeat;
 use sidenote::updates::{self, Phase, Status};
 
+const RESTARTING: &str = "Restarting to install the update…";
+const CONFIRMATION_NOTICE: &str = "update-confirmation";
+
 pub struct Updates {
     pub status: Status,
     channel: Channel,
@@ -24,6 +27,7 @@ pub struct Updates {
     notes_open: bool,
     scene: bool,
     applying: bool,
+    updated_version: Option<String>,
 }
 impl Default for Updates {
     fn default() -> Self {
@@ -42,6 +46,7 @@ impl Default for Updates {
             notes_open: false,
             scene: false,
             applying: false,
+            updated_version: None,
         }
     }
 }
@@ -117,13 +122,42 @@ impl State {
         if !updates::installed() {
             return;
         }
+        #[cfg(windows)]
+        self.confirm_update(&updates::directory(), updates::VERSION);
+        self.start_pending_update(|publish| updates::window_start(publish));
+    }
+    #[cfg(any(windows, test))]
+    fn confirm_update(&mut self, directory: &std::path::Path, version: &str) {
+        let target = std::fs::read(directory.join(updates::CONFIRMATION_TARGET))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok());
+        if target.as_deref() == Some(version) && !self.update_seen_marker(version).exists() {
+            self.updates.updated_version = target;
+        }
+    }
+    fn update_seen_marker(&self, version: &str) -> std::path::PathBuf {
+        self.store
+            .root
+            .join("local")
+            .join(format!("updated-{version}.seen"))
+    }
+    fn start_pending_update(
+        &mut self,
+        run: impl FnOnce(&dyn Fn(Phase)) -> Result<(), String> + Send + 'static,
+    ) -> std::thread::JoinHandle<()> {
         self.updates.listener_busy = true;
         self.updates.applying = true;
+        self.update_worker(run)
+    }
+    fn update_worker(
+        &self,
+        run: impl FnOnce(&dyn Fn(Phase)) -> Result<(), String> + Send + 'static,
+    ) -> std::thread::JoinHandle<()> {
         let events = self.events_tx.clone();
         let wake = self.waker.clone();
         let status = self.updates.status.clone();
         std::thread::spawn(move || {
-            let result = updates::window_start(|phase| {
+            let result = run(&|phase| {
                 let _ = events.send(Event::Update(Status {
                     phase,
                     ..status.clone()
@@ -136,7 +170,7 @@ impl State {
             if let Some(wake) = &wake {
                 wake();
             }
-        });
+        })
     }
     pub fn update_status(&mut self, status: Status) {
         if status
@@ -146,7 +180,10 @@ impl State {
         {
             return;
         }
-        let preparing = matches!(status.phase, Phase::Preparing | Phase::StoppingListener);
+        let preparing = matches!(
+            status.phase,
+            Phase::Preparing | Phase::StoppingListener | Phase::Restarting
+        );
         if self.updates.applying && !preparing {
             return;
         }
@@ -272,12 +309,18 @@ impl State {
         }
     }
     fn install_update(&mut self) {
+        let _ = self.install_update_with(|publish| updates::apply(true, Vec::new(), publish));
+    }
+    fn install_update_with(
+        &mut self,
+        run: impl FnOnce(&dyn Fn(Phase)) -> Result<(), String> + Send + 'static,
+    ) -> Option<std::thread::JoinHandle<()>> {
         if self.updates.scene
             || self.updates.applying
             || self.updates.status.phase != Phase::Ready
             || rune::tooling::headless_run().is_some()
         {
-            return;
+            return None;
         }
         if self.hex_recording()
             || self.hex_record_busy()
@@ -286,29 +329,12 @@ impl State {
         {
             self.updates.status.error =
                 Some("Finish recording and wait for your jobs before installing.".into());
-            return;
+            return None;
         }
         self.updates.applying = true;
         self.updates.status.phase = Phase::Preparing;
         self.updates.status.error = None;
-        let status = self.updates.status.clone();
-        let events = self.events_tx.clone();
-        let wake = self.waker.clone();
-        std::thread::spawn(move || {
-            let result = updates::apply(true, Vec::new(), |phase| {
-                let _ = events.send(Event::Update(Status {
-                    phase,
-                    ..status.clone()
-                }));
-                if let Some(wake) = &wake {
-                    wake();
-                }
-            });
-            let _ = events.send(Event::UpdateFinished(result.map(|_| updates::load())));
-            if let Some(wake) = &wake {
-                wake();
-            }
-        });
+        Some(self.update_worker(run))
     }
     fn open_updates(&mut self) {
         self.open_hex();
@@ -324,6 +350,7 @@ fn busy(status: &Status) -> bool {
             | Phase::Available
             | Phase::Preparing
             | Phase::StoppingListener
+            | Phase::Restarting
     )
 }
 fn install(s: &State, p: Palette, footer: bool) -> El {
@@ -528,6 +555,7 @@ pub fn section(s: &State, p: Palette) -> El {
         Phase::Manual => "Updates are off for this manual install".into(),
         Phase::Preparing => "Preparing update".into(),
         Phase::StoppingListener => "Stopping the listener".into(),
+        Phase::Restarting => RESTARTING.into(),
         Phase::Idle => "Sidenote is up to date.".into(),
         Phase::Checking => "Checking the update folder...".into(),
         Phase::Available | Phase::Downloading | Phase::Ready => {
@@ -671,6 +699,68 @@ pub(super) fn settings_fixture(s: &mut State) {
 }
 pub fn settings_scene(s: &mut State) {
     s.open_updates();
+}
+
+pub(super) fn acknowledge_drawn_confirmation(rt: &rune::Runtime<State>) -> bool {
+    let Some(version) = rt.state.updates.updated_version.as_deref() else {
+        return false;
+    };
+    if rt.find(CONFIRMATION_NOTICE).is_none() {
+        return false;
+    }
+    // A failed write is retried on the next frame, so a later launch does not repeat the notice.
+    rt.state.mark_update_seen(version)
+}
+
+impl State {
+    fn mark_update_seen(&self, version: &str) -> bool {
+        // Only the marker may already exist: a file in place of the folder is also AlreadyExists.
+        std::fs::create_dir_all(self.store.root.join("local")).is_ok()
+            && match std::fs::File::create_new(self.update_seen_marker(version)) {
+                Ok(_) => true,
+                Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+            }
+    }
+    fn dismiss_update_confirmation(&mut self) {
+        // Dismissing ends the frame retries, so it makes one last attempt to save the marker.
+        if let Some(version) = self.updates.updated_version.take() {
+            self.mark_update_seen(&version);
+        }
+    }
+}
+
+pub fn notice(s: &State, p: Palette) -> Option<El> {
+    let restarting = s.updates.status.phase == Phase::Restarting;
+    let message = if restarting {
+        roles::CONTROL.wrap(RESTARTING, p.ink)
+    } else {
+        let version = s.updates.updated_version.as_deref()?;
+        roles::CONTROL
+            .wrap(format!("Updated to {version}"), p.ink)
+            .key(CONFIRMATION_NOTICE)
+    };
+    Some(
+        col()
+            .pin(Some(0.0), None, Some(0.0), Some(96.0))
+            .px(12.0)
+            .items_center()
+            .child(
+                row()
+                    .gap(8.0)
+                    .items_center()
+                    .px(16.0)
+                    .py(8.0)
+                    .radius(8.0)
+                    .fill(p.card)
+                    .border(1.0, p.line)
+                    .shadow(4.0, 16.0, p.shadow)
+                    .child(message.role("status"))
+                    .children((!restarting).then(|| {
+                        super::widgets::quiet_button("Dismiss", "update-notice-dismiss", p)
+                            .on_press(State::dismiss_update_confirmation)
+                    })),
+            ),
+    )
 }
 
 pub fn recorder_gap_notice(s: &State, p: Palette) -> Option<El> {
@@ -866,6 +956,148 @@ mod listener_tests {
             e.key.as_deref() == Some("update-install")
                 && e.label.as_deref() == Some("Install update and restart Sidenote")
         }));
+    }
+
+    #[test]
+    fn install_now_shows_the_restart_notice() {
+        let mut rt = notice_window();
+        rt.state.updates.status.phase = Phase::Ready;
+        rt.state
+            .install_update_with(simulated_handoff)
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_restart_notice(&mut rt);
+    }
+
+    #[test]
+    fn idle_startup_apply_shows_the_restart_notice() {
+        let mut rt = notice_window();
+        rt.state.updates.dismissed = true;
+        rt.state
+            .start_pending_update(simulated_handoff)
+            .join()
+            .unwrap();
+        assert_restart_notice(&mut rt);
+    }
+
+    #[test]
+    fn failed_apply_relaunch_does_not_show_update_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        write_confirmation_target(root.path(), "2.0.0");
+        let mut old_window = launch_after_update(root.path(), "1.9.0");
+        assert_update_confirmation(&mut old_window, None);
+    }
+
+    #[test]
+    fn update_confirmation_survives_a_crash_before_the_first_frame() {
+        let root = tempfile::tempdir().unwrap();
+        write_confirmation_target(root.path(), "2.0.0");
+        drop(launch_after_update(root.path(), "2.0.0"));
+
+        let mut next = launch_after_update(root.path(), "2.0.0");
+        assert_update_confirmation(&mut next, Some("Updated to 2.0.0"));
+        assert!(acknowledge_drawn_confirmation(&next));
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
+
+        write_confirmation_target(root.path(), "2.0.1");
+        assert_update_confirmation(
+            &mut launch_after_update(root.path(), "2.0.1"),
+            Some("Updated to 2.0.1"),
+        );
+    }
+
+    #[test]
+    fn failed_seen_marker_write_is_retried_through_dismiss() {
+        let root = tempfile::tempdir().unwrap();
+        write_confirmation_target(root.path(), "2.0.0");
+        std::fs::write(root.path().join("local"), b"").unwrap();
+        let mut window = launch_after_update(root.path(), "2.0.0");
+        assert_update_confirmation(&mut window, Some("Updated to 2.0.0"));
+        assert!(!acknowledge_drawn_confirmation(&window));
+
+        std::fs::remove_file(root.path().join("local")).unwrap();
+        window.update(|s, _| s.dismiss_update_confirmation());
+        // The dismissed notice fades out, so check the state rather than the next frame.
+        assert_eq!(window.state.updates.updated_version, None);
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
+    }
+
+    #[test]
+    fn missing_confirmation_target_shows_no_notice() {
+        let root = tempfile::tempdir().unwrap();
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
+    }
+
+    fn write_confirmation_target(root: &std::path::Path, version: &str) {
+        std::fs::write(
+            root.join(updates::CONFIRMATION_TARGET),
+            serde_json::to_vec(version).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn launch_after_update(root: &std::path::Path, version: &str) -> rune::Runtime<State> {
+        let mut rt = notice_window();
+        rt.update(|s, _| {
+            s.store.root = root.into();
+            s.listener_finished(Err("Synthetic listener recovery error".into()));
+            s.confirm_update(root, version);
+        });
+        rt
+    }
+
+    fn assert_update_confirmation(rt: &mut rune::Runtime<State>, expected: Option<&str>) {
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let notice = elements.iter().find_map(|e| {
+            e.text
+                .as_deref()
+                .filter(|text| text.starts_with("Updated to "))
+        });
+        assert_eq!(notice, expected);
+        #[cfg(windows)]
+        assert_eq!(
+            listener_problem(&rt.state),
+            Some("Synthetic listener recovery error")
+        );
+    }
+
+    fn notice_window() -> rune::Runtime<State> {
+        let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+        let state = State::new();
+        hex::SKIP_INSTALL_DETECT.set(detect);
+        rune::Runtime::new(
+            state,
+            super::super::view,
+            super::super::DEFAULT_SIZE,
+            rune::Env::default(),
+        )
+    }
+
+    fn simulated_handoff(publish: &dyn Fn(Phase)) -> Result<(), String> {
+        publish(Phase::Preparing);
+        publish(Phase::StoppingListener);
+        publish(Phase::Restarting);
+        Ok(())
+    }
+
+    fn assert_restart_notice(rt: &mut rune::Runtime<State>) {
+        rt.update(|s, _| {
+            // A successful handoff exits the old process before it can send UpdateFinished.
+            while let Ok(event) = s.events_rx.try_recv() {
+                if matches!(event, Event::UpdateFinished(_)) {
+                    break;
+                }
+                s.apply_event(event);
+            }
+        });
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.text.as_deref() == Some("Restarting to install the update…"))
+        );
     }
 
     #[test]
