@@ -301,10 +301,68 @@ fn meetings_pointer(rt: &mut Runtime<State>) {
     tap(rt, "nav-meetings");
 }
 
-fn assert_editor_notes(rt: &Runtime<State>, text: &str) {
+fn assert_editor_notes(rt: &mut Runtime<State>, text: &str) {
     assert_eq!(rt.state.live_notes.text, text);
-    assert!(element(rt, "live-notes-input").focusable);
+    tap(rt, "live-notes-input");
+    let editor = element(rt, "live-notes-input");
+    assert!(editor.focusable && editor.focused);
     assert!(rt.find("ask-pill").is_some());
+}
+
+fn assert_ask_usable(rt: &mut Runtime<State>) {
+    let [x, y, w, h] = element(rt, "ask-pill").rect;
+    let [left, top, width, height] = element(rt, "ask-overlay").rect;
+    assert!(w > 0.0 && h > 0.0 && x >= left && y >= top);
+    assert!(x + w <= left + width + 0.5 && y + h <= top + height + 0.5);
+    tap(rt, "ask-input");
+    let textbox = element(rt, "ask-input");
+    let editor = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.starts_with(&textbox.path) && e.key.as_deref() == Some("input"))
+        .expect("Ask editor");
+    assert!(editor.focused);
+}
+
+fn reopen_pending(rt: &mut Runtime<State>, meeting_id: &str, notes: &str) {
+    meetings_pointer(rt);
+    assert!(!rt.state.on_live());
+    assert!(element(rt, "recording-open").focusable);
+    no_running_controls(rt);
+    tap(rt, "recording-open");
+    assert!(rt.state.on_live());
+    let resumed = session(rt);
+    assert_eq!(resumed.id, meeting_id);
+    assert!(resumed.pending_start_ms.is_some());
+    assert_editor_notes(rt, notes);
+}
+
+fn pending_idle_navigation(api: &Fixture, rt: &mut Runtime<State>) {
+    const NOTES: &str = "Notes across both pending idle returns";
+    rt.update(|s, _| crate::ui::scene_agents(s, crate::ui::ALL_AGENTS));
+    rt.frame(0.2);
+    let release = hold_start(api, false, false, "idle");
+    click_new(rt);
+    wait_starts(api, 1);
+    let meeting_id = session(rt).id;
+    write_notes(rt, NOTES);
+    reopen_pending(rt, &meeting_id, NOTES);
+    assert!(rt.state.hex.record_busy && !rt.state.hex_recording());
+    assert_ask_usable(rt);
+
+    release.send(()).unwrap();
+    finish_busy(rt);
+    observed(rt);
+    assert!(rt.state.hex_stop_confirmed());
+    reopen_pending(rt, &meeting_id, NOTES);
+    assert_ask_usable(rt);
+    assert_editor_notes(rt, NOTES);
+
+    click_new(rt);
+    finish_busy(rt);
+    dismiss_new_menu(rt);
+    assert_eq!(api.data.lock().unwrap().starts, 1);
+    assert_eq!(session(rt).id, meeting_id);
 }
 
 fn expire_recording_status(rt: &mut Runtime<State>) {
@@ -348,6 +406,7 @@ fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str
     tap(rt, "hex-stop");
     finish_busy(rt);
     api.assert_stops(1);
+    assert!(rt.state.hex_stop_confirmed());
     assert!(rt.state.live.is_some());
     assert_eq!(rt.state.live_notes.text, "matrix no-id notes");
 }
@@ -384,14 +443,18 @@ fn timing_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     tap(rt, "recording-open");
     finish_busy(rt);
     api.assert_stops(1);
+    assert!(rt.state.hex_stop_confirmed());
     assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
+    let paused = session(rt);
+    assert_eq!(paused.id, before.id);
+    assert_eq!(paused.parts.len(), 1);
+    assert_eq!(paused.parts[0].id, "300-3");
     assert_editor_notes(rt, "matrix timing notes");
     assert!(element(rt, "meeting-resume").focusable);
     assert!(element(rt, "meeting-generate").focusable);
 }
 
-fn resume_matrix(api: &Fixture, rt: &mut Runtime<State>) {
-    api.data.lock().unwrap().start_records = false;
+fn restore_paused(rt: &mut Runtime<State>) -> String {
     let root = sidenote::core::state_dir();
     let now = chrono::Utc::now().timestamp_millis();
     let mut saved = meeting_parts::Meeting::pending(&root, now - 60_000).unwrap();
@@ -409,14 +472,24 @@ fn resume_matrix(api: &Fixture, rt: &mut Runtime<State>) {
         r#"{"status":"complete","duration_ms":1000}"#,
     )
     .unwrap();
-    let meeting_id = saved.id.clone();
     rt.update(|s, _| {
         s.hex.parts_restore_checked = false;
         s.live_sync();
     });
     rt.frame(0.2);
     assert_editor_notes(rt, "matrix old notes");
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
+    assert_eq!(session(rt).id, saved.id);
+    saved.id
+}
+
+fn resume_matrix(api: &Fixture, rt: &mut Runtime<State>) {
+    let meeting_id = restore_paused(rt);
+    let release = hold_start(api, false, false, "idle");
     tap(rt, "meeting-resume");
+    wait_starts(api, 1);
+    assert!(session(rt).pending_start_ms.is_some());
+    release.send(()).unwrap();
     finish_busy(rt);
     observed(rt);
     deliver_status(rt);
@@ -427,23 +500,74 @@ fn resume_matrix(api: &Fixture, rt: &mut Runtime<State>) {
         (after.id.as_str(), after.pending_start_ms, after.parts.len()),
         (meeting_id.as_str(), None, 1)
     );
+    assert_eq!(after.parts[0].id, "100-1");
     assert_editor_notes(rt, "matrix old notes");
     assert!(element(rt, "meeting-resume").focusable);
     assert!(element(rt, "meeting-generate").focusable);
+    assert_eq!(api.data.lock().unwrap().starts, 1);
 }
 
-fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>) {
+fn resume_attaches_new_part(api: &Fixture, rt: &mut Runtime<State>) {
+    let meeting_id = restore_paused(rt);
+    let release = hold_start(api, false, false, "idle");
+    tap(rt, "meeting-resume");
+    wait_starts(api, 1);
+    start_fixture(api, "starting", Some("300-3"));
+    deliver_status(rt);
+    assert!(rt.state.hex.record_busy);
+    assert_eq!(session(rt).parts.len(), 1);
+    no_running_controls(rt);
+    reopen_pending(rt, &meeting_id, "matrix old notes");
+    no_running_controls(rt);
+
+    start_fixture(api, "recording", Some("300-3"));
+    deliver_status(rt);
+    assert!(rt.state.hex.record_busy);
+    let attached = session(rt);
+    assert_eq!(attached.id, meeting_id);
+    assert_eq!(attached.pending_start_ms, None);
+    assert_eq!(attached.parts.len(), 2);
+    assert_eq!(attached.parts[0].id, "100-1");
+    assert_eq!(attached.parts[1].id, "300-3");
+
+    release.send(()).unwrap();
+    finish_busy(rt);
+    observed(rt);
+    assert_eq!(api.data.lock().unwrap().starts, 1);
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Recording);
+    assert_editor_notes(rt, "matrix old notes");
+    assert!(element(rt, "meeting-pause").focusable);
+    meetings_pointer(rt);
+    assert!(element(rt, "hex-pause").focusable);
+    assert!(rt.find("hex-stop").is_none());
+}
+
+fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>, recording_before_error: bool) {
     let release_tx = hold_start(api, true, true, "starting");
     api.data.lock().unwrap().id = Some("300-3");
     click_new(rt);
+    wait_starts(api, 1);
     deliver_status(rt);
     write_notes(rt, "matrix late-error notes");
     let before = session(rt).id;
-    api.data.lock().unwrap().meeting_state = Some("recording");
-    deliver_status(rt);
+    if recording_before_error {
+        start_fixture(api, "recording", Some("300-3"));
+        deliver_status(rt);
+    }
     release_tx.send(()).unwrap();
     finish_busy(rt);
+    assert!(rt.state.hex.error.is_some());
     deliver_status(rt);
+    if !recording_before_error {
+        let pending = session(rt);
+        assert_eq!(pending.id, before);
+        assert!(pending.pending_start_ms.is_some());
+        assert!(pending.parts.is_empty());
+        assert_starting(rt);
+        assert_editor_notes(rt, "matrix late-error notes");
+        start_fixture(api, "recording", Some("300-3"));
+        deliver_status(rt);
+    }
     let after = session(rt);
     assert_eq!(
         (
@@ -453,8 +577,19 @@ fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>) {
         ),
         (before.as_str(), 1, "300-3")
     );
+    assert_eq!(after.pending_start_ms, None);
     assert_editor_notes(rt, "matrix late-error notes");
     assert!(element(rt, "meeting-pause").focusable);
+    rt.update(|s, _| s.live_flush());
+    let root = sidenote::core::state_dir();
+    let notes = meeting_parts::inputs(&root)
+        .join(&after.id)
+        .join("notes.md");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while std::fs::read_to_string(&notes).ok().as_deref() != Some("matrix late-error notes") {
+        assert!(Instant::now() < deadline, "late-error notes were not saved");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn wait_starts(api: &Fixture, expected: usize) {
@@ -669,7 +804,10 @@ matrix_cases!(no_id_omitted, no_id_variant, None, true);
 matrix_cases!(no_id_empty, no_id_variant, Some(""), false);
 matrix_cases!(timing, timing_matrix);
 matrix_cases!(resume, resume_matrix);
-matrix_cases!(late_error, late_error_matrix);
+matrix_cases!(resume_attaches, resume_attaches_new_part);
+matrix_cases!(pending_idle, pending_idle_navigation);
+matrix_cases!(recording_then_error, late_error_matrix, true);
+matrix_cases!(starting_then_error, late_error_matrix, false);
 matrix_cases!(error_idle, error_idle_matrix);
 matrix_cases!(record_new, record_new_meeting_waits_for_running_status);
 matrix_cases!(starting_status, starting_titlebar_controls);
