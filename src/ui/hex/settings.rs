@@ -3255,7 +3255,10 @@ pub fn pane(
         // Rune makes nodes behind a modal inert. Keep the header above the drawer when open,
         // and below the page's own popovers otherwise.
         let index = if drawer { layer.len() } else { header_layer };
-        layer.insert(index, crate::ui::page_header(s, p, true).absolute(0.0, 0.0));
+        layer.insert(
+            index,
+            crate::ui::page_header(s, p, sidebar_p, true).absolute(0.0, 0.0),
+        );
     }
     col()
         .key("hex-pane")
@@ -4435,6 +4438,9 @@ mod tests {
         let mut state = State::new();
         state.open_hex();
         let mut rt = settings_runtime(state, (390.0, 844.0));
+        rt.set_system_dark(false);
+        rt.settle_all();
+        rt.frame(0.0);
         tap_key(&mut rt, "sidebar-toggle");
         let elements = rt.elements();
         let [_, y, _, h] = element_rect(&elements, "page-header");
@@ -4442,6 +4448,31 @@ mod tests {
             let [_, top, _, height] = element_rect(&elements, key);
             assert_eq!((top, top + height), (y + h, 844.0), "{key}");
         }
+        let patch = element_rect(&elements, "phone-drawer-titlebar-patch");
+        for (got, want) in patch.iter().zip([0.0, 0.0, 204.0, 48.0]) {
+            assert!((got - want).abs() <= 0.5, "patch {patch:?}");
+        }
+        let fill_of = |key: &str| {
+            elements
+                .iter()
+                .find(|element| element.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .fill
+        };
+        let page = crate::ui::theme::palette(false);
+        let sidebar = crate::ui::theme::sidebar_palette(false, page);
+        assert_eq!(
+            fill_of("phone-drawer-titlebar-patch"),
+            fill_of("settings-drawer")
+        );
+        assert_eq!(fill_of("settings-drawer"), sidebar.side);
+        let header = element_rect(&elements, "page-header");
+        let toggle = elements
+            .iter()
+            .find(|element| element.key.as_deref() == Some("sidebar-toggle"))
+            .expect("header toggle");
+        assert!(toggle.rect[0] + toggle.rect[2] <= 204.0 + 0.5);
+        assert!(toggle.rect[1] >= header[1] - 0.5);
         let (x, y) = rt.find("sidebar-toggle").unwrap();
         rt.pointer_down(x, y);
         rt.frame(0.0);
@@ -4449,12 +4480,28 @@ mod tests {
         rt.pointer_up(x, y);
         rt.frame(0.0);
         assert!(!rt.state.sidebar_is_open());
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .all(|element| element.key.as_deref() != Some("phone-drawer-titlebar-patch")),
+            "the patch leaves with the drawer"
+        );
 
         tap_key(&mut rt, "sidebar-toggle");
         rt.pointer_down(370.0, 200.0);
         rt.pointer_up(370.0, 200.0);
         rt.frame(0.0);
         assert!(!rt.state.sidebar_is_open());
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .all(|element| element.key.as_deref() != Some("phone-drawer-titlebar-patch")),
+            "the patch leaves with the drawer"
+        );
     }
 
     #[test]
