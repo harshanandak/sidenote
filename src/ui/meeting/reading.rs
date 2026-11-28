@@ -1,27 +1,14 @@
 //! Reading keeps the narrative, actions and transcript in their own scroll areas.
 use super::*;
+use crate::ui::roles::{
+    MEETING_CONTROL as CONTROL, MEETING_META as META, MEETING_READ as READ, MEETING_REPLY as REPLY,
+};
 use crate::ui::{cards, icons, notes_status, rows, tasks, widgets};
 use rune::KeyEvent;
 use rune_kit::{Placement, Popover};
 use sidenote::core::{self, TaskItem, TaskStatus, Urgency, people::Side};
 use std::{collections::BTreeSet, rc::Rc};
 
-const META: roles::Role = roles::Role {
-    size: 11.5,
-    lh: 16.0,
-    ..roles::META
-};
-const CONTROL: roles::Role = roles::Role {
-    size: 12.0,
-    lh: 17.0,
-    ..roles::CONTROL
-};
-const READ: roles::Role = roles::Role {
-    size: 13.5,
-    lh: 22.0,
-    ..roles::READ
-};
-const REPLY: roles::Role = roles::Role { size: 13.0, ..READ };
 const MARKER: f32 = 16.0;
 const POINT_GAP: f32 = 9.0;
 
@@ -272,17 +259,6 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
         .padding(2.0)
         .radius(9.0)
         .fill(p.chip)
-        .equal_columns(3)
-        .child(
-            el().key("indicator")
-                .h(24.0)
-                .radius(7.0)
-                .fill(p.card)
-                .shadow(1.0, 2.0, p.shadow)
-                .token_motion(k.motion.control)
-                .a11y_hidden()
-                .grid_cell(selected),
-        )
         .children(
             ["Summary", "Your notes", "Transcript"]
                 .into_iter()
@@ -305,6 +281,9 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                         .px(12.0)
                         .center()
                         .radius(7.0)
+                        .fill(p.card.alpha(if on { 1.0 } else { 0.0 }))
+                        .shadow(1.0, 2.0, p.shadow.alpha(if on { p.shadow.a } else { 0.0 }))
+                        .token_motion(k.motion.control)
                         .hover(p.button_hover)
                         .on_press_tx(move |s: &mut State, tx| {
                             if index == 2 {
@@ -326,9 +305,9 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                         .child(
                             (if on { CONTROL.bold() } else { CONTROL })
                                 .line(name, if on { p.ink } else { p.soft })
+                                .key(format!("meeting-view-label-{index}"))
                                 .a11y_hidden(),
                         )
-                        .grid_cell(index)
                 }),
         )
 }
@@ -443,6 +422,11 @@ fn people_fact(names: String, p: Palette) -> El {
         .shrink()
 }
 
+fn title_style(phone: bool) -> rune::TextStyle {
+    let (size, line_height) = if phone { (24.0, 30.0) } else { (26.0, 32.0) };
+    crate::ui::theme::display(size).lh(line_height)
+}
+
 fn header(
     s: &State,
     k: &Kit,
@@ -454,11 +438,6 @@ fn header(
 ) -> El {
     let phone = super::phone(s);
     let menu = more::menu(s, k, m, "meeting", p, layer);
-    let title_style = crate::ui::theme::display(if phone { 24.0 } else { 26.0 }).lh(if phone {
-        30.0
-    } else {
-        32.0
-    });
     let title = row()
         .key("meeting-title-row")
         .w_full()
@@ -466,7 +445,7 @@ fn header(
         .items_start()
         .child(
             text(&m.title)
-                .font(title_style)
+                .font(title_style(phone))
                 .color(p.ink)
                 .wrap()
                 .wrap_anywhere()
@@ -477,7 +456,7 @@ fn header(
                 .shrink()
                 .min_w(0.0),
         )
-        .child(menu);
+        .child(if phone { menu } else { menu.self_center() });
     let mut facts_items = Vec::new();
     facts_items.extend(meeting_facts(m, p));
     let mut people = Vec::new();
@@ -528,13 +507,12 @@ fn header(
         .children(project::form(s, k, &m.id, p))
 }
 
-/// The bullet before a note: an ink dot for a decision, a ring for an open point, a grey dot
-/// for everything else. All three are 5 px, so the text starts at the same x in every row.
 fn bullet(kind: &str, origin: &str, p: Palette) -> El {
     let mark = match kind {
         "decided" => widgets::dot(5.0, p.ink),
         "open" => el().size(5.0, 5.0).radius(2.5).border(1.0, p.mark),
-        _ => widgets::dot(5.0, p.mark),
+        "response" => el().size(5.0, 5.0).radius(2.5).border(1.2, p.faint),
+        _ => widgets::dot(5.0, p.ink.alpha(0.55)),
     };
     col()
         .size(MARKER, READ.lh)
@@ -547,11 +525,7 @@ fn point(s: &State, pt: &Point, origin: String, timed: bool, p: Palette) -> El {
     let source_key = format!("meeting-source-{origin}");
     let decided = pt.kind == "decided";
     let reply = pt.kind == "response";
-    let ink = match pt.kind.as_str() {
-        "decided" => p.ink,
-        "open" => p.soft,
-        _ => p.body,
-    };
+    let ink = if reply { p.body } else { p.ink };
     let role = if reply { REPLY } else { READ };
     let body = (if decided { role.bold() } else { role })
         .wrap(&pt.text, ink)
@@ -655,7 +629,8 @@ fn narrative(
         || (summary.context.is_empty() && summary.topics.is_empty() && summary.verify.is_empty())
     {
         return body.child(notes_status::meeting_banner(s, m, p).unwrap_or_else(|| {
-            READ.wrap("No summary is available for this meeting.", p.soft)
+            roles::READ
+                .wrap("No summary is available for this meeting.", p.soft)
                 .key("meeting-empty-summary")
         }));
     }
@@ -1171,6 +1146,8 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         dock
     });
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
+    // Keep the same scroll path when only the action rail changes columns.
+    let frame = if wide { wide_frame() } else { row() };
     if wide {
         let tasks = scroll(
             col().pb(24.0).child(
@@ -1186,17 +1163,15 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .max_w(TASKS)
         .grow(0.0)
         .ml(GAP);
-        columns = columns.justify_center().child(wide_frame(
-            grid(main, WIDE_SIDE, GRID + WIDE_SIDE, marks)
-                .ml(-WIDE_SIDE)
-                .child(tasks),
-        ));
+        let body = grid(main, WIDE_SIDE, GRID + WIDE_SIDE, marks)
+            .ml(-WIDE_SIDE)
+            .child(tasks);
+        columns = columns.justify_center().child(frame.child(body));
     } else if strip {
         // Narrower than the grid but wide enough for the strip: the notes keep their column and
         // the tasks sit under them.
-        columns = columns
-            .justify_center()
-            .child(grid(main, STRIP, STRIP + COLUMN, marks));
+        let body = grid(main, STRIP, STRIP + COLUMN, marks);
+        columns = columns.justify_center().child(frame.child(body));
     } else {
         columns = columns.child(main);
     }
@@ -1213,13 +1188,13 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         },
         chip,
     );
-    if wide {
-        head = row().w_full().justify_center().child(wide_frame(head));
-    } else if strip {
-        head = row()
-            .w_full()
-            .justify_center()
-            .child(row().w(STRIP + COLUMN).pl(STRIP).child(head));
+    if strip {
+        let frame = if wide {
+            wide_frame()
+        } else {
+            row().w(STRIP + COLUMN).pl(STRIP)
+        };
+        head = row().w_full().justify_center().child(frame.child(head));
     }
     let mut pane = col()
         .key("meeting-pane")
@@ -1242,8 +1217,8 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     pane.child(head).child(columns)
 }
 
-fn wide_frame(content: El) -> El {
-    row().w_full().max_w(WIDE_PAGE).px(WIDE_SIDE).child(content)
+fn wide_frame() -> El {
+    row().w_full().max_w(WIDE_PAGE).px(WIDE_SIDE)
 }
 
 fn grid(notes: El, strip: f32, width: f32, marks: Option<El>) -> El {
@@ -1301,6 +1276,13 @@ mod tests {
     use crate::ui::{live, theme, view};
     use rune::{Env, Runtime, text::TextSystem};
     use sidenote::core::meeting_parts;
+
+    #[test]
+    fn meeting_typography_matches_design_sizes() {
+        assert_eq!(title_style(false).size, 26.0);
+        assert_eq!(READ.size, 13.5);
+        assert_eq!(REPLY.size, 13.0);
+    }
 
     fn element(rt: &Runtime<State>, key: &str) -> rune::ElementInfo {
         rt.elements()

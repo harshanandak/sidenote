@@ -1,7 +1,7 @@
 //! A meeting's project, shown as a chip on its home row and under its title. The pipeline's
 //! guess (from `tasks.json`) shows as a suggestion until the owner accepts or changes it.
 //! Both write the same per-task overrides the Tasks view writes, in one file write.
-use super::{State, roles, theme::Palette, widgets::pressable};
+use super::{State, icons, roles, theme::Palette, widgets::pressable};
 use rune::{El, Key, KeyEvent, TextEdit, Tx, col, row};
 use rune_kit::{Kit, Menu, MenuItem, Placement, TextInput};
 use sidenote::core::{self, TaskOverride, UNSORTED};
@@ -250,14 +250,19 @@ fn chip_with(
         Some(n) => format!("Project: {n}. Change it"),
         None => "Add this meeting to a project".into(),
     };
-    let name_ink = if mp.confirmed { p.soft } else { p.ink };
+    let name_ink = if mp.confirmed && !quiet {
+        p.soft
+    } else {
+        p.ink
+    };
     let name_style = if quiet {
-        roles::FACT.bold()
+        roles::MEETING_PROJECT
     } else {
         roles::META.medium()
     };
     let trigger_row = row()
-        .gap(if quiet { 6.0 } else { 4.0 })
+        .gap(4.0)
+        .children(quiet.then(|| icons::draw(&icons::FOLDER, 13.0, p.soft).a11y_hidden()))
         .items_center()
         .child(
             name_style
@@ -267,7 +272,7 @@ fn chip_with(
                 )
                 .max_w(190.0),
         )
-        .children((s.selected.is_some() || s.on_live()).then_some(chevron));
+        .children((!quiet && (s.selected.is_some() || s.on_live())).then_some(chevron));
     let menu_id = id.to_string();
     let trigger = pressable(trigger_row)
         .label(label)
@@ -284,10 +289,12 @@ fn chip_with(
     let trigger = if quiet {
         trigger
             .key(format!("meeting-project-{id}"))
-            .h(28.0)
-            .px(8.0)
+            .h(20.0)
+            .px(6.0)
             .py(0.0)
-            .radius(8.0)
+            .radius(6.0)
+            .fill(p.chip)
+            .hover(p.sel)
             .focus_ring(2.0, 1.0, p.accent)
     } else {
         trigger
@@ -348,7 +355,7 @@ fn chip_with(
         .key(format!("project-{id}"))
         .min_w(0.0)
         .max_w(420.0)
-        .radius(if quiet { 8.0 } else { 12.0 })
+        .radius(if quiet { 6.0 } else { 12.0 })
         .child(menu.shrink());
     if guessed {
         wrap = wrap

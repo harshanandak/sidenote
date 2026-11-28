@@ -583,7 +583,6 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
         context.as_deref(),
         Some(&*format!("{CONTEXT} Two questions stayed open."))
     );
-    // A decision has an ink dot, an open point a ring (no fill), the rest a grey dot.
     let elements = rt.elements();
     let by_key = |key: &str| {
         elements
@@ -600,15 +599,19 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
         assert_eq!(text[0] - row[0], text_x, "text x {i}");
         assert_eq!(
             dot.fill.a == 0.0,
-            i == 1,
-            "only the open point is a ring: {i}"
+            matches!(i, 1 | 3),
+            "open points and replies use rings: {i}"
         );
         let center = if i == 3 { 12.0 } else { 13.0 };
         assert_eq!(dot.rect[1] + 2.5 - row[1], center, "dot y {i}");
     }
     let fill = |i: usize| by_key(&format!("meeting-bullet-pt-0-{i}")).fill;
     assert_eq!(fill(2), fill(4), "decision dots share one colour");
-    assert_eq!(fill(0), fill(3), "fact and reply dots share one colour");
+    assert_eq!(
+        fill(0),
+        fill(2).alpha(0.55),
+        "fact dot uses translucent ink"
+    );
     assert_ne!(fill(0), fill(2), "a decision dot differs from a fact dot");
 }
 
@@ -656,7 +659,6 @@ fn meeting_notes_lead_each_topic_with_its_decisions() {
     // (summary rows 2 and 4) with the reply (3) kept under the first, then the fact (0), then
     // the open point (1).
     assert_eq!(shown_order(&rt, 5), [2, 3, 4, 0, 1]);
-    // The bold lead block is the decisions only.
     let elements = rt.elements();
     let ink = |i: usize| {
         let key = format!("meeting-point-text-pt-0-{i}");
@@ -666,14 +668,14 @@ fn meeting_notes_lead_each_topic_with_its_decisions() {
             .unwrap()
             .text_color
     };
-    assert_eq!(ink(2), ink(4));
-    for plain in [0, 1, 3] {
-        assert_ne!(
-            ink(plain),
-            ink(2),
-            "only decisions use the ink colour: {plain}"
-        );
+    for point in [0, 1, 4] {
+        assert_eq!(ink(point), ink(2), "top-level ink for point {point}");
     }
+    assert_eq!(
+        ink(3),
+        element(&rt, "ctx-0").text_color,
+        "reply uses body ink"
+    );
     // A topic with no decisions keeps the summary's order.
     assert!(rect_of(&rt, "meeting-point-pt-1-0")[1] > rect_of(&rt, "topic-2")[1]);
 }
@@ -820,7 +822,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
         (more.as_str(), "More actions", 28.0),
         ("meeting-facts", facts.as_str(), 16.0),
         ("meeting-people", "People: Sam, Ravi", 16.0),
-        (&project, "Suggested project: Atlas 2. Change it", 28.0),
+        (&project, "Suggested project: Atlas 2. Change it", 20.0),
         ("segment0", "Summary", 24.0),
         ("meeting-status", "Transcript status: English only", 0.0),
     ]
@@ -4959,8 +4961,38 @@ fn meeting_header_matches_design_spacing() {
     let facts = rect("meeting-facts-row");
     assert_eq!(view.rect[1] - (facts[1] + facts[3]), 16.0);
     assert_eq!((view.rect[3], view.radius), (28.0, 9.0));
+    for (i, key) in ["segment0", "segment1", "meeting-transcript"]
+        .into_iter()
+        .enumerate()
+    {
+        let label = rect(&format!("meeting-view-label-{i}"));
+        assert!((rect(key)[2] - label[2] - 24.0).abs() < 0.01, "{key}");
+    }
+    let more = format!("more-meeting-{MEETING}-button");
+    assert_eq!(rect(&more)[1] - rect("meeting-title")[1], 2.0);
     let controls = rect("meeting-controls");
     let header = rect("meeting-header");
     assert_eq!(header[1] + header[3] - (controls[1] + controls[3]), 20.0);
     assert_eq!(rect("sec-context")[1], rect("meeting-actions")[1]);
+}
+
+#[test]
+fn meeting_summary_keeps_scroll_across_the_rail_breakpoint() {
+    if in_parent("meeting_summary_keeps_scroll_across_the_rail_breakpoint") {
+        return;
+    }
+    let mut rt = page_at((1250.0, 500.0));
+    rt.update(|s, _| s.meetings[0].summary.verify = vec![POINT.into(); 40]);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("meeting-tasks-column").is_some());
+    rt.update(|_, tx| tx.scroll_to_instant("meeting-scroll", 0.0, 96.0));
+    rt.settle_all();
+    rt.frame(0.0);
+    assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+    rt.set_viewport((1200.0, 500.0), 1.0);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("meeting-tasks-column").is_none());
+    assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
 }

@@ -102,6 +102,12 @@ pub const CONTROL: Role = Role::new(12.5, 400.0, 18.0).tabular(0.05);
 pub const FACT: Role = Role::new(12.5, 400.0, 18.0).tabular(0.05);
 /// Fine print, sources and help text.
 pub const META: Role = Role::new(12.0, 400.0, 17.0).tabular(0.1);
+/// Reading Meeting typography from the approved layout.
+pub const MEETING_META: Role = Role::new(11.5, 400.0, 16.0).tabular(0.1);
+pub const MEETING_CONTROL: Role = Role::new(12.0, 400.0, 17.0).tabular(0.05);
+pub const MEETING_READ: Role = Role::new(13.5, 400.0, 22.0);
+pub const MEETING_REPLY: Role = Role::new(13.0, 400.0, 22.0);
+pub const MEETING_PROJECT: Role = Role::new(12.5, 500.0, 20.0);
 /// Recording positions.
 pub const TIME: Role = META;
 /// Counts accompanying a label.
