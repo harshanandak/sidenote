@@ -321,6 +321,8 @@
 
   "src/core/ui_prefs.rs": "26870e51eebbc5f4a8a405b1dd81b680140ae8191d9bbf626f4ce708d91c4203",
 
+  "src/desktop/startup.rs": "1e5e0d9893e59322bc4aa931dde5c6bcbf958b154626e82b75c7dd92d3c76f5a",
+
   "src/hex_engine.rs": "15716eb253dc0c18162be893bf8307b972127754421d89d1ff3309c14b46d578",
 
   "src/hex_engine/audio_retention/tests.rs": "e222ae001e30661415465c8a1c055b135c37ac0821496dbe25c47d1307fa8a77",
@@ -329,7 +331,7 @@
 
   "src/hex_probe.rs": "c70da5b9ab7e359008a743386406996abd72895cbd435027b53727f8e177284c",
 
-  "src/listener.rs": "4476f11edbb34d8524d2c1509448bc9d59c5e3d2c04f26275022c45577c166f7",
+  "src/listener.rs": "fe788da06f90f51ffb6090b5e5c3fb355216e09d691adfd3d2893d211aeaf9d4",
 
   "src/listener/completion.rs": "ed9ba2b329051ded8dc962dc150c7643fbf3f75723ee6faa6eebf95a1bf1e3a2",
 
@@ -447,7 +449,7 @@
 
   "src/ui/memory/settled.rs": "de41d04607b3d7e97544ffffea73837ce69afa18f2fd8d2170e7561b1f859728",
 
-  "src/ui/mod.rs": "76a0bb19999666a62baa97f2ccb0e26b6b1f3c37c42017d54162ba8811c357ff",
+  "src/ui/mod.rs": "6a502fc0f41121c47be9d6912a6968c94685fc6a51c70f982129e1a356c6dfaf",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -465,11 +467,11 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "27e10b528956dacffa9b595b18073b6afbbf104c37944a72838ff14a4c09703f",
+  "src/ui/updates.rs": "baea39157238bea63735c5bd70e088b87d89b303b30fcb4a866dd65e7ac6ced3",
 
-  "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
+  "src/ui/window.rs": "0062a19fbe54c3eb1dfb095cdefcbca1e5a2b91abc0e893729d99849dfda533e",
 
-  "src/updates_windows.rs": "c9be5c735f43637dca5e0d160cf570a3794bcda1b915e84b07f679801fbbd626",
+  "src/updates_windows.rs": "b71632ffa5fee13c9b5d490525713fa9e5ae1c1f43a86f2ac9e17ff12008425e",
 
   "src/updates_windows/install_record.rs": "1c5ad14ef7d329f177938904d663d9af57f48ce00f708211dc4e00c8aa060538",
 

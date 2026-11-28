@@ -124,7 +124,19 @@ impl State {
         }
         #[cfg(windows)]
         self.confirm_update(&updates::directory(), updates::VERSION);
-        self.start_pending_update(|publish| updates::window_start(publish));
+        let events = self.events_tx.clone();
+        let wake = self.waker.clone();
+        self.start_pending_update(move |publish| {
+            updates::window_start(publish, |status| {
+                let _ = events.send(Event::ListenerStartupStatus(status));
+                if let Some(wake) = &wake {
+                    wake();
+                }
+            })
+        });
+    }
+    pub(super) fn listener_startup_status(&mut self, status: updates::ListenerStatus) {
+        self.updates.listener = status;
     }
     #[cfg(any(windows, test))]
     fn confirm_update(&mut self, directory: &std::path::Path, version: &str) {
@@ -787,6 +799,26 @@ pub fn listener_problem(s: &State) -> Option<&str> {
     } else {
         None
     }
+}
+
+pub(super) fn listener_preparing(s: &State) -> bool {
+    cfg!(windows)
+        && if s.updates.scene {
+            s.updates.listener.preparing
+        } else {
+            updates::listener_status().preparing
+        }
+}
+
+pub(super) fn listener_wait_notice(s: &State, p: Palette) -> Option<El> {
+    listener_preparing(s).then(|| {
+        roles::SMALL
+            .wrap("Checking the meeting listener…", p.soft)
+            .key("listener-startup-status")
+            .role("status")
+            .px(24.0)
+            .py(6.0)
+    })
 }
 
 pub fn listener_popover(
