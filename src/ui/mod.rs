@@ -2458,13 +2458,20 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 
 const TITLEBAR_H: f32 = 48.0;
 
+/// True while an ordinary or Settings drawer covers the page in a narrow window. Both
+/// drawers stay below the title bar at y=48; the header paints a sidebar-coloured patch
+/// above them so the column reads as one continuous sidebar.
+pub(crate) fn narrow_drawer_open(s: &State) -> bool {
+    s.sidebar_is_open() && !s.sidebar_docked()
+}
+
 /// The first row of the content column, with no bar over an open sidebar. Whenever no docked
 /// sidebar carries them, the row holds the compact mark (only while no full workspace row is
 /// visible) and the toggle and search icons at the top left, where the docked sidebar keeps
 /// the same two in its own top row, and then spans the whole window. The page's actions (the recording pill,
 /// New annotation) sit at the trailing side, clear of the Windows caption buttons
 /// (`State::chrome`). Empty parts of the row drag the window.
-fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
+fn page_header(s: &State, p: theme::Palette, sidebar: theme::Palette, narrow: bool) -> El {
     let (leading, trailing, caption_h) = s.chrome.get();
     let (pill, action) = if s.on_hex() {
         (None, None)
@@ -2472,17 +2479,22 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
         nav::actions(s, p, narrow)
     };
     let docked = s.sidebar_docked();
+    let drawer = narrow_drawer_open(s);
+    // The drawer's toggle and search sit in the title bar while it is open, so they use
+    // the sidebar inks; everything trailing keeps the page palette.
+    let tools_p = if drawer { sidebar } else { p };
     let show_compact = !docked && !s.sidebar_is_open();
     let tools = row()
+        .key("page-header-tools")
         .gap(2.0)
         .items_center()
-        .children((!docked).then(|| nav::toggle(s, p)))
-        .children((!docked).then(|| nav::search(p)))
+        .children((!docked).then(|| nav::toggle(s, tools_p)))
+        .children((!docked).then(|| nav::search(tools_p)))
         .children(show_compact.then(nav::compact_mark));
     // A row with nothing in it takes only the height the window's own buttons need.
     let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
     let h = if bare { caption_h } else { TITLEBAR_H };
-    row()
+    let mut header = row()
         .key("page-header")
         .w_full()
         .h(h)
@@ -2492,7 +2504,19 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
         .pr(8.0_f32.max(trailing))
         .gap(6.0)
         .items_center()
-        .window_drag()
+        .window_drag();
+    if drawer {
+        // An inert sidebar-coloured patch behind the tools, flush with the drawer below.
+        header = header.child(
+            rune::el()
+                .key("phone-drawer-titlebar-patch")
+                .absolute(0.0, 0.0)
+                .size(nav::WIDE, TITLEBAR_H)
+                .fill(sidebar.side)
+                .window_drag(),
+        );
+    }
+    header
         .child(tools)
         .child(rune::el().grow(1.0))
         .children(pill)
@@ -2629,12 +2653,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Beside a docked sidebar the header is the content column's first row; otherwise it spans
     // the window above the body, so the toggle never moves for a rail, a drawer or a list.
     let (above, beside) = if s.sidebar_docked() {
-        (None, Some(page_header(s, p, window_narrow)))
+        (None, Some(page_header(s, p, sidebar, window_narrow)))
     } else if on_hex && s.app_w.get() < hex::settings::DRAWER_AT {
         // Settings paints this header above the drawer's modal layer.
         (Some(rune::el().h(TITLEBAR_H).min_h(TITLEBAR_H)), None)
     } else {
-        (Some(page_header(s, p, window_narrow)), None)
+        (Some(page_header(s, p, sidebar, window_narrow)), None)
     };
     let mut main = col()
         .key("main")

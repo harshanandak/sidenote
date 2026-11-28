@@ -2105,4 +2105,198 @@ mod tests {
             ["Home", "Meetings", "Tasks"]
         );
     }
+
+    fn patch_rect(rt: &rune::Runtime<State>) -> [f32; 4] {
+        el(rt, "phone-drawer-titlebar-patch").rect
+    }
+
+    fn assert_patch_flush_and_sidebar_filled(rt: &rune::Runtime<State>, dark: bool, drawer: &str) {
+        let context = format!("dark {dark}, {drawer}");
+        let patch = patch_rect(rt);
+        for (got, want) in patch.iter().zip([0.0, 0.0, WIDE, 48.0]) {
+            assert!((got - want).abs() <= 0.5, "{context}: patch {patch:?}");
+        }
+        // The samples sit inside the patch and the drawer, away from the glyphs.
+        assert!(patch[0] <= 10.0 && 10.0 <= patch[0] + patch[2], "{context}");
+        assert!(patch[1] <= 10.0 && 10.0 <= patch[1] + patch[3], "{context}");
+        let drawer_el = el(rt, drawer);
+        assert!(
+            drawer_el.rect[0] <= 10.0
+                && 10.0 <= drawer_el.rect[0] + drawer_el.rect[2]
+                && drawer_el.rect[1] <= 49.0
+                && 49.0 <= drawer_el.rect[1] + drawer_el.rect[3],
+            "{context}: drawer {:?}",
+            drawer_el.rect
+        );
+        assert!(
+            (drawer_el.rect[1] - 48.0).abs() <= 0.5,
+            "{context}: drawer stays below the title bar, {:?}",
+            drawer_el.rect
+        );
+        let page = super::super::theme::palette(dark);
+        let sidebar = super::super::theme::sidebar_palette(dark, page);
+        assert_eq!(
+            el(rt, "phone-drawer-titlebar-patch").fill,
+            drawer_el.fill,
+            "{context}"
+        );
+        assert_eq!(drawer_el.fill, sidebar.side, "{context}");
+        let header = el(rt, "page-header");
+        let toggle = el(rt, "sidebar-toggle");
+        assert!(
+            toggle.path.starts_with(&format!("{}/", header.path)),
+            "{context}: the toggle stays in the header"
+        );
+        assert!(toggle.rect[0] + toggle.rect[2] <= WIDE + 0.5, "{context}");
+        let search = el(rt, "nav-search");
+        assert!(
+            search.path.starts_with(&format!("{}/", header.path)),
+            "{context}: the search stays in the header"
+        );
+        assert!(search.rect[0] + search.rect[2] <= WIDE + 0.5, "{context}");
+    }
+
+    #[test]
+    fn phone_drawer_continues_sidebar_colour_through_titlebar() {
+        for dark in [false, true] {
+            let mut rt = identity_rt(390.0, 844.0, dark);
+            assert!(!rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
+            tap(&mut rt, "sidebar-toggle");
+            assert!(rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 1);
+            assert_eq!(count(&rt, "sidebar-toggle"), 1);
+            assert_eq!(count(&rt, "nav-search"), 1);
+            assert_patch_flush_and_sidebar_filled(&rt, dark, "nav");
+            tap(&mut rt, "sidebar-toggle");
+            assert!(!rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
+        }
+    }
+
+    #[test]
+    fn phone_drawer_header_controls_keep_focus_and_caption_clearance() {
+        for dark in [false, true] {
+            for settings in [false, true] {
+                let context = format!("dark {dark}, settings {settings}");
+                let mut rt = identity_rt(390.0, 844.0, dark);
+                if settings {
+                    rt.update(|s, _| s.open_hex());
+                    settle(&mut rt);
+                }
+                with_insets(&mut rt, 138.0, crate::ui::TITLEBAR_H);
+                let check_clearance = |rt: &rune::Runtime<State>| {
+                    let header = el(rt, "page-header");
+                    let prefix = format!("{}/", header.path);
+                    for e in rt.elements().iter().filter(|e| e.path.starts_with(&prefix)) {
+                        let right = e.rect[0] + e.rect[2];
+                        assert!(right <= 390.0 - 138.0 + 0.5, "{context}: {:?}", e.key);
+                    }
+                };
+                check_clearance(&rt);
+                assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+                tap(&mut rt, "sidebar-toggle");
+                assert!(rt.state.sidebar_is_open(), "{context}");
+                assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 1, "{context}");
+                assert_eq!(count(&rt, "sidebar-toggle"), 1, "{context}");
+                assert_eq!(count(&rt, "nav-search"), 1, "{context}");
+                check_clearance(&rt);
+                // A press in the patch's empty middle still drags the window.
+                let (x, y) = (150.0, 24.0);
+                rt.pointer_move(x, y);
+                rt.pointer_down(x, y);
+                assert_eq!(
+                    rt.take_titlebar_action(),
+                    Some(rune::TitlebarAction::Drag),
+                    "{context}"
+                );
+                rt.pointer_up(x, y);
+                // The real search control still opens the finder; a second press
+                // on it closes the finder again while the drawer stays open.
+                tap(&mut rt, "nav-search");
+                assert!(rt.state.finder.is_some(), "{context}");
+                tap(&mut rt, "nav-search");
+                assert!(rt.state.finder.is_none(), "{context}");
+                assert!(rt.state.sidebar_is_open(), "{context}");
+                if settings {
+                    rt.update(|_, tx| tx.focus("sidebar-toggle", true));
+                    settle(&mut rt);
+                    rt.key(rune::KeyEvent {
+                        key: rune::Key::Escape,
+                        mods: rune::Mods::default(),
+                    });
+                    settle(&mut rt);
+                    assert!(!rt.state.sidebar_is_open(), "{context}");
+                    assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+                    rt.update(|_, tx| {
+                        assert_eq!(tx.focused(), Some("sidebar-toggle"), "{context}")
+                    });
+                } else {
+                    rt.pointer_down(370.0, 200.0);
+                    rt.pointer_up(370.0, 200.0);
+                    settle(&mut rt);
+                    assert!(!rt.state.sidebar_is_open(), "{context}");
+                    assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+                }
+                key_backslash(&mut rt);
+                assert!(rt.state.sidebar_is_open(), "{context}");
+                assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 1, "{context}");
+                rt.update(|_, tx| tx.focus("sidebar-toggle", true));
+                settle(&mut rt);
+                tap(&mut rt, "sidebar-toggle");
+                assert!(!rt.state.sidebar_is_open(), "{context}");
+                assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle"), "{context}"));
+            }
+        }
+        // At desktop width the patch stays inactive through docked collapse and reopen.
+        for dark in [false, true] {
+            let mut rt = identity_rt(1334.0, 900.0, dark);
+            own_prefs(&mut rt);
+            assert!(rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
+            tap(&mut rt, "nav-collapse");
+            assert!(!rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
+            assert_eq!(count(&rt, "sidebar-toggle"), 1);
+            tap(&mut rt, "sidebar-toggle");
+            assert!(rt.state.sidebar_is_open());
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0);
+        }
+    }
+
+    #[test]
+    fn phone_drawer_toggle_keeps_search_focus() {
+        // The tools row keeps a stable key, so opening or closing the phone drawer
+        // must not move focus off the search button.
+        fn focused_key(rt: &rune::Runtime<State>) -> Option<String> {
+            rt.elements()
+                .into_iter()
+                .find(|element| element.focused)
+                .and_then(|element| element.key)
+        }
+        for dark in [false, true] {
+            let context = format!("dark {dark}");
+            let mut rt = identity_rt(390.0, 844.0, dark);
+            rt.set_full_keyboard_access(true);
+            settle(&mut rt);
+            assert!(!rt.state.sidebar_is_open(), "{context}");
+            for _ in 0..20 {
+                if focused_key(&rt).as_deref() == Some("nav-search") {
+                    break;
+                }
+                rt.key(rune::Key::Tab.into());
+                settle(&mut rt);
+            }
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+            key_backslash(&mut rt);
+            assert!(rt.state.sidebar_is_open(), "{context}");
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 1, "{context}");
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+            key_backslash(&mut rt);
+            assert!(!rt.state.sidebar_is_open(), "{context}");
+            assert_eq!(count(&rt, "phone-drawer-titlebar-patch"), 0, "{context}");
+            assert_eq!(focused_key(&rt).as_deref(), Some("nav-search"), "{context}");
+        }
+    }
 }
