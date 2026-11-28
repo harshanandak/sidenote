@@ -2473,9 +2473,9 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
     let tools = row()
         .gap(2.0)
         .items_center()
-        .children(show_compact.then(nav::compact_mark))
         .children((!docked).then(|| nav::toggle(s, p)))
-        .children((!docked).then(|| nav::search(p)));
+        .children((!docked).then(|| nav::search(p)))
+        .children(show_compact.then(nav::compact_mark));
     // A row with nothing in it takes only the height the window's own buttons need.
     let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
     let h = if bare { caption_h } else { TITLEBAR_H };

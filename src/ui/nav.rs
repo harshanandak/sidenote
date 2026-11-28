@@ -805,7 +805,11 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let status = recording_status(s);
     // The pill never reaches the caption buttons: its title takes what the header leaves.
     let (lead, trail, _) = s.chrome.get();
-    let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - 130.0).max(0.0);
+    let mut reserve = 130.0;
+    if !s.sidebar_docked() && !s.sidebar_is_open() {
+        reserve = 150.0; // closed-header compact mark and its gap
+    }
+    let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - reserve).max(0.0);
     let title = s
         .hex
         .status
