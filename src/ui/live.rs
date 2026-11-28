@@ -759,13 +759,14 @@ impl State {
                 }
             }
             Err(_) => {
+                self.parts_start_failed();
                 self.hex.error = Some("Could not save meeting before recording.");
                 self.hex.connection.finish_action();
                 return;
             }
         }
-        self.hex_record_start();
-        if !self.hex_record_busy() {
+        if !self.hex_record_start() {
+            self.parts_start_failed();
             self.hex.connection.finish_action();
         }
         self.nav_done();
@@ -860,9 +861,10 @@ impl State {
         if live.close_failed {
             return;
         }
-        let pending_expired = running
+        let idle_or_stopped = self.hex.stopped()
+            || matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status));
+        let pending_expired = idle_or_stopped
             && !busy
-            && matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status))
             && live
                 .session
                 .as_ref()
@@ -877,7 +879,7 @@ impl State {
         match live.phase {
             Phase::Starting if confirmed => live.phase = Phase::Recording,
             Phase::Starting
-                if running
+                if idle_or_stopped
                     && !busy
                     && !recording
                     && !live.start_failed
