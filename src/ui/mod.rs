@@ -2431,29 +2431,19 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
-    let mut left = row().gap(4.0).items_center().min_w(0.0);
-    let mut show = false;
-    if s.page() == nav::Page::Meetings && s.selected.is_some() {
-        show = true;
-        let title = s.current().map(|m| m.title.as_str()).unwrap_or_default();
-        let back = State::reset_navigation;
-        let crumb = widgets::breadcrumb("Meetings", title, "meeting-breadcrumb", p, back);
-        left = left.child(crumb.grow(1.0));
-    }
-    if s.on_memory() && s.memory.browse {
-        show = true;
-        left = left.child(widgets::breadcrumb(
-            "Memory",
-            "All",
-            "memory-breadcrumb",
-            p,
-            |s| {
-                s.close_record();
-                s.memory.browse = false;
-            },
-        ));
-    }
-    show.then(|| left.w_full().px(14.0).py(4.0))
+    (s.on_memory() && s.memory.browse).then(|| {
+        let crumb = widgets::breadcrumb("Memory", "All", "memory-breadcrumb", p, |s| {
+            s.close_record();
+            s.memory.browse = false;
+        });
+        row()
+            .items_center()
+            .min_w(0.0)
+            .w_full()
+            .px(14.0)
+            .py(4.0)
+            .child(crumb)
+    })
 }
 
 const TITLEBAR_H: f32 = 48.0;
@@ -2491,9 +2481,18 @@ fn page_header(s: &State, p: theme::Palette, sidebar: theme::Palette, narrow: bo
         .children((!docked).then(|| nav::toggle(s, tools_p)))
         .children((!docked).then(|| nav::search(tools_p)))
         .children(show_compact.then(nav::compact_mark));
-    // A row with nothing in it takes only the height the window's own buttons need.
+    let reading = s.page() == nav::Page::Meetings
+        && !s.on_live()
+        && !s.meeting_ui.tabs
+        && s.current().is_some();
     let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
-    let h = if bare { caption_h } else { TITLEBAR_H };
+    let h = if reading {
+        TITLEBAR_H.max(caption_h)
+    } else if bare {
+        caption_h
+    } else {
+        TITLEBAR_H
+    };
     let mut header = row()
         .key("page-header")
         .w_full()

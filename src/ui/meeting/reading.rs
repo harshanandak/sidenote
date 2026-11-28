@@ -317,12 +317,11 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
 
 const ENGLISH_ONLY: &str = "English-only transcript. Hindi or Telugu parts may be missing.";
 
-/// Whether to say the transcript was English-only. It follows the word stamped in the summary on
-/// screen, so a summary with no word shows it: nothing recorded that its language passes ran.
 fn english_only(s: &State, m: &Meeting) -> bool {
     s.meeting_tab == Tab::Summary
+        && !s.transcript_open
         && m.has_summary()
-        && m.summary_language != Some(core::notes::Language::Routed)
+        && m.summary_language == Some(core::notes::Language::EnglishOnly)
 }
 
 pub(super) fn status_chip(
@@ -425,9 +424,8 @@ fn people_fact(names: String, p: Palette) -> El {
         .shrink()
 }
 
-fn title_style(phone: bool) -> rune::TextStyle {
-    let (size, line_height) = if phone { (24.0, 30.0) } else { (26.0, 32.0) };
-    crate::ui::theme::display(size).lh(line_height)
+fn title_style() -> rune::TextStyle {
+    crate::ui::theme::display(26.0).lh(32.0)
 }
 
 fn header(
@@ -448,7 +446,7 @@ fn header(
         .items_start()
         .child(
             text(&m.title)
-                .font(title_style(phone))
+                .font(title_style())
                 .color(p.ink)
                 .wrap()
                 .wrap_anywhere()
@@ -498,13 +496,15 @@ fn header(
         .key("meeting-header")
         .w_full()
         .px(side)
-        .pt(18.0)
         .pb(20.0)
         .child(title)
         .child(
-            controls
-                .child(views.mt(16.0))
-                .children(status_chip(s, k, m, p, layer)),
+            controls.child(views.mt(16.0)).child(
+                col()
+                    .key("meeting-status-slot")
+                    .w_full()
+                    .children(status_chip(s, k, m, p, layer)),
+            ),
         )
         .children(crate::ui::live::parts_status(s, p))
         .children(project::form(s, k, &m.id, p))
@@ -1351,7 +1351,7 @@ mod tests {
 
     #[test]
     fn meeting_typography_matches_design_sizes() {
-        let sizes = (title_style(false).size, READ.size, REPLY.size);
+        let sizes = (title_style().size, READ.size, REPLY.size);
         assert_eq!(sizes, (26.0, 13.5, 13.0));
     }
 
@@ -1389,6 +1389,284 @@ mod tests {
         rt.settle_all();
         rt.frame(0.0);
         rt
+    }
+
+    const HEADER_VIEWPORTS: [(f32, f32); 2] = [(1334.0, 900.0), (390.0, 844.0)];
+
+    fn header_fixture(index: u64, long: bool, summary: bool, stamp: Option<&str>) -> String {
+        let start = 1_800_001_000_000 + 60_000 * index;
+        let id = format!("{start}-337");
+        let folder = core::meetings_dir().join(&id);
+        let title = if long {
+            "Library open house planning for the volunteer teams and their neighborhood partners"
+        } else {
+            "Library open house"
+        };
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("manifest.json"),
+            serde_json::json!({"title": title, "status": "complete", "created_at_ms": start, "duration_ms": 1_320_000}).to_string(),
+        ).unwrap();
+        std::fs::write(
+            folder.join("english-transcript.md"),
+            "[00:00:06.000] Maya (English): Bring the maps.\n".repeat(30),
+        )
+        .unwrap();
+        if summary {
+            let mut data = serde_json::json!({
+                "title": title, "made_by": stamp.map(|stamp| serde_json::json!({"language_passes": stamp})),
+                "context": ["Set up the library open house."],
+                "topics": [{"title":"Welcome","points":[{"text":"Bring the maps."}]}],
+                "to_settle": [{"question":"Who will bring extra maps?"}],
+            });
+            if long {
+                data["people"] = serde_json::json!(["Volunteer coordinator ".repeat(8)]);
+                data["topics"] = serde_json::json!(vec![data["topics"][0].clone(); 18]);
+                data["todo"] = serde_json::json!([{"task":"Set up table","status":"done"}]);
+                data["to_settle"] = serde_json::json!(vec![data["to_settle"][0].clone(); 24]);
+            }
+            std::fs::write(folder.join("english-summary.json"), data.to_string()).unwrap();
+        }
+        id
+    }
+
+    fn header_list(size: (f32, f32), dark: bool, ids: &[&str]) -> Runtime<State> {
+        let mut rt = reading_page_at(None, size, None);
+        rt.set_system_dark(dark);
+        rt.update(|s, _| {
+            s.meetings.retain(|m| ids.contains(&m.id.as_str()));
+            s.config.features.projects = false;
+            s.go_meetings();
+            s.sidebar_open.set(size.0 > 390.0);
+            while s.areas.refresh_pending {
+                let event = s
+                    .events_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("task fixture loaded");
+                s.apply_event(event);
+            }
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt
+    }
+
+    fn header_status_update(rt: &mut Runtime<State>, id: &str) {
+        rt.update(|s, _| {
+            let options = s.refresh_options();
+            let mut data = crate::ui::refresh::Data::read(options);
+            let warning = serde_json::json!({
+                "state": "done", "fallback": false, "tasks_failed": false,
+                "transcript_revision": "a".repeat(64),
+                "routing_fallbacks": [{"reason": {"cpu_language_models_missing": {"ready": 2}}}],
+            });
+            data.notes_jobs
+                .insert(id.into(), serde_json::from_value(warning).unwrap());
+            s.apply_event(crate::ui::Event::Refreshed(crate::ui::refresh::Result {
+                generation: core::mutation_generation(),
+                options,
+                data: Some(Box::new(data)),
+            }));
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    fn header_sections(rt: &mut Runtime<State>, wide: bool) {
+        if wide {
+            press_visible(rt, "section-mark-topic-1");
+        } else {
+            press_visible(rt, "meeting-sections");
+            press_visible(rt, "section-item-topic-1");
+        }
+        section_landed(rt, "topic-1");
+    }
+
+    #[test]
+    fn meeting_header_matches_design_without_extra_breadcrumb() {
+        crate::test_paths::isolate();
+        let short = header_fixture(1, false, true, Some("routed"));
+        let long = header_fixture(2, true, true, Some("routed"));
+        for size in HEADER_VIEWPORTS {
+            let wide = size.0 == 1334.0;
+            for dark in [false, true] {
+                let mut rt = header_list(size, dark, &[&short, &long]);
+                for id in [&short, &long] {
+                    press_visible(&mut rt, &format!("meeting-{id}"));
+                    for open in [wide, !wide] {
+                        assert_eq!(rt.state.sidebar_is_open(), open);
+                        assert!(rt.elements().iter().all(|e| {
+                            !e.key
+                                .as_deref()
+                                .unwrap_or_default()
+                                .starts_with("meeting-breadcrumb")
+                        }));
+                        let rect = |key: &str| element(&rt, key).rect;
+                        let bar = rect("page-header");
+                        let title = rect("meeting-title");
+                        let facts = rect("meeting-facts-row");
+                        let views = rect("meeting-view");
+                        let menu = rect(&format!("more-meeting-{id}-button"));
+                        let scroll = rect("meeting-scroll");
+                        assert_eq!((bar[1], bar[3], title[1]), (0.0, 48.0, 48.0));
+                        assert_eq!(facts[1], title[1] + title[3] + 6.0);
+                        assert_eq!((views[1], views[3]), (facts[1] + facts[3] + 16.0, 28.0));
+                        assert!(title[0] + title[2] <= menu[0]);
+                        let toggle = if wide && open {
+                            "nav-collapse"
+                        } else {
+                            "sidebar-toggle"
+                        };
+                        let toggle_bounds = rect(toggle);
+                        assert!(toggle_bounds[1] + toggle_bounds[3] <= title[1]);
+                        assert_eq!(super::super::wide(&rt.state), wide);
+                        if wide {
+                            let rail = rect("meeting-rail-scroll");
+                            assert_eq!(rail[2], 290.0);
+                            assert!((rail[1] - scroll[1]).abs() <= 1.0);
+                            if id == &short {
+                                assert_eq!((title[3], facts[3], scroll[1]), (32.0, 16.0, 166.0));
+                            }
+                        } else {
+                            section_absent(&rt, "meeting-rail-scroll");
+                            let last = rect(if id == &short {
+                                "meeting-point-pt-0-0"
+                            } else {
+                                "meeting-point-pt-17-0"
+                            });
+                            assert!(rect("meeting-actions")[1] >= last[1] + last[3]);
+                            assert!(title[0] >= 0.0 && facts[0] + facts[2] <= size.0);
+                            if id == &long {
+                                assert_eq!(title[3], 64.0);
+                                assert!(facts[3] > 16.0);
+                                if !open {
+                                    header_sections(&mut rt, false);
+                                }
+                            }
+                        }
+                        press_visible(&mut rt, toggle);
+                    }
+                    if !wide {
+                        press_visible(&mut rt, "sidebar-toggle");
+                    }
+                    press_visible(&mut rt, "nav-meetings");
+                    assert!(rt.state.selected.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn english_only_notice_requires_an_explicit_stamp() {
+        crate::test_paths::isolate();
+        let fixtures = [
+            (Some("routed"), true),
+            (Some("english_only"), true),
+            (None, true),
+            (Some("future_stamp"), true),
+            (None, false),
+        ];
+        for (i, (stamp, summary)) in fixtures.into_iter().enumerate() {
+            let id = header_fixture(3 + i as u64, false, summary, stamp);
+            for size in HEADER_VIEWPORTS {
+                for dark in [false, true] {
+                    let mut rt = header_list(size, dark, &[&id]);
+                    press_visible(&mut rt, &format!("meeting-{id}"));
+                    for (tab, shown) in [
+                        ("segment0", stamp == Some("english_only")),
+                        ("meeting-transcript", false),
+                        ("segment1", false),
+                    ] {
+                        press_visible(&mut rt, tab);
+                        assert_eq!(rt.find("meeting-english-only").is_some(), shown);
+                        assert_eq!(element(&rt, "meeting-status-slot").rect[3] == 0.0, !shown);
+                    }
+                    if stamp.is_none() && summary {
+                        press_visible(&mut rt, "segment0");
+                        header_status_update(&mut rt, &id);
+                        section_absent(&rt, "meeting-english-only");
+                        element(&rt, "meeting-engine-status");
+                        section_focus(&mut rt, "meeting-status");
+                        section_key(&mut rt, Key::Text(" ".into()));
+                        assert!(element(&rt, "meeting-status-settings").focused);
+                        section_key(&mut rt, Key::Escape);
+                        assert!(element(&rt, "meeting-status").focused);
+                        section_absent(&rt, "meeting-status-settings");
+                        press_visible(&mut rt, "meeting-status");
+                        press_visible(&mut rt, "meeting-status-settings");
+                        assert_eq!(rt.state.hex.section, crate::ui::hex::Section::MeetingModels);
+                        assert!(rt.state.on_hex());
+                    }
+                }
+            }
+        }
+    }
+
+    fn header_wheel(rt: &mut Runtime<State>, viewport: &str, delta: f32) {
+        let [x, y, w, h] = element(rt, viewport).visible;
+        rt.wheel(x + w / 2.0, y + h / 2.0, delta);
+        rt.wheel_ended();
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    #[test]
+    fn meeting_header_update_preserves_scroll_focus_and_rail_state() {
+        crate::test_paths::isolate();
+        let id = header_fixture(8, true, true, Some("routed"));
+        for size in HEADER_VIEWPORTS {
+            let wide = size.0 == 1334.0;
+            let rail = if wide {
+                "meeting-rail-scroll"
+            } else {
+                "meeting-scroll"
+            };
+            for dark in [false, true] {
+                let mut rt = header_list(size, dark, &[&id]);
+                press_visible(&mut rt, &format!("meeting-{id}"));
+                header_sections(&mut rt, wide);
+                header_wheel(&mut rt, rail, -10_000.0);
+                press_visible(&mut rt, "meeting-done");
+                if wide {
+                    header_wheel(&mut rt, "meeting-scroll", -96.0);
+                } else {
+                    header_sections(&mut rt, false);
+                }
+                press_visible(&mut rt, "ask-input");
+                let snapshot = |rt: &Runtime<State>| {
+                    ["ctx-0", "meeting-done-tasks", "meeting-status-slot"].map(|key| {
+                        let e = element(rt, key);
+                        (e.path, e.scrolled[1])
+                    })
+                };
+                let before = snapshot(&rt);
+                assert!(before[0].1 > 0.0 && before[1].1 > 0.0);
+                assert!(rt.state.question.focused);
+                header_status_update(&mut rt, &id);
+                element(&rt, "meeting-engine-status");
+                assert_eq!(snapshot(&rt), before);
+                assert!(rt.state.question.focused);
+                let [x, y, _, _] = element(&rt, "meeting-title").rect;
+                rt.pointer_move(x + 2.0, y + 2.0);
+                section_key(&mut rt, Key::Text("Maps".into()));
+                assert_eq!(rt.state.question.text, "Maps");
+                let [x, _, w, _] = element(&rt, "ask-pill").rect;
+                let pane = element(&rt, "meeting-pane").rect;
+                let center = pane[0] + (pane[2] + if wide { 32.0 - 358.0 } else { 0.0 }) / 2.0;
+                assert!((x + w / 2.0 - center).abs() <= 1.0);
+                assert!(!wide || x + w <= element(&rt, rail).rect[0]);
+                press_visible(&mut rt, "meeting-transcript");
+                press_visible(&mut rt, "transcript-filter");
+                assert!(rt.state.transcript_filter.focused);
+                header_status_update(&mut rt, &id);
+                assert!(rt.state.transcript_filter.focused);
+                section_key(&mut rt, Key::Text("maps".into()));
+                assert_eq!(rt.state.transcript_filter.text, "maps");
+                press_visible(&mut rt, "meeting-hide-transcript");
+                assert!(!rt.state.transcript_open);
+                header_sections(&mut rt, wide);
+            }
+        }
     }
 
     #[test]

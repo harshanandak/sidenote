@@ -491,10 +491,12 @@ mod tests {
         });
         rt.settle_all();
         rt.frame(0.0);
-        let (x, y) = rt.find("meeting-breadcrumb-parent").unwrap();
-        rt.pointer_move(x, y);
-        rt.pointer_down(x, y);
-        rt.pointer_up(x, y);
+        assert!(rt.find("meeting-breadcrumb-parent").is_none());
+        rt.on_key = Some(crate::ui::on_key);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Escape,
+            mods: rune::Mods::default(),
+        });
         rt.frame(0.2);
         assert!(rt.state.filter == Filter::Peers);
         assert!(rt.state.page() == Page::Meetings);
