@@ -2078,7 +2078,10 @@ fn switching_helper_mid_answer_labels_each_answer_and_runs_the_next_on_the_new_o
     let mut rt = page();
     rt.update(|s, _| scene_agents(s, ALL_AGENTS));
     let (a, a_model) = first_model(&rt.state, "Codex");
-    let (b, b_model) = first_model(&rt.state, "OpenCode");
+    let (b, _) = first_model(&rt.state, "OpenCode");
+    let b_model = Some("opencode/big-pickle".to_owned());
+    let terms = core::agent_consent::terms(b_model.as_deref()).unwrap();
+    core::agent_consent::set_permission(&core::state_dir(), terms, true).unwrap();
     rt.update(|s, _| s.choose_ask_pick(a.clone(), a_model.clone()));
     rt.update(|s, _| s.send("What do I need to do next?"));
     let run = &rt.state.asks[MEETING];

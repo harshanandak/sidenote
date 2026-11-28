@@ -12,9 +12,9 @@ use std::{
 static NEXT: AtomicU64 = AtomicU64::new(0);
 pub(crate) mod deadline;
 mod translation;
-#[derive(Clone, Copy)]
 pub(super) enum Invocation<'a> {
     General(&'a Runner, Option<&'a dyn Fn() -> bool>),
+    OpenCodeAsk(&'a Runner, fs::File),
     Translation {
         model: &'a str,
         capability: Option<&'a str>,
@@ -106,7 +106,7 @@ fn diagnosis(text: &str) -> &'static str {
 pub(super) struct RunnerFailure {
     pub category: &'static str,
     pub exit: Option<i32>,
-    message: String,
+    pub(super) message: String,
 }
 impl From<String> for RunnerFailure {
     fn from(message: String) -> Self {
@@ -447,7 +447,7 @@ pub(super) fn run_classified(
     let expired = || deadline.is_some_and(|end| deadline::now() >= end);
     let mut prepared;
     let (runner, text_only) = match invocation {
-        Invocation::General(r, _) => {
+        Invocation::General(r, _) | Invocation::OpenCodeAsk(r, _) => {
             runners::validate(r)?;
             (r, false)
         }
@@ -632,10 +632,17 @@ pub(super) fn run_classified(
     } else {
         (Box::new(stdout), Box::new(stderr))
     };
-    let writer = child
-        .stdin
-        .take()
-        .map(|mut stdin| std::thread::spawn(move || stdin.write_all(prompt.as_bytes())));
+    let consent_guard = match invocation {
+        Invocation::OpenCodeAsk(_, guard) => Some(guard),
+        _ => None,
+    };
+    let writer = child.stdin.take().map(|mut stdin| {
+        std::thread::spawn(move || {
+            // Keep revocation ordered against the prompt write, including thread scheduling.
+            let _consent_guard = consent_guard;
+            stdin.write_all(prompt.as_bytes())
+        })
+    });
     drop(launch_guard);
     let errors = std::thread::spawn(move || {
         let mut stderr = stderr;

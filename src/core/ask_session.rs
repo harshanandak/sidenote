@@ -282,6 +282,22 @@ pub fn run(
     chat: &str,
     progress: impl Fn(AskProgress),
 ) -> Result<String, String> {
+    if runners::kind(runner) == Ok("opencode") {
+        let runner = super::ask::read_only_runner(runner.clone())?;
+        let guard = super::agent_consent::authorize(&super::state_dir(), runner.model.as_deref())
+            .map_err(super::agent_consent::Refusal::message)?;
+        return run_authorized(&runner, prompt, chat, progress, Some(guard));
+    }
+    run_authorized(runner, prompt, chat, progress, None)
+}
+
+pub(super) fn run_authorized(
+    runner: &Runner,
+    prompt: String,
+    chat: &str,
+    progress: impl Fn(AskProgress),
+    consent_guard: Option<std::fs::File>,
+) -> Result<String, String> {
     #[cfg(debug_assertions)]
     if let Some(stand_in) = *STAND_IN.lock().unwrap() {
         progress(AskProgress::Started {
@@ -291,6 +307,18 @@ pub fn run(
     }
     let _activity = crate::updates::activity()
         .map_err(|_| "An update is being installed. Try again after restart.")?;
+    if let Some(guard) = consent_guard {
+        use super::runner_process::{Invocation, run_classified};
+        return run_classified(
+            Invocation::OpenCodeAsk(runner, guard),
+            prompt,
+            &super::state_dir(),
+            Duration::from_secs(600),
+            false,
+            progress,
+        )
+        .map_err(|error| error.message);
+    }
     if !runner.stdin || !matches!(runners::kind(runner)?, "claude" | "codex") {
         return super::run_runner(runner, prompt, &super::state_dir(), progress);
     }

@@ -95,6 +95,20 @@ today. Translate and QuickTitle use `ToolPolicy::None` (closes S01).
 - **Writers** replace the file atomically and update `heartbeat_at` every 10 seconds while running. Readers treat a heartbeat older than 60 seconds as "Stopped unexpectedly".
 - **Messages** are plain and redacted: no transcript text, no secrets, and the user profile path shortened.
 
+## Amendment, 2026-11-28
+
+Sidenote will own one in-process ACP harness, starting with OpenCode and then
+Gemini CLI for eligible accounts. The first OpenCode profile will use inline
+meeting context with tools disabled. Granted-file reads require qualification
+of the agent's native tools and configuration. ACP capabilities cover client
+RPCs only. Existing Claude Code and Codex routes keep their CLI transport.
+There are no outbound meeting-event hooks.
+
+Each reviewed free cloud route requires device-local permission for its purpose
+and model. Unresolved routes and routes whose terms prohibit sensitive meeting
+content are blocked. The current OpenCode Ask consent gate does not establish
+read confinement for the legacy `plan` agent.
+
 ## Options rejected
 
 - AG-UI: events from agent to UI, not control of a local CLI.

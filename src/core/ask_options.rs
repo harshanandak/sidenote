@@ -1,6 +1,7 @@
 //! Ask preferences and context. Summary runners never pass through this module.
-use super::{Runner, file_reads, live, runners};
+use super::{Runner, agent_consent, file_reads, live, runners};
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +68,31 @@ pub struct Fallback {
     pub model: Option<String>,
     pub thinking: Thinking,
 }
+#[derive(Debug)]
+enum RunFailure {
+    Runner(String),
+    Consent(agent_consent::Refusal),
+}
+impl<T: Into<String>> From<T> for RunFailure {
+    fn from(error: T) -> Self {
+        Self::Runner(error.into())
+    }
+}
+
+fn send(
+    root: &Path,
+    runner: &Runner,
+    prompt: String,
+    run: impl FnOnce(String, Option<File>) -> Result<String, String>,
+) -> Result<String, RunFailure> {
+    let guard = if runners::kind(runner)? == "opencode" {
+        Some(agent_consent::authorize(root, runner.model.as_deref()).map_err(RunFailure::Consent)?)
+    } else {
+        None
+    };
+    run(prompt, guard).map_err(RunFailure::Runner)
+}
+
 impl Options {
     pub(super) fn run(
         &self,
@@ -88,7 +114,14 @@ impl Options {
                 super::ask::pick_runner(name)?
             };
             let runner = options.runner(super::ask::read_only_runner(runner)?)?;
-            super::ask_session::run(&runner, prompt.clone(), chat, progress)
+            send(
+                &super::state_dir(),
+                &runner,
+                prompt.clone(),
+                |prompt, guard| {
+                    super::ask_session::run_authorized(&runner, prompt, chat, progress, guard)
+                },
+            )
         };
         self.try_fallback(name, progress, execute)
     }
@@ -96,10 +129,10 @@ impl Options {
         &self,
         name: &str,
         progress: &impl Fn(super::AskProgress),
-        mut execute: impl FnMut(&str, &Self) -> Result<String, String>,
+        mut execute: impl FnMut(&str, &Self) -> Result<String, RunFailure>,
     ) -> Result<String, String> {
-        let result = execute(name, self);
-        if result.is_err()
+        let mut result = execute(name, self);
+        if matches!(result, Err(RunFailure::Runner(_)))
             && !super::ask::cancel_requested()
             && !super::ask::stop_requested()
             && let Some(fallback) = &self.fallback
@@ -110,7 +143,7 @@ impl Options {
             progress(super::AskProgress::Text {
                 text: String::new(),
             });
-            return execute(
+            result = execute(
                 &fallback.runner,
                 &Self {
                     model: fallback.model.clone(),
@@ -120,7 +153,10 @@ impl Options {
                 },
             );
         }
-        result
+        result.map_err(|failure| match failure {
+            RunFailure::Runner(message) => message,
+            RunFailure::Consent(refusal) => refusal.message().into(),
+        })
     }
     pub(super) fn runner(&self, mut runner: Runner) -> Result<Runner, String> {
         if let Some(model) = &self.model {
@@ -308,6 +344,91 @@ fn recent_meeting_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opencode_ask_checks_consent_before_each_recipient_gets_prompt_bytes() {
+        use agent_consent::Refusal;
+        let root = tempfile::tempdir().unwrap();
+        let mut runner = Runner {
+            name: "Synthetic OpenCode".into(),
+            program: "opencode".into(),
+            model: Some("opencode/big-pickle".into()),
+            args: Vec::new(),
+            stdin: true,
+            tools: true,
+        };
+        let options = Options {
+            fallback: Some(Fallback {
+                runner: "fallback".into(),
+                model: None,
+                thinking: Thinking::Low,
+            }),
+            ..Default::default()
+        };
+        let terms = agent_consent::terms(runner.model.as_deref()).unwrap();
+        let marker = "synthetic meeting marker";
+        let mut received = Vec::new();
+        for (permission, expected_bytes) in
+            [(None, 0), (Some(true), marker.len()), (Some(false), 0)]
+        {
+            if let Some(allow) = permission {
+                agent_consent::set_permission(root.path(), terms, allow).unwrap();
+            }
+            received.clear();
+            let result = options.try_fallback(&runner.name, &|_| {}, |name, _| {
+                assert_eq!(name, runner.name, "privacy refusal must skip fallback");
+                send(root.path(), &runner, marker.into(), |prompt, guard| {
+                    assert!(guard.is_some());
+                    received.extend_from_slice(prompt.as_bytes());
+                    Ok("answer".into())
+                })
+            });
+            assert_eq!(received.len(), expected_bytes);
+            assert_eq!(result.is_ok(), permission == Some(true));
+            if permission == Some(true) {
+                assert_eq!(received, marker.as_bytes());
+                assert!(matches!(
+                    agent_consent::authorize(root.path(), Some("opencode/beam")),
+                    Err(Refusal::Permission(_))
+                ));
+            }
+        }
+        for (model, refusal) in [
+            (Some("other/example-free"), Refusal::UnreviewedFree),
+            (None, Refusal::Unresolved),
+            (Some("other/unreviewed"), Refusal::Unresolved),
+        ] {
+            runner.model = model.map(str::to_owned);
+            assert!(
+                matches!(send(root.path(), &runner, marker.into(), |_, _| panic!("unexpected send")),
+                Err(RunFailure::Consent(actual)) if actual == refusal)
+            );
+        }
+        runner.model = Some("opencode/nemotron-3.5-lightning".into());
+        let Err(Refusal::Restricted(restricted)) = agent_consent::terms(runner.model.as_deref())
+        else {
+            panic!("expected restricted terms")
+        };
+        assert!(agent_consent::set_permission(root.path(), restricted, true).is_err());
+        let result = options.try_fallback("Codex", &|_| {}, |name, _| {
+            if name == "Codex" {
+                return Err("Synthetic CLI failure".into());
+            }
+            assert_eq!(name, "fallback");
+            send(root.path(), &runner, marker.into(), |_, _| {
+                panic!("unexpected send")
+            })
+        });
+        assert_eq!(
+            result.unwrap_err(),
+            Refusal::Restricted(restricted).message()
+        );
+        std::fs::write(root.path().join("local/agent-consent.json"), b"{ broken").unwrap();
+        assert!(matches!(
+            agent_consent::authorize(root.path(), Some(terms.model)),
+            Err(Refusal::Permission(_))
+        ));
+    }
+
     #[test]
     fn endpoint_failures_never_enter_the_cli_fallback() {
         let options = Options {
