@@ -41,6 +41,77 @@ fn in_parent_with(name: &str, configure: impl FnOnce(&mut std::process::Command)
     true
 }
 
+fn home_ask(size: (f32, f32), dark: bool) -> Runtime<State> {
+    crate::test_paths::isolate();
+    let mut state = State::new();
+    state.go_home();
+    scene_agents(&mut state, ALL_AGENTS);
+    let mut rt = Runtime::new(state, view, size, Env::new(dark, 1.0));
+    rt.settle_all();
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn ask_option_menu_keyboard_selects_and_escape_closes() {
+    let mut rt = home_ask(DEFAULT_SIZE, false);
+    rt.update(|s, tx| {
+        s.question = TextEdit::new("My question");
+        tx.focus("ask-options", true);
+    });
+    rt.frame(0.0);
+    for (key, label, open) in [
+        (Key::Text(" ".into()), "All meetings", true),
+        (Key::Up, "All prompts", true),
+        (Key::Down, "All meetings", true),
+        (Key::Enter, "Ask options", false),
+        (Key::Text(" ".into()), "All meetings", true),
+        (Key::Escape, "Ask options", false),
+    ] {
+        rt.key(key.into());
+        rt.frame(0.2);
+        let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
+        assert_eq!(focused.label.as_deref(), Some(label));
+        assert_eq!(rt.find("ask-options-menu").is_some(), open);
+    }
+}
+
+#[test]
+fn ask_option_menu_fits_at_phone_width() {
+    let mut rt = home_ask((390.0, 800.0), false);
+    tap(&mut rt, "ask-options");
+    for picker in [false, true] {
+        rt.update(|s, _| s.runner_open = picker);
+        rt.settle_all();
+        rt.frame(0.0);
+        let [x, y, w, h] = rect_of(&rt, "ask-options-menu");
+        assert!(x >= 0.0 && y >= 0.0 && x + w <= 390.0 && y + h <= 800.0);
+    }
+}
+
+#[test]
+fn ask_option_menu_uses_raised_surface_and_shadow() {
+    let mut rt = home_ask(DEFAULT_SIZE, true);
+    tap(&mut rt, "ask-options");
+    let key = "ask-options-menu";
+    let p = theme::palette(true);
+    let menu = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some(key))
+        .unwrap();
+    assert_eq!(menu.fill, p.raised);
+    let pose = rt.presented_pose(key).unwrap();
+    let [shadow, border] = pose.shadows() else {
+        panic!("expected a shadow and line ring")
+    };
+    assert_eq!((shadow.y, shadow.blur, shadow.color), (8.0, 24.0, p.shadow));
+    assert_eq!(
+        (border.spread, border.blur, border.color),
+        (1.0, 0.0, p.line)
+    );
+}
+
 /// The meeting page over one invented meeting that has a structured summary.
 fn page() -> Runtime<State> {
     page_at(DEFAULT_SIZE)

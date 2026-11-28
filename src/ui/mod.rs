@@ -2502,6 +2502,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return widgets::button_sheet(p).fill(p.bg).w_full().h_full();
     }
     let k = theme::kit(&p);
+    s.ask_settings.reduced_motion.set(cx.is_reduced_motion());
     cx.caption_color(p.ink);
     let insets = cx.chrome_insets();
     s.chrome
@@ -3989,8 +3990,10 @@ pub fn spec() -> AppSpec<State> {
                 s.ask_settings.other_model = true;
             }),
             ("ask-thinking-picker", |s| {
+                s.go_home();
                 scene_agents(s, ALL_AGENTS);
-                s.ask_settings.thinking_open = true;
+                s.runner = Some("Codex".into());
+                s.runner_open = true;
             }),
             ("ask-in-meeting", |s| {
                 scene_live(s, SCENE_NOTES, SCENE_LINES, true);

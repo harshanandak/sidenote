@@ -6,12 +6,17 @@ use super::{
     meeting::COLUMN,
     roles,
     theme::Palette,
-    widgets::{ButtonDisabled, ButtonRole, button, hairline, pressable, quiet_button},
+    widgets::{
+        ButtonDisabled, ButtonRole, button, hairline, menu_row, menu_separator, pressable,
+        quiet_button,
+    },
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
-use rune::{Color, El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
-use rune_kit::{Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement, Spinner, TextInput};
+use rune::{
+    Align, Color, El, Key, KeyEvent, Shadow, Side, Spring, SpringPair, Transition, Tx, col, row,
+};
+use rune_kit::{Kit, Markdown, MarkdownStyle, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
 
@@ -562,8 +567,104 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
     }
 }
 
+const OPTIONS_KEY: &str = "ask-options";
+
+#[derive(Default)]
+struct AskMenu {
+    rows: Vec<El>,
+    items: usize,
+}
+
+impl AskMenu {
+    fn item(&mut self, row: El) {
+        self.rows
+            .push(row.key(format!("{OPTIONS_KEY}-item{}", self.items)));
+        self.items += 1;
+    }
+
+    fn section(&mut self, label: impl Into<String>, p: Palette) {
+        self.rows
+            .push(roles::META.line(label, p.faint).px(8.0).pt(6.0).pb(3.0));
+    }
+}
+
+fn ask_menu_row(name: impl Into<String>, p: Palette, detail: Option<&str>) -> El {
+    menu_row(name, p, detail, None, None)
+}
+
+fn ask_menu_checked(
+    name: impl Into<String>,
+    p: Palette,
+    detail: Option<&str>,
+    checked: bool,
+) -> El {
+    let item = ask_menu_row(name, p, detail)
+        .role("menuitemcheckbox")
+        .checked(checked)
+        .focus_selected(checked);
+    if !checked {
+        return item;
+    }
+    item.fill(p.sel)
+        .child(icons::draw(&icons::CHECK, 14.0, p.soft).a11y_hidden())
+}
+
+fn ask_menu_disabled(row: El) -> El {
+    row.disabled(true).focusable(false).layer_opacity(0.5)
+}
+
+fn mount_ask_menu(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    layer: &mut Vec<El>,
+    menu: AskMenu,
+    (label, gutter): (&str, f32),
+    close: fn(&mut State),
+) {
+    let motion = if s.ask_settings.reduced_motion.get() {
+        Transition::none()
+    } else {
+        Transition::opacity().springs(pair::SNAP)
+    };
+    let width = 240.0_f32.min((s.app_w.get() - 16.0).max(0.0));
+    let rows = col()
+        .padding(4.0)
+        .items_stretch()
+        .children(menu.rows)
+        .instant_changes();
+    let scroll = rune_kit::popover::fit_scroll(rows);
+    let surface = col()
+        .key("ask-options-menu")
+        .w(width)
+        .min_h(0.0)
+        .role("menu")
+        .label(label.to_owned())
+        .focus_group()
+        .radius(10.0)
+        .fill(p.raised)
+        .child(
+            rune_kit::scroll_bar(k, "ask-options-scroll-area", "scroll", scroll)
+                .w_full()
+                .shrink()
+                .min_h(0.0),
+        )
+        .shadow(8.0, 24.0, p.shadow)
+        .box_shadow(Shadow {
+            spread: 1.0,
+            color: p.line,
+            ..Shadow::default()
+        })
+        .anchored_fit(OPTIONS_KEY, Side::Top, Align::End, gutter)
+        .transition(motion)
+        .token_motion(k.motion.overlay)
+        .focus_return(OPTIONS_KEY)
+        .modal(true, close);
+    layer.push(rune_kit::scrim("ask-options-scrim", close));
+    layer.push(surface);
+}
+
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
-    let (prompt, more) = prompts(s);
     let gutter = if chip {
         6.0 + PROMPT_HEIGHT + PROMPT_GAP + (PILL_HEIGHT - DOCK_BUTTON) / 2.0
     } else {
@@ -596,86 +697,95 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
             s.ask_settings.scope_open = !s.ask_settings.scope_open;
         }
     });
-    if s.runner_open && !s.ask_settings.connection.settings.enabled {
-        return runner_choice(
-            s,
-            k,
-            p,
-            trigger.label(format!("Model: {}", picker_label(s))),
-            gutter,
-            layer,
-        );
+    let picker = s.runner_open && !s.ask_settings.connection.settings.enabled;
+    if picker || s.ask_settings.scope_open {
+        let (menu, label, close): (AskMenu, &str, fn(&mut State)) = if picker {
+            (runner_choice(s, p), "Ask model", |s| s.runner_open = false)
+        } else {
+            (scope_choices(s, p, chip), "Ask options", |s| {
+                s.ask_settings.scope_open = false
+            })
+        };
+        mount_ask_menu(s, k, p, layer, menu, (label, gutter), close);
     }
-    let mut menu = Menu::new("ask-options")
-        .trigger(trigger)
-        .open(s.ask_settings.scope_open)
-        .placement(Placement::TopEnd)
-        .gutter(gutter)
-        .min_width(220.0)
-        .on_close(|s: &mut State| s.ask_settings.scope_open = false);
+    let trigger = if picker {
+        trigger.label(format!("Model: {}", picker_label(s)))
+    } else {
+        trigger
+    };
+    trigger.expanded(picker || s.ask_settings.scope_open)
+}
+
+fn scope_choices(s: &State, p: Palette, chip: bool) -> AskMenu {
+    let (prompt, more) = prompts(s);
+    let mut menu = AskMenu::default();
+    menu.section("Prompts", p);
     if chip {
         for prompt in std::iter::once(prompt).chain(more.iter().copied().filter(|p| *p != prompt)) {
-            menu = menu.item(
-                MenuItem::new(prompt).on_select_tx(move |s: &mut State, tx| {
+            menu.item(
+                ask_menu_row(prompt, p, None).on_press_tx(move |s: &mut State, tx| {
                     s.ask_settings.scope_open = false;
                     submit(s, prompt, tx);
                 }),
             );
         }
     }
-    menu = menu.item(MenuItem::new("All prompts").on_select(|s: &mut State| {
-        s.ask_settings.scope_open = false;
-        s.open_hex();
-        s.hex.section = super::hex::Section::PromptLibrary;
-        super::scene_scroll(s, "agent-instructions");
-    }));
+    menu.item(
+        ask_menu_row("All prompts", p, None).on_press(|s: &mut State| {
+            s.ask_settings.scope_open = false;
+            s.open_hex();
+            s.hex.section = super::hex::Section::PromptLibrary;
+            super::scene_scroll(s, "agent-instructions");
+        }),
+    );
     if !s.companies.open {
         let this = s.ask_current_live() || s.ask_meeting_id().is_some();
-        menu = menu
-            .group_label("Ask scope")
-            .item(
-                MenuItem::new("This meeting")
-                    .checked(this)
-                    .disabled(s.selected.is_none() && !s.live_scope_available())
-                    .on_select(|s: &mut State| s.set_ask_scope(false)),
-            )
-            .item(
-                MenuItem::new("All meetings")
-                    .checked(!this)
-                    .on_select(|s: &mut State| s.set_ask_scope(true)),
-            );
+        let this_meeting = ask_menu_checked("This meeting", p, None, this);
+        let this_meeting = if s.selected.is_none() && !s.live_scope_available() {
+            ask_menu_disabled(this_meeting)
+        } else {
+            this_meeting.on_press(|s: &mut State| s.set_ask_scope(false))
+        };
+        menu.rows.push(menu_separator(p));
+        menu.section("Ask scope", p);
+        menu.item(this_meeting);
+        menu.item(
+            ask_menu_checked("All meetings", p, None, !this)
+                .on_press(|s: &mut State| s.set_ask_scope(true)),
+        );
     }
     let connection = &s.ask_settings.connection.settings;
     if connection.enabled {
         let model = connection.model.trim();
-        menu = menu.item(
-            MenuItem::new(if model.is_empty() {
-                "Set up a model"
-            } else {
-                model
-            })
-            .description("Open connection settings")
-            .disabled(s.asks.contains_key(&s.ask_key()))
-            .on_select(|s: &mut State| {
+        let model = if model.is_empty() {
+            "Set up a model"
+        } else {
+            model
+        };
+        let choice = ask_menu_row(model, p, Some("Open connection settings"));
+        menu.rows.push(menu_separator(p));
+        menu.item(if s.asks.contains_key(&s.ask_key()) {
+            ask_menu_disabled(choice)
+        } else {
+            choice.on_press(|s: &mut State| {
                 s.ask_settings.scope_open = false;
                 s.open_connection_settings();
+            })
+        });
+    } else if s.runner_error.is_none() {
+        menu.rows.push(menu_separator(p));
+        menu.item(
+            ask_menu_row("Model", p, Some(&picker_label(s))).on_press_tx(|s: &mut State, tx| {
+                s.ask_settings.scope_open = false;
+                s.runner_open = true;
+                s.reload_runners();
+                if tx.by_keys() {
+                    tx.focus_when_shown("ask-options-item0", true);
+                }
             }),
         );
-    } else if s.runner_error.is_none() {
-        menu = menu.item(
-            MenuItem::new("Model")
-                .description(picker_label(s))
-                .on_select_tx(|s: &mut State, tx| {
-                    s.ask_settings.scope_open = false;
-                    s.runner_open = true;
-                    s.reload_runners();
-                    if tx.by_keys() {
-                        tx.focus_when_shown("ask-options-item0", true);
-                    }
-                }),
-        );
     }
-    menu.build(k, layer).min_w(0.0).shrink()
+    menu
 }
 
 /// "Claude Sonnet (answer only)" reads as "Sonnet": the picker stays small. What the
@@ -727,50 +837,28 @@ fn choice_label(s: &State, name: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
-fn runner_choice(
-    s: &State,
-    k: &Kit,
-    p: Palette,
-    trigger: El,
-    gutter: f32,
-    layer: &mut Vec<El>,
-) -> El {
+fn runner_choice(s: &State, p: Palette) -> AskMenu {
     let overridden = if s.ask_live_meeting() {
         s.ask_settings.meeting_override.is_some()
     } else {
         s.ask_settings.pick.is_some()
     };
     let (default_runner, default_model) = super::ask_settings::default_choice(s);
-    let mut kit = k.clone();
-    kit.c.text_weak = p.soft;
-    let mut menu = Menu::new("ask-options")
-        .standard()
-        .trigger(trigger)
-        .open(s.runner_open)
-        .placement(Placement::TopEnd)
-        .gutter(gutter)
-        .min_width(240.0)
-        .on_close(|s: &mut State| s.runner_open = false)
-        .item(
-            MenuItem::new("Default")
-                .description(choice_label(
-                    s,
-                    default_runner.as_deref(),
-                    default_model.as_deref(),
-                ))
-                .checked(!overridden)
-                .on_select(|s: &mut State| s.choose_ask_default()),
-        );
+    let mut menu = AskMenu::default();
+    let default = choice_label(s, default_runner.as_deref(), default_model.as_deref());
+    menu.item(
+        ask_menu_checked("Default", p, Some(&default), !overridden)
+            .on_press(|s: &mut State| s.choose_ask_default()),
+    );
     for (agent, runner, models) in super::ask_settings::picker_groups(s) {
-        menu = menu.group_label(agent);
+        menu.section(agent, p);
         for (label, id) in models {
             let chosen =
                 overridden && s.ask_runner_name() == Some(runner.as_str()) && s.ask_model() == id;
             let runner = runner.clone();
-            menu = menu.item(
-                MenuItem::new(label)
-                    .checked(chosen)
-                    .on_select(move |s: &mut State| s.choose_ask_pick(runner.clone(), id.clone())),
+            menu.item(
+                ask_menu_checked(label, p, None, chosen)
+                    .on_press(move |s: &mut State| s.choose_ask_pick(runner.clone(), id.clone())),
             );
         }
     }
@@ -780,18 +868,17 @@ fn runner_choice(
         .find(|r| Some(r.name.as_str()) == s.ask_runner_name())
         .is_some_and(core::ask_options::supports_thinking);
     if thinks && !s.ask_settings.connection.settings.enabled {
-        menu = menu
-            .separator()
-            .group_label("Thinking effort for the selected model");
+        menu.rows.push(menu_separator(p));
+        menu.section("Thinking effort", p);
         let value = s.ask_thinking();
         for level in core::ask_options::Thinking::ALL {
-            menu = menu.item(
-                MenuItem::new(level.label())
-                    .checked(level == value)
-                    .on_select(move |s: &mut State| {
+            menu.item(
+                ask_menu_checked(level.label(), p, None, level == value).on_press(
+                    move |s: &mut State| {
                         s.set_ask_thinking(level);
                         s.runner_open = false;
-                    }),
+                    },
+                ),
             );
         }
     }
@@ -810,13 +897,10 @@ fn runner_choice(
     missing.sort_unstable();
     missing.dedup();
     for agent in missing {
-        menu = menu.item(
-            MenuItem::new(agent)
-                .description("Not installed")
-                .disabled(true),
-        );
+        let unavailable = ask_menu_row(agent, p, Some("Not installed"));
+        menu.item(ask_menu_disabled(unavailable));
     }
-    menu.build(&kit, layer).min_w(0.0)
+    menu
 }
 
 pub(super) const DOCK_BUTTON: f32 = 32.0;

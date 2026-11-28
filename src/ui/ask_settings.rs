@@ -10,7 +10,10 @@ use sidenote::core::{
     self, UiPrefs,
     ask_options::{self, Thinking},
 };
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, HashMap},
+};
 
 pub const OPENCODE_THINKING: &str = "OpenCode has no separate effort flag. Choose a thinking variant with provider/model#variant in Models and agents.";
 
@@ -28,6 +31,7 @@ pub struct AskSettings {
     pub fallback_notice: Option<String>,
     pub live_all: bool,
     pub scope_open: bool,
+    pub reduced_motion: Cell<bool>,
     pub details_open: Option<String>,
     pub retry_questions: HashMap<String, core::Message>,
     pub saved_all: bool,
@@ -70,6 +74,7 @@ impl AskSettings {
             fallback_notice: None,
             live_all: false,
             scope_open: false,
+            reduced_motion: Cell::default(),
             details_open: None,
             retry_questions: HashMap::new(),
             saved_all: false,
