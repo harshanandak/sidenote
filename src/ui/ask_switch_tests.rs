@@ -2379,12 +2379,24 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
             .0
     };
     let (pane, dock, chip, pill) = (
-        rect("meeting-title"),
+        rect("meeting-pane"),
         rect("meeting-bottom-bar"),
         rect("ask-prompt"),
         rect("ask-pill"),
     );
-    assert_eq!(pill[0], pane[0]);
+    let (left, right, width) = if size == DEFAULT_SIZE {
+        (32.0, 358.0, 520.0)
+    } else {
+        (16.0, 16.0, pane[2] - 32.0)
+    };
+    assert_eq!(pill[2], width);
+    assert_eq!(
+        pill[0] + pill[2] / 2.0,
+        pane[0] + (pane[2] + left - right) / 2.0
+    );
+    assert_eq!(pane[1] + pane[3] - pill[1] - pill[3], 16.0);
+    assert!(pill[0] >= pane[0] + left);
+    assert!(pill[0] + pill[2] <= pane[0] + pane[2] - right);
     assert!(pill[2] <= dock[2]);
     assert_eq!(pill[3], 48.0);
     assert_eq!(rect("ask-options")[3], 32.0);
@@ -3255,7 +3267,13 @@ fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     let head = rect(&rt, "meeting-header");
     assert_eq!((head[0], head[2]), (left + 32.0, 976.0), "header");
     assert_eq!(head[0], main[0], "title and notes align");
-    assert_eq!(rect(&rt, "ask-pill")[2], 620.0, "Ask bar");
+    let pill = rect(&rt, "ask-pill");
+    assert_eq!(pill[2], 520.0, "Ask bar width");
+    assert_eq!(
+        pill[0] + pill[2] / 2.0,
+        pane[0] + (pane[2] + 32.0 - 358.0) / 2.0
+    );
+    assert_eq!(pane[1] + pane[3] - pill[1] - pill[3], 16.0, "Ask bar inset");
     assert!(rt.find("meeting-scroll-fade").is_none());
     rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
     rt.frame(0.0);
@@ -3603,18 +3621,21 @@ fn the_hidden_time_pill_leaves_the_whole_row_to_the_text_on_a_phone() {
 }
 
 #[test]
-fn the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on() {
-    if in_parent("the_ask_bar_starts_on_the_notes_edge_wherever_the_strip_is_on") {
+fn the_stacked_meeting_centers_ask_in_the_pane() {
+    if in_parent("the_stacked_meeting_centers_ask_in_the_pane") {
         return;
     }
     // 800 wide with no sidebar, and 1000 wide with it (a page of 751): both are `narrow` and both
-    // have room for the strip and the 620 column, so the bar sits on the column's edge.
+    // have room for the strip and the 620 column. The wrapper keeps the column's edges.
     for size in [(800.0, 900.0), (1000.0, 900.0)] {
         let rt = page_at(size);
         assert!(rt.find("meeting-grid").is_some(), "{size:?}: no strip");
         let dock = rect_of(&rt, "meeting-bottom-bar");
         let main = rect_of(&rt, "meeting-main");
         assert_eq!((dock[0], dock[2]), (main[0], main[2]), "{size:?}");
+        let [px, _, pw, _] = rect_of(&rt, "ask-pill");
+        let [x, _, w, _] = rect_of(&rt, "meeting-pane");
+        assert_eq!((px + pw / 2.0, pw), (x + w / 2.0, 520.0), "{size:?}");
     }
 }
 
@@ -5081,4 +5102,15 @@ fn meeting_rail_sections_match_design() {
     tap(&mut rt, "meeting-settle-memory");
     assert!(rt.state.on_memory() && rt.state.memory.settle_all);
     assert_eq!(rt.state.memory.settle_meeting.as_deref(), Some(MEETING));
+}
+
+#[test]
+fn home_and_tasks_keep_the_shared_ask_placement() {
+    on_ask_bar_pages("home_and_tasks_keep_the_shared_ask_placement", |rt, _| {
+        let [x, y, w, h] = rect_of(rt, "ask-pill");
+        let [dock_x, dock_y, dock_w, dock_h] = rect_of(rt, "ask-overlay");
+        assert_eq!((w, h), (620.0, 48.0));
+        assert_eq!(x + w / 2.0, dock_x + dock_w / 2.0);
+        assert_eq!(dock_y + dock_h - y - h, 8.0);
+    });
 }

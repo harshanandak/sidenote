@@ -1038,6 +1038,29 @@ pub fn overlay_with(
     lead: Option<El>,
     above: Option<El>,
 ) -> El {
+    overlay_at(s, k, p, layer, lead, above, None)
+}
+
+pub(super) fn reading_overlay(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    layer: &mut Vec<El>,
+    lead: Option<El>,
+    center_offset: f32,
+) -> El {
+    overlay_at(s, k, p, layer, lead, None, Some(center_offset))
+}
+
+fn overlay_at(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    layer: &mut Vec<El>,
+    lead: Option<El>,
+    above: Option<El>,
+    reading_offset: Option<f32>,
+) -> El {
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
     let compact = s.app_w.get() - super::nav::width(s) < 600.0;
@@ -1121,6 +1144,19 @@ pub fn overlay_with(
         .pr(if compact { 6.0 } else { 10.0 })
         .radius(PILL_HEIGHT / 2.0);
     let dock = col().key("ask-controls").w_full().gap(PROMPT_GAP);
+    let (dock, bottom_inset) = if let Some(offset) = reading_offset {
+        // Center alignment divides the difference between the two side margins in half.
+        let bias = 2.0 * offset;
+        (
+            dock.max_w(520.0)
+                .self_center()
+                .ml(bias.max(0.0))
+                .mr((-bias).max(0.0)),
+            16.0,
+        )
+    } else {
+        (dock, 8.0)
+    };
     if !s.has_agent() && !pending && s.runner_error.is_none() {
         let pill = pill.children(lead);
         let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
@@ -1146,7 +1182,7 @@ pub fn overlay_with(
                         .on_press(|s: &mut State| s.refresh_ai_notes()),
                 )
         };
-        return place(s, stack.child(dock.child(raised(pill, p))));
+        return place(s, stack.child(dock.child(raised(pill, p))), bottom_inset);
     }
     let empty = s.question.text.trim().is_empty();
     let input = TextInput::new(&s.question)
@@ -1232,10 +1268,10 @@ pub fn overlay_with(
         .child(input)
         .child(ask_options(s, k, p, show_prompt, layer))
         .child(action(s, p, pending, empty));
-    place(s, stack.child(dock.child(pill)))
+    place(s, stack.child(dock.child(pill)), bottom_inset)
 }
 
-fn place(s: &State, stack: El) -> El {
+fn place(s: &State, stack: El, bottom_inset: f32) -> El {
     if s.on_live() {
         let space = super::live::limits(s).space;
         col()
@@ -1263,7 +1299,7 @@ fn place(s: &State, stack: El) -> El {
             .min_h(0.0)
             .shrink()
             .items_center()
-            .pb(8.0)
+            .pb(bottom_inset)
             .child(stack.min_h(0.0).shrink())
     } else if s.companies.open {
         col().key("company-ask").w_full().min_w(0.0).child(stack)

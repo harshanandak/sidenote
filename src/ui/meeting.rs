@@ -88,7 +88,7 @@ pub fn wide(s: &State) -> bool {
 
 /// Room for the 44 strip and the notes column with the page gutter either side. The wide grid and
 /// this narrower one both put the notes in a column exactly `COLUMN` wide, 44 in from the grid's
-/// edge, with the header and the Ask bar on the same edges; below it the notes fill the page.
+/// edge, with the header on the same edge. Below that width the notes fill the page.
 pub fn strip(s: &State) -> bool {
     page_w(s) >= STRIP + COLUMN + 2.0 * SIDE
 }
@@ -1061,7 +1061,7 @@ fn document(
 
 pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
     if !s.meeting_ui.tabs {
-        return reading::pane(s, k, p, narrow, layer);
+        return reading::pane(s, k, p, layer);
     }
     let mut pane = col()
         .key("meeting-pane")
