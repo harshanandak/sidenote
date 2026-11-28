@@ -3990,8 +3990,10 @@ pub fn spec() -> AppSpec<State> {
                 s.ask_settings.other_model = true;
             }),
             ("ask-thinking-picker", |s| {
+                s.go_home();
                 scene_agents(s, ALL_AGENTS);
-                s.ask_settings.thinking_open = true;
+                s.runner = Some("Codex".into());
+                s.runner_open = true;
             }),
             ("ask-in-meeting", |s| {
                 scene_live(s, SCENE_NOTES, SCENE_LINES, true);

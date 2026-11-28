@@ -119,6 +119,16 @@ pub fn menu_row(
     icon: Option<&'static Icon>,
     shortcut: Option<&str>,
 ) -> El {
+    menu_row_base(name, p, detail, icon, shortcut).focus_highlight(p.chip)
+}
+
+pub(super) fn menu_row_base(
+    name: impl Into<String>,
+    p: Palette,
+    detail: Option<&str>,
+    icon: Option<&'static Icon>,
+    shortcut: Option<&str>,
+) -> El {
     let name = name.into();
     let mut text = col()
         .grow(1.0)
@@ -135,7 +145,6 @@ pub fn menu_row(
         .items_center()
         .focusable(true)
         .no_focus_ring()
-        .focus_highlight(p.chip)
         .children(icon.map(|glyph| icons::draw(glyph, 16.0, p.soft).a11y_hidden()));
     if let Some(detail) = detail {
         let description = roles::META.wrap(detail, p.faint).min_w(0.0);
