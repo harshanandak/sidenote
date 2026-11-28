@@ -54,25 +54,31 @@ fn home_ask(size: (f32, f32), dark: bool) -> Runtime<State> {
 
 #[test]
 fn ask_option_menu_keyboard_selects_and_escape_closes() {
-    let mut rt = home_ask(DEFAULT_SIZE, false);
+    if in_parent("ask_option_menu_keyboard_selects_and_escape_closes") {
+        return;
+    }
+    let mut rt = page();
+    assert!(!rt.state.ask_settings.saved_all);
     rt.update(|s, tx| {
         s.question = TextEdit::new("My question");
         tx.focus("ask-options", true);
     });
     rt.frame(0.0);
-    for (key, label, open) in [
-        (Key::Text(" ".into()), "All meetings", true),
-        (Key::Up, "All prompts", true),
-        (Key::Down, "All meetings", true),
-        (Key::Enter, "Ask options", false),
-        (Key::Text(" ".into()), "All meetings", true),
-        (Key::Escape, "Ask options", false),
+    for (key, label, open, all) in [
+        (Key::Text(" ".into()), "This meeting", true, false),
+        (Key::Down, "All meetings", true, false),
+        (Key::Up, "This meeting", true, false),
+        (Key::Down, "All meetings", true, false),
+        (Key::Enter, "Ask options", false, true),
+        (Key::Text(" ".into()), "All meetings", true, true),
+        (Key::Escape, "Ask options", false, true),
     ] {
         rt.key(key.into());
         rt.frame(0.2);
         let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
         assert_eq!(focused.label.as_deref(), Some(label));
         assert_eq!(rt.find("ask-options-menu").is_some(), open);
+        assert_eq!(rt.state.ask_settings.saved_all, all);
     }
 }
 
@@ -80,12 +86,54 @@ fn ask_option_menu_keyboard_selects_and_escape_closes() {
 fn ask_option_menu_fits_at_phone_width() {
     let mut rt = home_ask((390.0, 800.0), false);
     tap(&mut rt, "ask-options");
-    for picker in [false, true] {
-        rt.update(|s, _| s.runner_open = picker);
+    assert_open_ask_panel_fits(&mut rt, "ask-options-menu", "Ask options");
+}
+
+fn assert_open_ask_panel_fits(rt: &mut Runtime<State>, key: &str, label: &str) {
+    rt.settle_all();
+    rt.frame(0.0);
+    let panel = element(rt, key);
+    assert_eq!(panel.label.as_deref(), Some(label));
+    assert!(panel.opacity > 0.99 && !panel.exiting && !panel.inert);
+    assert_eq!(panel.visible, panel.rect);
+    let [x, y, w, h] = panel.rect;
+    assert!(x >= 0.0 && y >= 0.0 && w > 0.0 && h > 0.0 && x + w <= 390.0 && y + h <= 800.0);
+}
+
+#[test]
+fn ask_option_menu_keyboard_focus_has_contrast_in_both_themes() {
+    for dark in [false, true] {
+        let mut rt = home_ask(DEFAULT_SIZE, dark);
+        tap(&mut rt, "ask-options");
+        rt.key(Key::Up.into());
         rt.settle_all();
         rt.frame(0.0);
-        let [x, y, w, h] = rect_of(&rt, "ask-options-menu");
-        assert!(x >= 0.0 && y >= 0.0 && x + w <= 390.0 && y + h <= 800.0);
+        let focused = rt.elements().into_iter().find(|e| e.focus_visible).unwrap();
+        assert_eq!(focused.label.as_deref(), Some("All prompts"));
+        let p = theme::palette(dark);
+        let on_row = |rect: [f32; 4]| {
+            rect.into_iter()
+                .zip(focused.rect)
+                .all(|(a, b)| (a - b).abs() <= 1.0)
+        };
+        assert!(
+            rt.instances
+                .iter()
+                .any(|i| on_row(i.rect) && i.fill == p.sel.premul(1.0))
+        );
+        assert!(
+            rt.instances
+                .iter()
+                .any(|i| on_row(i.rect) && i.border == p.accent.premul(1.0))
+        );
+        let contrast = |color: rune::Color| {
+            let a = color.luminance() + 0.05;
+            let b = p.raised.luminance() + 0.05;
+            a.max(b) / a.min(b)
+        };
+        // The selected-fill token shifts the background. The ring carries the focus cue.
+        assert!(contrast(p.sel) >= 1.12, "focus fill, dark={dark}");
+        assert!(contrast(p.accent) >= 3.0, "focus ring, dark={dark}");
     }
 }
 
@@ -1575,7 +1623,8 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
             .expect(context);
         tap(&mut rt, model.key.as_deref().unwrap());
         assert!(rt.state.runner_open, "{context}");
-        assert!(rt.find("ask-options-menu").is_some(), "{context}");
+        assert!(rt.find("ask-model-picker-menu").is_some(), "{context}");
+        rt.update(|s, tx| assert!(ask::focus_open(s, tx), "{context}"));
         rt.update(|s, _| s.runner_open = false);
     }
 }
