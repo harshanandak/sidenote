@@ -309,6 +309,7 @@ jobs:
           cargo test --locked --features dev,asr-runtime -p sidenote --bin sidenote -- \
             install_hooks_tests:: ui::models::dev40_ ui::models::provisioning_review_ \
             ui::window::close_tests:: \
+            ui::nav::tests::listener_check_status_keeps_navigation_available \
             ui::nav::tests::blocked_record_meeting_row_shows_reason_in_sidebar_menu \
             ui::nav::tests::new_menu_trigger_opens_the_record_row \
             ui::nav::tests::new_menu_listener_retry_receives_pointer_and_escape_dismisses_it \
