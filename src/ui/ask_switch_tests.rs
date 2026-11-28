@@ -2364,10 +2364,7 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
         return;
     }
     let mut rt = page_at(size);
-    rt.update(|s, _| {
-        scene_agents(s, ALL_AGENTS);
-        s.ask_open = true;
-    });
+    rt.update(|s, _| scene_agents(s, ALL_AGENTS));
     rt.frame(0.0);
     rt.settle_all();
     rt.frame(0.0);
@@ -2405,6 +2402,17 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     assert!((24.0..=28.0).contains(&chip[3]));
     assert!((0.0..=6.0).contains(&(pill[1] - chip[1] - chip[3])));
     assert!(pill[1] + pill[3] - chip[1] <= 84.0);
+
+    focus_ask_card(&mut rt);
+    let card = rect_of(&rt, "ask-pill");
+    let field = rect_of(&rt, "ask-field");
+    let input = rect_of(&rt, "ask-input");
+    assert_eq!(
+        (card[0], card[2], bottom(card)),
+        (pill[0], pill[2], bottom(pill))
+    );
+    assert_eq!(card[3], 66.0);
+    assert_eq!(input[1] + input[3] / 2.0, field[1] + field[3] / 2.0);
 
     rt.update(|s, _| s.runner_found.clear());
     rt.settle_all();
@@ -2521,7 +2529,7 @@ fn assert_ask_bar_edge(
         assert_eq!(halo.spread, 4.0);
         assert_eq!(
             halo.color,
-            p.accent.alpha(if ring == p.warn { 0.0 } else { 0.16 })
+            p.faint.alpha(if ring == p.warn { 0.0 } else { 0.16 })
         );
     } else {
         assert_eq!(paint.radii[0], 24.0);

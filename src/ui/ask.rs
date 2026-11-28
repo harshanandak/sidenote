@@ -821,8 +821,8 @@ fn model_chip(s: &State, k: &Kit, p: Palette, pending: bool, layer: &mut Vec<El>
     .label(format!("Model: {}", picker_label(s)))
     .h(26.0)
     .max_w(140.0)
-    .min_w(30.0)
     .shrink()
+    .min_w(30.0)
     .pl(10.0)
     .pr(6.0)
     .radius(13.0)
@@ -1122,7 +1122,8 @@ fn overlay_at(
 ) -> El {
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
-    let compact = s.app_w.get() - super::nav::width(s) < 600.0;
+    let pane_width = s.app_w.get() - super::nav::width(s);
+    let compact = pane_width < 600.0;
     let gutter = if s.companies.open {
         0.0
     } else if s.selected.is_some() && !s.meeting_ui.tabs {
@@ -1193,7 +1194,10 @@ fn overlay_at(
     }
     let no_agent = !s.has_agent() && !pending && s.runner_error.is_none();
     let open = !no_agent && card_open(s);
-    let (left, right, gap) = if open {
+    let compact_lead = open && compact && lead.is_some();
+    let (left, right, gap) = if compact_lead {
+        (8.0, 6.0, 1.0)
+    } else if open {
         (14.0, 8.0, 2.0)
     } else if compact {
         (8.0, 6.0, 2.0)
@@ -1322,8 +1326,18 @@ fn overlay_at(
         .build(k)
         .key("ask-input")
         .grow(1.0)
-        .min_w(if open && compact && lead.is_some() {
-            40.0
+        .min_w(if compact_lead {
+            // A paused live dock also has Generate in the recording controls.
+            let paused_live = s.on_live()
+                && s.live
+                    .as_ref()
+                    .is_some_and(|l| l.phase == super::live::Phase::Paused);
+            let room_for_editor = if paused_live { 340.0 } else { 300.0 };
+            if pane_width - 2.0 * gutter >= room_for_editor {
+                90.0
+            } else {
+                40.0
+            }
         } else {
             0.0
         });
@@ -1358,7 +1372,7 @@ fn overlay_at(
         let (top, sides, bottom) = CARD_PAD;
         let card = pill.pt(top).px(sides).pb(bottom).box_shadow(Shadow {
             spread: 4.0,
-            color: p.accent.alpha(if error { 0.0 } else { 0.16 }),
+            color: p.faint.alpha(if error { 0.0 } else { 0.16 }),
             ..Shadow::default()
         });
         (card, field.radius(FIELD_RADIUS).fill(p.bg))
