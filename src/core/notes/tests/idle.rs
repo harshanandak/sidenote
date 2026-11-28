@@ -376,4 +376,12 @@ fn retained_done_status_batch_is_idle_and_observes_requeued_work() {
     assert_eq!(bytes, 0, "unchanged status batch reread the Done job");
     enqueue(&root.0, &s, Some(Request::SortAgain));
     assert_eq!(status_records(&root.0, [ID])[ID].state, JobState::Queued);
+    let local = root.0.join("local");
+    let deleted = format!(r#"{{"{ID}":"fixture"}}"#);
+    fs::write(local.join("deleted-meeting-ids.json"), deleted).unwrap();
+    fs::write(local.join(format!("notes-jobs/{ID}.json")), "{").unwrap();
+    queue::start_worker_in(&root.0, &root.0, i64::MAX, || {
+        panic!("deleted job restarted the notes worker")
+    })
+    .unwrap();
 }

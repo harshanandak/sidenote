@@ -352,6 +352,7 @@ impl State {
         }
         m.pending_start_ms = Some(chrono::Utc::now().timestamp_millis());
         if m.save(&root).is_err() {
+            m.pending_start_ms = None;
             self.hex.error = Some("Could not save meeting before Resume.");
             return;
         }
@@ -360,7 +361,9 @@ impl State {
             self.live_open = true;
         }
         // Keep the page and its notes; the next status supplies the new Hex part id.
-        self.hex_record_start();
+        if !self.hex_record_start() {
+            self.parts_start_failed();
+        }
     }
     pub(in crate::ui) fn meeting_generate(&mut self) {
         if self.hex_stop_pending() {
@@ -383,6 +386,9 @@ impl State {
         let Some(m) = &mut live.session else {
             return;
         };
+        if live.notes_request.strong_count() > 0 {
+            return;
+        }
         let root = core::state_dir();
         let mut prepared = m.clone();
         let preparation = if m.phase != SavedPhase::Ended {
@@ -401,19 +407,24 @@ impl State {
                 self.live_flush();
                 let events = self.events_tx.clone();
                 let wake = self.waker.clone();
+                let request = Arc::new(());
+                let pending = Arc::downgrade(&request);
                 if !self.live_work(move || {
                     let result = sidenote::listener::generate_meeting(&id)
                         .map_err(|_| sidenote::hex_engine::HexError::Unsupported);
+                    drop(request);
                     let _ = events.send(Event::Hex(hex::Msg::NotesRequested(result)));
                     if let Some(wake) = wake {
                         wake();
                     }
                 }) {
+                    self.parts_notes_failed();
                     self.hex.error = Some("Could not start notes. Try Generate notes again.");
                     return;
                 }
                 if let Some(live) = &mut self.live {
                     live.phase = Phase::Making;
+                    live.notes_request = pending;
                     live.generate_after_pause = false;
                 }
                 self.hex.error = None;
