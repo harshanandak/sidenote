@@ -178,6 +178,95 @@ fn ask_option_menu_uses_raised_surface_and_shadow() {
     );
 }
 
+fn open_draft_model_picker(size: (f32, f32)) -> Runtime<State> {
+    let mut rt = page_with(size, || {
+        std::fs::create_dir_all(core::state_dir()).unwrap();
+        let defaults: Vec<core::Runner> =
+            serde_json::from_str(include_str!("../../default-runners.json")).unwrap();
+        let runners = ["OpenCode", "Codex"].map(|name| {
+            let mut runner = defaults
+                .iter()
+                .find(|runner| runner.name == name)
+                .unwrap()
+                .clone();
+            let mut executable = core::state_dir().join(&runner.program);
+            if cfg!(windows) {
+                executable.set_extension("exe");
+            }
+            std::fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
+            runner.program = executable.to_str().unwrap().to_owned();
+            runner
+        });
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&runners).unwrap(),
+        )
+        .unwrap();
+    });
+    rt.update(|s, _| {
+        s.go_home();
+        s.question = TextEdit::new("My question");
+    });
+    rt.settle_all();
+    rt.frame(0.0);
+    tap(&mut rt, "ask-options");
+    rt.frame(0.5);
+    tap(&mut rt, "ask-options-model");
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.state.runner_open && !rt.state.ask_settings.scope_open);
+    assert!(rt.find("ask-options-menu").is_none());
+    rt
+}
+
+#[test]
+fn ask_model_picker_click_starts_arrow_navigation_at_default() {
+    if in_parent("ask_model_picker_click_starts_arrow_navigation_at_default") {
+        return;
+    }
+    let mut rt = open_draft_model_picker(DEFAULT_SIZE);
+    let groups = ask_settings::picker_groups(&rt.state);
+    assert!(groups.len() >= 2 && groups[0].2.len() >= 2);
+    assert!(element(&rt, "ask-model-picker-default").focused);
+    // Rune reveals a pointer-opened menu's current focus before advancing it.
+    for label in ["Default", groups[0].2[0].0.as_str()] {
+        rt.key(Key::Down.into());
+        rt.frame(0.2);
+        let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
+        assert_eq!(focused.label.as_deref(), Some(label));
+        assert!(focused.focus_visible);
+    }
+}
+
+#[test]
+fn ask_model_picker_fits_at_phone_width() {
+    if in_parent("ask_model_picker_fits_at_phone_width") {
+        return;
+    }
+    let mut rt = open_draft_model_picker((390.0, 800.0));
+    assert_open_ask_panel_fits(&mut rt, "ask-model-picker-menu", "Ask model");
+}
+
+#[test]
+fn ask_model_picker_exposes_the_full_names_of_long_variants() {
+    const MODELS: [&str; 2] = [
+        "provider/a-long-model-name-with-a-prefix-shared-by-multiple-variants#low",
+        "provider/a-long-model-name-with-a-prefix-shared-by-multiple-variants#high",
+    ];
+    let mut rt = Runtime::new(
+        theme::palette(false),
+        |p, _| {
+            col().children(MODELS.map(|label| ask::picker_model_row(label, *p, false).key(label)))
+        },
+        (240.0, 120.0),
+        Env::default(),
+    );
+    rt.frame(0.0);
+    for label in MODELS {
+        assert_eq!(element(&rt, label).help.as_deref(), Some(label));
+    }
+}
+
 /// The meeting page over one invented meeting that has a structured summary.
 fn page() -> Runtime<State> {
     page_at(DEFAULT_SIZE)
@@ -820,7 +909,7 @@ fn tasks_page(size: (f32, f32), notes: bool) -> Runtime<State> {
     rt
 }
 
-fn element(rt: &Runtime<State>, key: &str) -> rune::ElementInfo {
+fn element<S: 'static>(rt: &Runtime<S>, key: &str) -> rune::ElementInfo {
     rt.elements()
         .into_iter()
         .find(|e| e.key.as_deref() == Some(key))
@@ -1627,19 +1716,12 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
         tap(&mut rt, "ask-options");
         rt.settle_all();
         rt.frame(0.0);
-        let model = rt
-            .elements()
-            .into_iter()
-            .find(|e| {
-                e.key
-                    .as_deref()
-                    .is_some_and(|key| key.starts_with("ask-options-item"))
-                    && e.label
-                        .as_deref()
-                        .is_some_and(|label| label.starts_with("Model"))
-            })
-            .expect(context);
-        tap(&mut rt, model.key.as_deref().unwrap());
+        assert_eq!(
+            element(&rt, "ask-options-model").label.as_deref(),
+            Some("Model"),
+            "{context}"
+        );
+        tap(&mut rt, "ask-options-model");
         assert!(rt.state.runner_open, "{context}");
         assert!(rt.find("ask-model-picker-menu").is_some(), "{context}");
         rt.update(|s, tx| assert!(ask::focus_open(s, tx), "{context}"));
@@ -1974,7 +2056,13 @@ fn ask_pressing_send_and_a_suggestion_keeps_the_editor_focused() {
     rt.update(|s, _| s.thread_hidden = true);
     rt.frame(0.2);
     tap(&mut rt, "ask-options");
-    tap(&mut rt, "ask-options-item0");
+    let first_suggestion = rt
+        .elements()
+        .into_iter()
+        .filter_map(|e| e.key)
+        .find(|key| key.starts_with("ask-options-prompt-"))
+        .unwrap();
+    tap(&mut rt, &first_suggestion);
     assert!(rt.state.asks.contains_key(MEETING));
     assert!(
         rt.state.question.focused,
