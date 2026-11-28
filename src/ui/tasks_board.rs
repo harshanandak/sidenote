@@ -751,6 +751,7 @@ fn empty_column(drag: bool, p: Palette) -> El {
         .px(10.0)
         .py(14.0)
         .radius(10.0)
+        .border(1.0, p.line)
         .child(roles::META.wrap(
             if drag {
                 "Nothing here. Drag a card here, or use Move on a card."
@@ -1212,6 +1213,23 @@ pub fn filter_row(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_board_column_draws_the_placeholder_outline() {
+        let p = crate::ui::theme::palette(false);
+        let mut rt = rune::Runtime::new(
+            p,
+            |p, _| empty_column(false, *p),
+            (240.0, 120.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        assert!(rt.instances.iter().any(|instance| {
+            instance.radii == [10.0; 4]
+                && instance.params[0] == 1.0
+                && instance.border == p.line.premul(1.0)
+        }));
+    }
 
     #[test]
     fn reveal_follows_a_task_to_its_new_due_date_page() {

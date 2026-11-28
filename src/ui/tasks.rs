@@ -2366,17 +2366,18 @@ fn task_row(s: &State, t: &TaskItem, lay: RowLayout, p: Palette) -> El {
         line = line.fill(p.chip);
     }
     let feedback = task_tick_feedback(s, t, "ttick", p);
-    let line = if selected {
-        col().w_full().px(8.0).child(line)
-    } else {
-        line
-    };
-    let mut out = col().w_full().child(line).children(feedback.map(|line| {
-        line.key(format!("ttick-save-{id}-{index}"))
-            .ml(38.0)
-            .mr(12.0)
-            .mb(6.0)
-    }));
+    // Keep the title's focus path when selection adds an inset and removes hairlines.
+    let inset = if selected { 8.0 } else { 0.0 };
+    let mut out = col()
+        .key(format!("task-list-row-{id}-{index}"))
+        .w_full()
+        .child(col().w_full().px(inset).child(line))
+        .children(feedback.map(|line| {
+            line.key(format!("ttick-save-{id}-{index}"))
+                .ml(38.0)
+                .mr(12.0)
+                .mb(6.0)
+        }));
     for sub in t
         .subtasks
         .iter()
@@ -4809,6 +4810,30 @@ mod tests {
         drain_task_updates(&mut rt, hang_guard);
         assert!(!rt.state.tasks.store.load_overrides().unwrap().manual[0].done);
         assert!(rt.find("ttick-retry-manual/handmade-0").is_none());
+    }
+
+    #[test]
+    fn opening_a_task_with_space_keeps_focus_on_its_title() {
+        let mut rt = tasks_page();
+        rt.update(|s, _| seed_manual_tasks(&mut s.tasks, &[("handmade", false), ("other", false)]));
+        rt.frame(0.0);
+        let key = "ttask-manual/handmade-0";
+        let focused = |rt: &rune::Runtime<State>| {
+            rt.elements()
+                .iter()
+                .any(|e| e.focused && e.key.as_deref() == Some(key))
+        };
+        rt.update(|_, tx| tx.focus(key, true));
+        rt.frame(0.0);
+        assert!(focused(&rt));
+        rt.key(rune::Key::Text(" ".into()).into());
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(
+            rt.state.tasks.panel,
+            Some(Panel::Task((MANUAL_ROW.into(), 0)))
+        );
+        assert!(focused(&rt));
     }
 
     #[test]

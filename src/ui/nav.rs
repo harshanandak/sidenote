@@ -1332,7 +1332,7 @@ mod tests {
     fn shell_divider_uses_the_page_line_outside_settings() {
         let mut rt = new_meeting_runtime(1334.0, false);
         rt.set_system_dark(false);
-        rt.frame(0.0);
+        settle(&mut rt);
         let p = crate::ui::theme::palette(false);
         let divider = rt
             .elements()

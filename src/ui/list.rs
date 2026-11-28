@@ -420,7 +420,7 @@ fn home_row(
     } else if hovered {
         r = r.fill(p.card).shadow(1.0, 2.0, p.shadow);
     }
-    let mut out = col().w_full().child(r);
+    let mut out = col().key(format!("meeting-row-{}", m.id)).w_full().child(r);
     if let Some(form) = project::form(s, k, &m.id, p) {
         out = out.child(form.mx(10.0).mb(6.0));
     }
@@ -571,6 +571,7 @@ pub fn home(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         }
         list_col = list_col.child(
             row()
+                .key(format!("meeting-day-{key}"))
                 .items_start()
                 .gap(8.0)
                 .mt(6.0)
@@ -1844,6 +1845,49 @@ mod tests {
         let top = row.path.rsplit_once('/').unwrap().0;
         let card = top.rsplit_once('/').unwrap().0;
         assert!(elements.iter().find(|e| e.path == card).unwrap().fill != rune::Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn meeting_hover_tracks_the_same_row_through_a_list_refresh() {
+        crate::test_paths::isolate();
+        let mut rt = render_home(home_state(solo_meeting()), 1334.0);
+        let original = "1793955600000-1";
+        let inserted = "1793955600000-2";
+        let (x, y) = rt.find(&format!("meeting-{original}")).unwrap();
+        rt.pointer_move(x, y);
+        rt.frame(0.0);
+        assert_eq!(rt.state.hovered_meeting.as_deref(), Some(original));
+
+        rt.update(|s, _| {
+            s.meetings.push(synthetic_meeting(inserted, "New meeting"));
+            s.refresh_list();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.frame(0.0);
+        assert_eq!(rt.state.hovered_meeting.as_deref(), Some(original));
+
+        // The next refresh puts a different meeting under the stationary pointer.
+        rt.update(|s, _| {
+            s.meetings.swap(0, 1);
+            s.refresh_list();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.frame(0.0);
+        assert_eq!(rt.state.hovered_meeting.as_deref(), Some(inserted));
+
+        rt.update(|s, _| {
+            s.meetings.remove(0);
+            s.refresh_list();
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.frame(0.0);
+        assert_eq!(rt.state.hovered_meeting.as_deref(), Some(original));
+        rt.pointer_leave();
+        rt.frame(0.0);
+        assert!(rt.state.hovered_meeting.is_none());
     }
 
     #[test]
