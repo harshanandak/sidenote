@@ -37,6 +37,7 @@ fn startup_busy_does_not_run_preflight_or_persist() {
     let path = root.path();
     let _guard = InstallGuard::acquire(path).unwrap();
     let files = [
+        install_record::FILE,
         "install-hook.complete",
         "pipeline-install.pending",
         "update-listener.resume",
@@ -58,34 +59,25 @@ fn startup_busy_does_not_run_preflight_or_persist() {
 fn startup_cannot_install_pipeline_during_hook_record_transition() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path();
-    let resume = path.join("update-listener.resume");
+    let record = path.join(install_record::FILE);
     let pending = path.join("pipeline-install.pending");
-    fs::create_dir(&resume).unwrap();
+    fs::write(&pending, VERSION).unwrap();
+    fs::create_dir(&record).unwrap();
     let error = hook(
         path,
-        |_| panic!("resume write must fail first"),
+        |_| panic!("storage failure must stop recovery"),
         |status| {
-            // Expose the pending-only state while the hook still owns the guard.
-            fs::remove_dir(&resume).unwrap();
+            fs::remove_dir(&record).unwrap();
             assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
-            let error = start_installed(
-                path,
-                Instant::now() - Duration::from_secs(2),
-                |_, _| panic!("no listener recovery marker"),
-                |_| Ok(()),
-                || panic!("startup ran the hook's pending pipeline"),
-                || false,
-                |_| panic!("startup prepared an update report"),
-            )
-            .unwrap_err();
-            assert_eq!(error, InstallAdmission::Busy.message());
+            assert_startup_busy(path);
             assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
-            assert!(!resume.exists());
-            serde_json::json!({"status": status})
+            assert!(!record.exists());
+            serde_json::json!({ "status": status })
         },
     )
     .unwrap_err();
-    assert_eq!(error, INSTALL_LISTENER_ERROR);
+    assert!(error.contains("install-state.json"));
+    fs::write(path.join("install-hook.complete"), VERSION).unwrap();
 
     let installed = std::cell::Cell::new(false);
     assert!(
@@ -99,12 +91,12 @@ fn startup_cannot_install_pipeline_during_hook_record_transition() {
                 Ok(Complete)
             },
             || false,
-            |_| panic!("no pipeline error to report"),
+            |status| serde_json::json!(status),
         )
         .unwrap()
     );
     assert!(installed.get());
-    assert!(!pending.exists());
+    assert!(!install_state::pipeline_pending(path));
 }
 
 #[test]
@@ -202,15 +194,16 @@ fn pipeline_failure_listener_success_allows_newer_update() {
     .unwrap_err();
     assert_eq!(error, PIPELINE_INSTALL_ERROR);
     assert!(install_state::pipeline_pending(path));
-    assert!(!path.join("install-hook.complete").exists());
+    assert!(install_state::completion_receipt_version(path).is_none());
     assert!(!install_state::listener_pending(path));
+    apply_installed(path, true, || false, report, |_| Ok(())).unwrap();
     apply_installed(
         path,
         false,
         || false,
         report,
         |guard| {
-            assert!(!guard.listener_pending());
+            assert!(!guard.listener_pending().unwrap());
             assert!(install_state::pipeline_pending(path));
             Ok(())
         },
@@ -248,6 +241,7 @@ fn listener_recovery_failure_blocks_apply_before_handoff() {
     assert!(install_state::listener_pending(path));
     assert!(!install_state::pipeline_pending(path));
     assert!(!path.join("update-listener.stop").exists());
+    assert!(!path.join("update-listener.resume").exists());
 
     for from_window in [false, true] {
         assert_eq!(
@@ -269,8 +263,8 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path();
     let pending = path.join("pipeline-install.pending");
-    let resume = path.join("update-listener.resume");
     let stop = path.join("update-listener.stop");
+    fs::write(path.join("install-hook.complete"), VERSION).unwrap();
     fs::write(&pending, VERSION).unwrap();
 
     let result = apply_installed(
@@ -286,7 +280,7 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
                     InstallGuard::acquire(path),
                     Err(InstallAdmission::Busy)
                 ));
-                assert_eq!(fs::read(&resume).unwrap(), b"resume");
+                assert!(install_state::listener_pending(path));
                 assert!(!stop.exists());
                 Ok(())
             });
@@ -296,8 +290,11 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
 
     assert_eq!(result.as_ref().unwrap_err(), "synthetic handoff failure");
     assert_eq!(read_saved_status(path).error, result.err());
-    assert!(!resume.exists());
-    assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
+    assert!(!install_state::listener_pending(path));
+    assert_eq!(
+        install_state::pipeline_version(path).as_deref(),
+        Some(VERSION)
+    );
     assert!(InstallGuard::acquire(path).is_ok());
 }
 
@@ -307,6 +304,7 @@ fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
     let path = root.path();
     let snapshot =
         || ["updates.json", "update-report.json"].map(|name| fs::read(path.join(name)).unwrap());
+    fs::write(path.join("install-hook.complete"), VERSION).unwrap();
     let startup = start_installed(
         path,
         Instant::now(),
@@ -334,6 +332,82 @@ fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
     });
     assert_eq!(result.unwrap_err(), InstallAdmission::Busy.message());
     assert_eq!(snapshot(), hook_files.unwrap());
+}
+
+fn no_report(_: &Status) -> serde_json::Value {
+    serde_json::Value::Null
+}
+
+fn assert_complete(path: &Path) {
+    assert_eq!(
+        install_state::completion_receipt_version(path).as_deref(),
+        Some(VERSION)
+    );
+}
+
+fn startup(path: &Path, install: impl FnOnce() -> Result<PipelineCompletion, String>) {
+    start_installed(
+        path,
+        Instant::now(),
+        |guard, _| {
+            reconcile_and_save(
+                guard,
+                || Ok(()),
+                || Ok(Complete),
+                || Ok(()),
+                no_report,
+                false,
+            )
+            .and_then(Reconciliation::hook_result)
+            .map(|_| ())
+        },
+        |_| Ok(()),
+        install,
+        || false,
+        no_report,
+    )
+    .unwrap();
+}
+
+#[test]
+fn startup_reconciles_old_missing_and_unreadable_receipts() {
+    for receipt in [Some(b"0.0.1".as_slice()), None, Some(b"\xff")] {
+        let root = tempfile::tempdir().unwrap();
+        if let Some(receipt) = receipt {
+            fs::write(root.path().join("install-hook.complete"), receipt).unwrap();
+        }
+        startup(root.path(), || panic!("missing listener reconciliation"));
+        assert_complete(root.path());
+    }
+}
+
+#[test]
+fn canonical_record_survives_interrupted_legacy_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let receipt = path.join("install-hook.complete");
+    fs::write(&receipt, VERSION).unwrap();
+    let lock = prevent_replacement(&receipt);
+    startup(path, || panic!("complete installation ran pipeline"));
+    let record = path.join(install_record::FILE);
+    let committed = fs::read(&record).unwrap();
+    assert!(receipt.exists());
+    drop(lock);
+    let resume = path.join("update-listener.resume");
+    fs::write(&receipt, "0.0.1").unwrap();
+    fs::write(&resume, b"resume").unwrap();
+    startup(path, || panic!("stale legacy data requested pipeline work"));
+    assert_complete(path);
+    assert_eq!(fs::read(record).unwrap(), committed);
+    assert!(!resume.exists() && !receipt.exists());
+}
+
+fn prevent_replacement(path: &Path) -> File {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(path)
+        .unwrap()
 }
 
 #[test]
