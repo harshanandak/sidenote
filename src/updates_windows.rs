@@ -370,12 +370,21 @@ pub fn load() -> Status {
     read_status(&directory())
 }
 fn read_status(directory: &Path) -> Status {
-    let mut status = pipeline_status(read_saved_status(directory), directory);
-    if install_state::listener_pending(directory) && !install_state::pipeline_pending(directory) {
-        status.phase = Phase::Error;
-        status.error = Some(INSTALL_LISTENER_ERROR.into());
+    let status = read_saved_status(directory);
+    match install_state::status_record(directory) {
+        Ok(record) if record.pipeline_pending() => with_pipeline_debt(status),
+        Ok(record) if record.needs_listener_recovery() => Status {
+            phase: Phase::Error,
+            error: Some(INSTALL_LISTENER_ERROR.into()),
+            ..status
+        },
+        Err(error) => Status {
+            phase: Phase::Error,
+            error: Some(error),
+            ..status
+        },
+        Ok(_) => status,
     }
-    status
 }
 fn read_saved_status(directory: &Path) -> Status {
     fs::read(directory.join("updates.json"))
@@ -389,13 +398,18 @@ fn read_saved_status(directory: &Path) -> Status {
         })
         .unwrap_or_default()
 }
-fn pipeline_status(mut status: Status, directory: &Path) -> Status {
+fn pipeline_status(status: Status, directory: &Path) -> Status {
     if install_state::pipeline_pending(directory) {
-        if matches!(status.phase, Phase::Idle | Phase::Manual) {
-            status.phase = Phase::Error;
-        }
-        status.error = Some(PIPELINE_INSTALL_ERROR.into());
+        with_pipeline_debt(status)
+    } else {
+        status
     }
+}
+fn with_pipeline_debt(mut status: Status) -> Status {
+    if matches!(status.phase, Phase::Idle | Phase::Manual) {
+        status.phase = Phase::Error;
+    }
+    status.error = Some(PIPELINE_INSTALL_ERROR.into());
     status
 }
 fn save(status: &Status) -> io::Result<()> {
@@ -1457,7 +1471,7 @@ impl From<io::Error> for InstallAdmission {
 impl InstallAdmission {
     fn message(self) -> String {
         match self {
-            Self::Busy => "Another install hook is reconciling Sidenote. Try again.".into(),
+            Self::Busy => install_state::CONTENTION.into(),
             Self::Io(error) => format!("Could not open the Sidenote install lock: {error}"),
         }
     }
@@ -1640,7 +1654,7 @@ fn reconcile_and_save(
     let result =
         preflight().and_then(|()| reconcile_install(guard, pipeline, listener, &make_report));
     let directory = guard.directory;
-    let status = read_status(directory);
+    let status = read_saved_status(directory);
     let error = match &result {
         Err(error) => Some(error),
         Ok(work) => work.error(),
@@ -1690,7 +1704,13 @@ fn reconcile_install(
     })
 }
 fn after_update_status(status: Status, directory: &Path) -> Status {
-    let status = if status.version == VERSION && !install_state::pipeline_pending(directory) {
+    let status = if status.version == VERSION
+        && !install_state::pipeline_pending(directory)
+        && status
+            .error
+            .as_deref()
+            .is_none_or(|error| install_state::owns_error(directory, error))
+    {
         Status {
             checked: status.checked,
             ..Default::default()
@@ -1709,7 +1729,11 @@ fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(
         if recover().is_ok() {
             let _ = guard.clear_listener_pending();
         } else {
-            let _ = save(&Status { phase: Phase::Error, error: Some("The update finished, but the listener could not restart. Check its Sidenote task.".into()), ..load() });
+            let _ = save(&Status {
+                phase: Phase::Error,
+                error: Some(install_state::ROLLBACK.into()),
+                ..load()
+            });
         }
     }
 }
@@ -1843,7 +1867,11 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
         recording_idle().map(|_| load())
     } else if args.iter().any(|a| a == "--update-apply") {
         apply(false, vec!["--update-status".into()], |phase| {
-            let _ = save(&Status { phase, ..load() });
+            let _ = save(&Status {
+                phase,
+                error: None,
+                ..load()
+            });
         })
         .map(|_| load())
     } else if args.iter().any(|a| a == "--update-check") {

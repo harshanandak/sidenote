@@ -460,3 +460,141 @@ fn corrupt_or_newer_record_never_admits_apply() {
         "wrong apply admission: {mismatches:?}"
     );
 }
+
+#[test]
+fn hook_recovery_preserves_unowned_reported_error() {
+    for tagged in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path();
+        let error = "synthetic update error";
+        write_json(
+            &path.join("updates.json"),
+            &serde_json::json!({
+                "phase": Phase::Error,
+                "version": VERSION,
+                "error": error,
+                "reconcile_error": tagged,
+            }),
+        )
+        .unwrap();
+        hook(path, |_| Ok(()), |status| serde_json::json!(status)).unwrap();
+        assert_eq!(
+            install_state::completion_receipt_version(path).as_deref(),
+            Some(VERSION)
+        );
+        let status = read_saved_status(path);
+        let expected = (!tagged).then_some(error);
+        assert_eq!(status.error.as_deref(), expected);
+        let report: Status =
+            serde_json::from_slice(&fs::read(path.join("update-report.json")).unwrap()).unwrap();
+        assert_eq!(report.error.as_deref(), expected);
+    }
+}
+
+#[test]
+fn status_reports_record_read_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let file = path.join(install_record::FILE);
+    for (bytes, unreadable) in [
+        ("{", false),
+        (
+            r#"{"schema_version":1,"app_version":"999.0.0","listener_work":"Complete","pipeline_work":"Complete"}"#,
+            false,
+        ),
+        ("{}", true),
+    ] {
+        fs::write(&file, bytes).unwrap();
+        let lock = unreadable.then(|| exclusive_at(&file).unwrap());
+        let expected = install_record::read(path).err().unwrap();
+        let status = read_status(path);
+        assert_eq!(status.phase, Phase::Error);
+        assert_eq!(status.error.as_deref(), Some(expected.as_str()));
+        drop(lock);
+        assert_eq!(fs::read_to_string(&file).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn status_prefers_canonical_work_to_legacy_markers() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let file = path.join(install_record::FILE);
+    for (version, listener, pipeline, marker, expected) in [
+        (
+            VERSION,
+            "Complete",
+            "NotConfigured",
+            Some("pipeline-install.pending"),
+            None,
+        ),
+        (
+            VERSION,
+            "Pending",
+            "Complete",
+            None,
+            Some(INSTALL_LISTENER_ERROR),
+        ),
+        (
+            VERSION,
+            "Complete",
+            "Pending",
+            None,
+            Some(PIPELINE_INSTALL_ERROR),
+        ),
+        (
+            "0.0.1",
+            "Complete",
+            "Complete",
+            None,
+            Some(INSTALL_LISTENER_ERROR),
+        ),
+    ] {
+        let marker = marker.map(|name| path.join(name));
+        if let Some(marker) = &marker {
+            fs::write(marker, VERSION).unwrap();
+        }
+        let bytes = serde_json::json!({
+            "schema_version": 1, "app_version": version,
+            "listener_work": listener, "pipeline_work": pipeline,
+        })
+        .to_string();
+        fs::write(&file, &bytes).unwrap();
+        let status = read_status(path);
+        assert_eq!(status.error.as_deref(), expected);
+        assert_eq!(
+            status.phase,
+            if expected.is_some() {
+                Phase::Error
+            } else {
+                Phase::Idle
+            }
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), bytes);
+        if let Some(marker) = &marker {
+            assert_eq!(fs::read_to_string(marker).unwrap(), VERSION);
+            fs::remove_file(marker).unwrap();
+        }
+        assert!(!path.join("updates.json").exists());
+    }
+}
+
+#[test]
+fn status_preserves_legacy_debt_without_migrating() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    assert_eq!(read_status(path).phase, Phase::Idle);
+    for (marker, error) in [
+        ("update-listener.resume", INSTALL_LISTENER_ERROR),
+        ("pipeline-install.pending", PIPELINE_INSTALL_ERROR),
+    ] {
+        let marker = path.join(marker);
+        fs::write(&marker, VERSION).unwrap();
+        let status = read_status(path);
+        assert_eq!(status.phase, Phase::Error);
+        assert_eq!(status.error.as_deref(), Some(error));
+        assert_eq!(fs::read_to_string(&marker).unwrap(), VERSION);
+        assert!(!path.join(install_record::FILE).exists());
+        fs::remove_file(marker).unwrap();
+    }
+}
