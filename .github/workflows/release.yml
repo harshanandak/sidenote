@@ -280,40 +280,15 @@ jobs:
           ASSET_DIR: ${{ runner.temp }}/sidenote-release
         run: bash tools/release_publish.sh
 
-  latest-publish-eligibility:
-    name: Check whether Latest can publish
-    needs: exact-package-proof
-    if: github.event_name == 'workflow_run' && needs.exact-package-proof.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      current: ${{ steps.main.outputs.current }}
-    steps:
-      - id: main
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
-          if [[ $main_sha == "$RELEASE_SHA" ]]; then
-            echo 'current=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'Main advanced during proof; skipping Latest publish.'
-          fi
-
   publish:
     name: Publish Windows release artifacts
     if: >-
       !cancelled() &&
-      (github.event_name == 'push' ||
-       (github.event_name == 'workflow_run' && needs.latest-publish-eligibility.result == 'success' &&
-        needs.latest-publish-eligibility.outputs.current == 'true')) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       needs.exact-package-proof.result == 'success' &&
       needs.exact-package-proof.outputs.artifact-id != '' &&
       needs.exact-package-proof.outputs.artifact-id == needs.package.outputs.artifact-id
-    needs: [package, exact-package-proof, latest-publish-eligibility]
+    needs: [package, exact-package-proof]
     concurrency:
       group: ${{ github.event_name == 'workflow_run' && 'release-publish-latest' || 'release-publish' }}
       cancel-in-progress: false
