@@ -1318,6 +1318,7 @@ mod install_tests {
             rt.pointer_up(x, y);
             rt.key(rune::Key::Text("Draft".into()).into());
             rt.key(rune::Key::Enter.into());
+            rt.frame(0.0);
         };
         type_notes(&mut rt);
         assert!(rt.state.live_notes.text.is_empty());
