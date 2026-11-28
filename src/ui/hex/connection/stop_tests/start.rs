@@ -298,15 +298,6 @@ fn assert_editor_notes(rt: &Runtime<State>, text: &str) {
     assert!(rt.find("ask-pill").is_some());
 }
 
-fn no_id_matrix(api: &Fixture, rt: &mut Runtime<State>) {
-    no_id_variant(api, rt, None, false);
-}
-fn no_id_omitted(api: &Fixture, rt: &mut Runtime<State>) {
-    no_id_variant(api, rt, None, true);
-}
-fn no_id_empty(api: &Fixture, rt: &mut Runtime<State>) {
-    no_id_variant(api, rt, Some(""), false);
-}
 fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str>, omit: bool) {
     start_fixture(api, "idle", None);
     begin_idle(rt);
@@ -338,7 +329,6 @@ fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str
     assert!(element(rt, "hex-stop").focusable);
     tap(rt, "hex-stop");
     finish_busy(rt);
-    observed(rt);
     api.assert_stops(1);
     assert!(rt.state.live.is_some());
     assert_eq!(rt.state.live_notes.text, "matrix no-id notes");
@@ -374,7 +364,6 @@ fn timing_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     assert!(element(rt, "hex-pause").focusable);
     tap(rt, "hex-pause");
     finish_busy(rt);
-    observed(rt);
     api.assert_stops(1);
     tap(rt, "recording-open");
     assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
@@ -426,14 +415,8 @@ fn resume_matrix(api: &Fixture, rt: &mut Runtime<State>) {
 }
 
 fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>) {
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    {
-        let mut data = api.data.lock().unwrap();
-        data.start_failure = true;
-        data.start_release = Some(release_rx);
-        data.meeting_state = Some("starting");
-        data.id = Some("300-3");
-    }
+    let release_tx = hold_start(api, true, true, "starting");
+    api.data.lock().unwrap().id = Some("300-3");
     click_new(rt);
     deliver_status(rt);
     write_notes(rt, "matrix late-error notes");
@@ -442,7 +425,7 @@ fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     deliver_status(rt);
     release_tx.send(()).unwrap();
     finish_busy(rt);
-    observed(rt);
+    deliver_status(rt);
     let after = session(rt);
     assert_eq!(
         (
@@ -456,58 +439,230 @@ fn late_error_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     assert!(element(rt, "meeting-pause").focusable);
 }
 
+fn wait_starts(api: &Fixture, expected: usize) {
+    let until = Instant::now() + Duration::from_secs(2);
+    while api.data.lock().unwrap().starts < expected {
+        assert!(Instant::now() < until, "meeting-record did not arrive");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_retirement(rt: &mut Runtime<State>, path: &std::path::Path) {
+    let until = Instant::now() + Duration::from_secs(2);
+    while rt.state.live.is_some() {
+        assert!(
+            Instant::now() < until,
+            "failed draft with notes at {path:?} was not retired"
+        );
+        rt.update_if(|s, _| s.live_tick());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rt.frame(0.2);
+}
+
+fn assert_no_finish_words(rt: &Runtime<State>) {
+    for element in rt.elements() {
+        for value in [element.key, element.text, element.label, element.help]
+            .into_iter()
+            .flatten()
+        {
+            assert!(!value.contains("Finish"));
+        }
+    }
+}
+
+fn assert_starting(rt: &Runtime<State>) {
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Starting);
+    assert!(rt.find("live-notes-input").is_some());
+    assert!(
+        rt.elements().iter().any(
+            |e| e.text.as_deref() == Some("Starting the recording. You can start writing now.")
+        ),
+        "current Starting copy is missing"
+    );
+    no_running_controls(rt);
+    assert_no_finish_words(rt);
+}
+
+fn hold_start(
+    api: &Fixture,
+    failure: bool,
+    records: bool,
+    state: &'static str,
+) -> mpsc::Sender<()> {
+    let (release, wait) = mpsc::channel();
+    let mut data = api.data.lock().unwrap();
+    data.start_failure = failure;
+    data.start_records = records;
+    data.meeting_state = Some(state);
+    data.start_release = Some(wait);
+    release
+}
+
+fn record_new_meeting_waits_for_running_status(api: &Fixture, rt: &mut Runtime<State>) {
+    let release = hold_start(api, false, true, "starting");
+    click_new(rt);
+    wait_starts(api, 1);
+    assert_starting(rt);
+    write_notes(rt, "Notes before confirmation");
+    release.send(()).unwrap();
+    finish_busy(rt);
+    observed(rt);
+    assert_starting(rt);
+    click_new(rt);
+    finish_busy(rt);
+    assert_eq!(api.data.lock().unwrap().starts, 1);
+    tap(rt, "nav-new-menu");
+    if rt.state.drawer_open.get() {
+        tap(rt, "sidebar-toggle");
+    }
+    api.data.lock().unwrap().meeting_state = Some("recording");
+    deliver_status(rt);
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Recording);
+    assert!(rt.find("meeting-pause").is_some());
+    tap(rt, "meeting-pause");
+    finish_busy(rt);
+    assert_eq!(api.data.lock().unwrap().stops, 1);
+}
+
+fn starting_titlebar_controls(api: &Fixture, rt: &mut Runtime<State>) {
+    let release = hold_start(api, false, false, "idle");
+    click_new(rt);
+    wait_starts(api, 1);
+    release.send(()).unwrap();
+    finish_busy(rt);
+    observed(rt);
+    assert_starting(rt);
+    {
+        let mut data = api.data.lock().unwrap();
+        data.id = Some("300-3");
+        data.meeting_state = Some("starting");
+    }
+    deliver_status(rt);
+    assert_starting(rt);
+    meetings_pointer(rt);
+    assert!(rt.find("recording-open").is_some(), "live link missing");
+    assert!(rt.find("hex-pause").is_none(), "starting offers Pause");
+    assert!(rt.find("hex-stop").is_none());
+    assert_no_finish_words(rt);
+    tap(rt, "recording-open");
+    assert!(rt.find("live-notes-input").is_some(), "live did not reopen");
+    api.data.lock().unwrap().meeting_state = Some("recording");
+    deliver_status(rt);
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Recording);
+    meetings_pointer(rt);
+    assert!(rt.find("hex-pause").is_some());
+    assert!(rt.find("hex-stop").is_none(), "owned recording shows Stop");
+    api.data.lock().unwrap().id = Some("400-4");
+    deliver_status(rt);
+    assert!(rt.find("hex-pause").is_none());
+    assert!(rt.find("hex-stop").is_some());
+}
+
+fn error_idle_matrix(api: &Fixture, rt: &mut Runtime<State>) {
+    let release = hold_start(api, true, false, "idle");
+    click_new(rt);
+    wait_starts(api, 1);
+    tap(rt, "live-notes-input");
+    type_text(rt, "Notes kept after a failed start");
+    let first = session(rt).id;
+    let root = sidenote::core::state_dir();
+    let notes = meeting_parts::inputs(&root).join(&first).join("notes.md");
+    release.send(()).unwrap();
+    finish_busy(rt);
+    assert!(rt.state.hex.error.is_some());
+    deliver_status(rt);
+    assert_eq!(rt.state.live_notes.text, "Notes kept after a failed start");
+    no_running_controls(rt);
+    assert_no_finish_words(rt);
+    wait_for_retirement(rt, &notes);
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        "Notes kept after a failed start"
+    );
+    assert!(rt.state.live.is_none(), "failed unstarted meeting remains");
+    assert!(
+        meeting_parts::list(&root)
+            .unwrap()
+            .iter()
+            .all(|m| m.pending_start_ms.is_none()),
+        "a duplicate pending session remains"
+    );
+    assert_eq!(api.data.lock().unwrap().starts, 1);
+}
+
+fn failed_start_retry_keeps_controls(api: &Fixture, rt: &mut Runtime<State>) {
+    error_idle_matrix(api, rt);
+    {
+        let mut data = api.data.lock().unwrap();
+        data.start_failure = false;
+        data.start_records = true;
+        data.meeting_state = Some("recording");
+    }
+    click_new(rt);
+    wait_starts(api, 2);
+    finish_busy(rt);
+    observed(rt);
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Recording);
+    let attached = session(rt);
+    assert_eq!(attached.pending_start_ms, None);
+    assert_eq!(attached.parts[0].id, "300-3");
+    assert!(rt.find("meeting-pause").is_some());
+    rt.update(|s, _| {
+        s.hex_status_at(
+            Err(HexError::Timeout),
+            Instant::now() - Duration::from_secs(11),
+        );
+    });
+    rt.frame(0.2);
+    assert!(rt.state.hex_status_unknown());
+    assert!(rt.find("meeting-pause").is_some());
+    meetings_pointer(rt);
+    assert!(rt.find("hex-pause").is_some());
+    tap(rt, "recording-open");
+    assert!(rt.find("meeting-pause").is_some(), "live did not reopen");
+    tap(rt, "meeting-pause");
+    finish_busy(rt);
+    assert!(!rt.state.hex_stop_pending());
+    assert!(!rt.state.hex_recording());
+    assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
+    assert!(rt.find("meeting-resume").is_some());
+    let session = rt.state.live.as_ref().unwrap().session.as_ref().unwrap();
+    assert!(!session.parts.is_empty(), "pause erased existing parts");
+}
+
 macro_rules! matrix_case {
-    ($name:ident, $body:ident, $size:expr, $dark:expr) => {
+    ($module:ident, $name:ident, $size:expr, $dark:expr, $body:ident $(, $arg:expr)*) => {
         #[test]
         fn $name() {
-            if isolated_api_test(concat!("start::", stringify!($name))) {
+            if isolated_api_test(concat!("start::", stringify!($module), "::", stringify!($name))) {
                 return;
             }
             let (api, mut rt) = fixture_runtime_at($size, $dark);
-            $body(&api, &mut rt);
+            super::$body(&api, &mut rt $(, $arg)*);
         }
     };
 }
-matrix_case!(no_id_null_wide_light, no_id_matrix, WIDE, false);
-matrix_case!(no_id_null_wide_dark, no_id_matrix, WIDE, true);
-matrix_case!(no_id_null_phone_light, no_id_matrix, PHONE, false);
-matrix_case!(no_id_null_phone_dark, no_id_matrix, PHONE, true);
-matrix_case!(no_id_omitted_wide_light, no_id_omitted, WIDE, false);
-matrix_case!(no_id_omitted_wide_dark, no_id_omitted, WIDE, true);
-matrix_case!(no_id_omitted_phone_light, no_id_omitted, PHONE, false);
-matrix_case!(no_id_omitted_phone_dark, no_id_omitted, PHONE, true);
-matrix_case!(no_id_empty_wide_light, no_id_empty, WIDE, false);
-matrix_case!(no_id_empty_wide_dark, no_id_empty, WIDE, true);
-matrix_case!(no_id_empty_phone_light, no_id_empty, PHONE, false);
-matrix_case!(no_id_empty_phone_dark, no_id_empty, PHONE, true);
-matrix_case!(timing_wide_light, timing_matrix, WIDE, false);
-matrix_case!(timing_wide_dark, timing_matrix, WIDE, true);
-matrix_case!(timing_phone_light, timing_matrix, PHONE, false);
-matrix_case!(timing_phone_dark, timing_matrix, PHONE, true);
-matrix_case!(resume_wide_light, resume_matrix, WIDE, false);
-matrix_case!(resume_wide_dark, resume_matrix, WIDE, true);
-matrix_case!(resume_phone_light, resume_matrix, PHONE, false);
-matrix_case!(resume_phone_dark, resume_matrix, PHONE, true);
-matrix_case!(late_error_wide_light, late_error_matrix, WIDE, false);
-matrix_case!(late_error_wide_dark, late_error_matrix, WIDE, true);
-matrix_case!(late_error_phone_light, late_error_matrix, PHONE, false);
-matrix_case!(late_error_phone_dark, late_error_matrix, PHONE, true);
 
-fn error_idle_matrix(api: &Fixture, rt: &mut Runtime<State>) {
-    {
-        let mut data = api.data.lock().unwrap();
-        data.start_failure = true;
-        data.start_records = false;
-        data.meeting_state = Some("idle");
-    }
-    click_new(rt);
-    finish_busy(rt);
-    observed(rt);
-    deliver_status(rt);
-    assert!(rt.state.live.is_none());
-    assert_eq!(api.data.lock().unwrap().starts, 1);
+macro_rules! matrix_cases {
+    ($module:ident, $body:ident $(, $arg:expr)*) => {
+        mod $module {
+            use super::*;
+            matrix_case!($module, wide_light, WIDE, false, $body $(, $arg)*);
+            matrix_case!($module, wide_dark, WIDE, true, $body $(, $arg)*);
+            matrix_case!($module, phone_light, PHONE, false, $body $(, $arg)*);
+            matrix_case!($module, phone_dark, PHONE, true, $body $(, $arg)*);
+        }
+    };
 }
-matrix_case!(error_idle_wide_light, error_idle_matrix, WIDE, false);
-matrix_case!(error_idle_wide_dark, error_idle_matrix, WIDE, true);
-matrix_case!(error_idle_phone_light, error_idle_matrix, PHONE, false);
-matrix_case!(error_idle_phone_dark, error_idle_matrix, PHONE, true);
+
+matrix_cases!(no_id_null, no_id_variant, None, false);
+matrix_cases!(no_id_omitted, no_id_variant, None, true);
+matrix_cases!(no_id_empty, no_id_variant, Some(""), false);
+matrix_cases!(timing, timing_matrix);
+matrix_cases!(resume, resume_matrix);
+matrix_cases!(late_error, late_error_matrix);
+matrix_cases!(error_idle, error_idle_matrix);
+matrix_cases!(record_new, record_new_meeting_waits_for_running_status);
+matrix_cases!(starting_status, starting_titlebar_controls);
+matrix_cases!(failed_start_and_resume, failed_start_retry_keeps_controls);
