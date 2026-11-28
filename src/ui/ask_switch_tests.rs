@@ -3262,10 +3262,10 @@ fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     // S4 geometry change: the rail gap was 40, now 36.
     assert_eq!(tasks[0] - (main[0] + main[2]), 36.0, "gap");
     let pane = rect(&rt, "meeting-pane");
-    let left = pane[0] + (pane[2] - 1040.0) / 2.0;
+    let left = pane[0] + (pane[2] - 978.0) / 2.0;
     assert_eq!((grid[0], grid[2]), (left, 978.0), "grid {grid:?}");
     let head = rect(&rt, "meeting-header");
-    assert_eq!((head[0], head[2]), (left + 32.0, 976.0), "header");
+    assert_eq!((head[0], head[2]), (left + 32.0, 946.0), "header");
     assert_eq!(head[0], main[0], "title and notes align");
     let pill = rect(&rt, "ask-pill");
     assert_eq!(pill[2], 520.0, "Ask bar width");
@@ -3286,6 +3286,380 @@ fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     rt.settle_all();
     let sheet = rect(&rt, "meeting-transcript-surface");
     assert_eq!((sheet[0], sheet[2]), (main[0], 620.0), "transcript sheet");
+}
+
+/// The presented rect of a keyed element, panicking with the key when it is missing.
+fn presented_rect(rt: &Runtime<State>, key: &str) -> [f32; 4] {
+    rt.presented(key).unwrap_or_else(|| panic!("{key}")).0
+}
+
+/// Closes or opens the sidebar through real key routing, the way a keyboard person
+/// does. Unlike a pointer tap, which hands focus to the toggle that appears
+/// (`nav::press_toggle`), Ctrl+\ leaves focus alone, so the Ask field keeps it.
+fn ctrl_backslash(rt: &mut Runtime<State>) {
+    rt.on_key = Some(crate::ui::on_key);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Command('\\'),
+        mods: rune::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    });
+    rt.settle_all();
+    rt.frame(0.0);
+}
+
+/// The recentred wide grid: 978 wide in the free area, with the 946 header on the notes edge
+/// and More on the rail's right edge.
+fn assert_centred_grid(rt: &Runtime<State>, grid_left: f32, area_centre: f32) {
+    let pane = presented_rect(rt, "meeting-pane");
+    let grid = presented_rect(rt, "meeting-grid");
+    assert_eq!(grid[2], 978.0, "grid width");
+    assert!((grid[0] - grid_left).abs() <= 0.5, "grid left {grid:?}");
+    assert!(
+        (grid[0] + grid[2] / 2.0 - area_centre).abs() <= 0.5,
+        "grid centred {grid:?}"
+    );
+    assert!(
+        (grid[0] + grid[2] / 2.0 - (pane[0] + pane[2] / 2.0)).abs() <= 0.5,
+        "grid centred in the pane {grid:?} in {pane:?}"
+    );
+    let strip = presented_rect(rt, "meeting-grid-strip");
+    let main = presented_rect(rt, "meeting-main");
+    let tasks = presented_rect(rt, "meeting-tasks-column");
+    assert_eq!((strip[0], strip[2]), (grid[0], 32.0), "strip");
+    assert_eq!((main[0], main[2]), (grid[0] + 32.0, 620.0), "notes column");
+    assert_eq!(tasks[0] - (main[0] + main[2]), 36.0, "gap");
+    assert_eq!(
+        (tasks[0] + tasks[2], tasks[2]),
+        (grid[0] + 978.0, 290.0),
+        "tasks column"
+    );
+    let head = presented_rect(rt, "meeting-header");
+    assert_eq!((head[0], head[2]), (main[0], 946.0), "header");
+    let more = presented_rect(rt, &format!("more-meeting-{MEETING}-button"));
+    assert!(
+        (more[0] + more[2] - (tasks[0] + tasks[2])).abs() <= 0.5,
+        "More on the rail's right edge {more:?}"
+    );
+}
+
+#[test]
+fn meeting_grid_is_centred_in_the_area_beside_the_sidebar() {
+    if in_parent("meeting_grid_is_centred_in_the_area_beside_the_sidebar") {
+        return;
+    }
+    for dark in [false, true] {
+        let mut rt = page_with_tasks((1334.0, 900.0));
+        rt.set_system_dark(dark);
+        rt.settle_all();
+        rt.frame(0.0);
+        // Open: the free area runs 205 to 1334.
+        assert_centred_grid(&rt, 280.5, 769.5);
+        let grid_open = presented_rect(&rt, "meeting-grid")[0];
+        let title_open = presented_rect(&rt, "meeting-title");
+        // A real tap folds the sidebar; the grid recentres in the window.
+        tap(&mut rt, "nav-collapse");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_centred_grid(&rt, 178.0, 667.0);
+        let grid_closed = presented_rect(&rt, "meeting-grid")[0];
+        let title_closed = presented_rect(&rt, "meeting-title");
+        assert_eq!(
+            (title_closed[2], title_closed[3]),
+            (title_open[2], title_open[3]),
+            "title keeps its size: no rewrap"
+        );
+        assert!(
+            (grid_open - grid_closed - 102.5).abs() <= 0.5,
+            "toggling moves the grid 102.5"
+        );
+        // A real tap brings the sidebar back; the grid returns with it.
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_centred_grid(&rt, 280.5, 769.5);
+        // Ctrl+\ twice: the same two positions.
+        ctrl_backslash(&mut rt);
+        assert_centred_grid(&rt, 178.0, 667.0);
+        ctrl_backslash(&mut rt);
+        assert_centred_grid(&rt, 280.5, 769.5);
+    }
+}
+
+#[test]
+fn meeting_grid_stays_centred_through_the_breakpoints() {
+    if in_parent("meeting_grid_stays_centred_through_the_breakpoints") {
+        return;
+    }
+    for dark in [false, true] {
+        let mut rt = page_with_tasks((1334.0, 900.0));
+        rt.set_system_dark(dark);
+        rt.settle_all();
+        rt.frame(0.0);
+        tap(&mut rt, "nav-collapse");
+        rt.settle_all();
+        rt.frame(0.0);
+        // Closed: 1010 is the narrowest wide window (16 px margins), then wider ones.
+        for width in [1010.0, 1100.0, 1334.0, 1600.0] {
+            rt.set_viewport((width, 900.0), 1.0);
+            rt.settle_all();
+            rt.frame(0.0);
+            let pane = presented_rect(&rt, "meeting-pane");
+            let grid = presented_rect(&rt, "meeting-grid");
+            assert_eq!(grid[2], 978.0, "wide at {width}");
+            assert!(
+                (grid[0] + grid[2] / 2.0 - (pane[0] + pane[2] / 2.0)).abs() <= 0.5,
+                "centred at {width}: {grid:?} in {pane:?}"
+            );
+            let margin = (grid[0] - pane[0]).min(pane[0] + pane[2] - (grid[0] + grid[2]));
+            assert!(margin >= 15.5, "margin at {width}: {grid:?} in {pane:?}");
+            assert!(
+                rt.find("meeting-tasks-column").is_some(),
+                "rail beside the notes at {width}"
+            );
+        }
+        // 1000 closed drops under the wide grid: the 44 strip and the notes stay centred.
+        rt.set_viewport((1000.0, 900.0), 1.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let pane = presented_rect(&rt, "meeting-pane");
+        let grid = presented_rect(&rt, "meeting-grid");
+        let main = presented_rect(&rt, "meeting-main");
+        assert_eq!((grid[2], main[2]), (664.0, 620.0), "strip grid");
+        assert!(
+            (grid[0] + grid[2] / 2.0 - (pane[0] + pane[2] / 2.0)).abs() <= 0.5,
+            "strip centred {grid:?} in {pane:?}"
+        );
+        let head = presented_rect(&rt, "meeting-header");
+        assert_eq!((head[0], head[2]), (main[0], 620.0), "strip header");
+        assert!(rt.find("meeting-tasks-column").is_none());
+        // Open again: 1215 keeps the rail (page 1010), 1214 stacks it (page 1009).
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        rt.set_viewport((1215.0, 900.0), 1.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let pane = presented_rect(&rt, "meeting-pane");
+        let grid = presented_rect(&rt, "meeting-grid");
+        assert_eq!(grid[2], 978.0, "wide at 1215 open");
+        assert!(
+            (grid[0] + grid[2] / 2.0 - (pane[0] + pane[2] / 2.0)).abs() <= 0.5,
+            "centred at 1215 open: {grid:?} in {pane:?}"
+        );
+        let margin = (grid[0] - pane[0]).min(pane[0] + pane[2] - (grid[0] + grid[2]));
+        assert!(margin >= 15.5, "margin at 1215 open: {grid:?} in {pane:?}");
+        assert!(rt.find("meeting-tasks-column").is_some());
+        rt.set_viewport((1214.0, 900.0), 1.0);
+        rt.settle_all();
+        rt.frame(0.0);
+        let pane = presented_rect(&rt, "meeting-pane");
+        let grid = presented_rect(&rt, "meeting-grid");
+        assert_eq!(grid[2], 664.0, "strip at 1214 open");
+        assert!(
+            (grid[0] + grid[2] / 2.0 - (pane[0] + pane[2] / 2.0)).abs() <= 0.5,
+            "strip centred at 1214 open: {grid:?} in {pane:?}"
+        );
+        assert!(rt.find("meeting-tasks-column").is_none());
+    }
+}
+
+#[test]
+fn recentring_the_grid_keeps_scroll_focus_and_the_ask_bar() {
+    if in_parent("recentring_the_grid_keeps_scroll_focus_and_the_ask_bar") {
+        return;
+    }
+    for dark in [false, true] {
+        let mut rt = tasks_page((1334.0, 900.0), true);
+        rt.set_system_dark(dark);
+        rt.update(|s, _| {
+            scene_agents(s, ALL_AGENTS);
+            s.meetings[0].summary.verify = vec![POINT.into(); 40];
+            s.meetings[0].summary.to_settle = vec![
+                core::Unsettled {
+                    question: "Invented open question for the rail scroll probe.".into(),
+                    waits_on: None,
+                };
+                40
+            ];
+        });
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.find("ask-input").is_some());
+        rt.update(|_, tx| tx.scroll_to_instant("meeting-scroll", 0.0, 96.0));
+        rt.update(|_, tx| tx.scroll_to_instant("meeting-rail-scroll", 0.0, 96.0));
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+        let rail_scrolled = element(&rt, "meeting-task-0").scrolled[1];
+        assert_eq!(rail_scrolled, 96.0);
+        // Focus the Ask field and type invented text.
+        rt.update(|_, tx| tx.focus("ask-input", true));
+        rt.frame(0.0);
+        rt.key(KeyEvent {
+            key: Key::Text("Recentre check 336".into()),
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.2);
+        assert!(rt.state.question.focused);
+        assert_eq!(rt.state.question.text, "Recentre check 336");
+        let pill_centre = |rt: &Runtime<State>| {
+            let pill = presented_rect(rt, "ask-pill");
+            let pane = presented_rect(rt, "meeting-pane");
+            assert_eq!(pill[2], 520.0, "Ask bar width");
+            assert_eq!(
+                pill[0] + pill[2] / 2.0,
+                pane[0] + (pane[2] + 32.0 - 358.0) / 2.0,
+                "Ask bar centre"
+            );
+            assert_eq!(pane[1] + pane[3] - pill[1] - pill[3], 16.0, "Ask bar inset");
+        };
+        pill_centre(&rt);
+        // A pointer tap folds the sidebar: the scroll offsets and the text survive, and
+        // focus follows the toggle that appears, by design (`nav::press_toggle`).
+        tap(&mut rt, "nav-collapse");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(
+            element(&rt, "sec-context").scrolled[1],
+            96.0,
+            "notes scroll survives"
+        );
+        assert_eq!(
+            element(&rt, "meeting-task-0").scrolled[1],
+            rail_scrolled,
+            "rail scroll survives"
+        );
+        assert_eq!(
+            rt.state.question.text, "Recentre check 336",
+            "text survives"
+        );
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+        pill_centre(&rt);
+        // Back open by pointer: same survivals.
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+        assert_eq!(element(&rt, "meeting-task-0").scrolled[1], rail_scrolled);
+        assert_eq!(rt.state.question.text, "Recentre check 336");
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
+        pill_centre(&rt);
+        // Twice by keyboard: Ctrl+\ never moves focus, so the editor keeps it.
+        rt.update(|_, tx| tx.focus("ask-input", true));
+        rt.frame(0.0);
+        ctrl_backslash(&mut rt);
+        assert!(!rt.state.sidebar_is_open(), "first Ctrl+\\ closes");
+        assert!(
+            rt.state.question.focused,
+            "keyboard toggle keeps the editor"
+        );
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("input")));
+        assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+        assert_eq!(element(&rt, "meeting-task-0").scrolled[1], rail_scrolled);
+        assert_eq!(rt.state.question.text, "Recentre check 336");
+        pill_centre(&rt);
+        ctrl_backslash(&mut rt);
+        assert!(rt.state.sidebar_is_open(), "second Ctrl+\\ opens");
+        assert!(
+            rt.state.question.focused,
+            "keyboard toggle keeps the editor"
+        );
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("input")));
+        assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+        assert_eq!(element(&rt, "meeting-task-0").scrolled[1], rail_scrolled);
+        assert_eq!(rt.state.question.text, "Recentre check 336");
+        pill_centre(&rt);
+    }
+}
+
+#[test]
+fn phone_meeting_layout_is_unchanged_at_390() {
+    if in_parent("phone_meeting_layout_is_unchanged_at_390") {
+        return;
+    }
+    for dark in [false, true] {
+        let mut rt = tasks_page((390.0, 844.0), true);
+        rt.set_system_dark(dark);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(!rt.state.sidebar_is_open());
+        assert!(rt.find("meeting-grid").is_none());
+        let pane = presented_rect(&rt, "meeting-pane");
+        let title = presented_rect(&rt, "meeting-title");
+        assert_eq!(title[0], pane[0] + 16.0, "title on the 16 gutter");
+        let last = presented_rect(&rt, "meeting-point-pt-0-1");
+        let tasks = presented_rect(&rt, "meeting-actions");
+        assert_eq!(
+            tasks[1] - (last[1] + last[3]),
+            28.0,
+            "tasks below the notes"
+        );
+        assert!(rt.find("meeting-tasks-column").is_none());
+        // The drawer overlays the page: nothing moves.
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.state.sidebar_is_open(), "drawer opened");
+        assert!(rt.find("meeting-grid").is_none());
+        assert_eq!(presented_rect(&rt, "meeting-title")[0], title[0]);
+        let moved = presented_rect(&rt, "meeting-actions");
+        assert_eq!((moved[0], moved[1]), (tasks[0], tasks[1]));
+    }
+}
+
+#[test]
+fn home_column_stays_centred_when_the_sidebar_toggles() {
+    if in_parent("home_column_stays_centred_when_the_sidebar_toggles") {
+        return;
+    }
+    for dark in [false, true] {
+        let mut rt = home_ask((1334.0, 900.0), dark);
+        let hello = presented_rect(&rt, "home-greeting");
+        assert_eq!(hello[2], 780.0, "home column width");
+        assert!(
+            (hello[0] + hello[2] / 2.0 - 769.5).abs() <= 0.5,
+            "home centred open {hello:?}"
+        );
+        tap(&mut rt, "nav-collapse");
+        rt.settle_all();
+        rt.frame(0.0);
+        let hello = presented_rect(&rt, "home-greeting");
+        assert_eq!(hello[2], 780.0, "home column width");
+        assert!(
+            (hello[0] + hello[2] / 2.0 - 667.0).abs() <= 0.5,
+            "home centred closed {hello:?}"
+        );
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        let hello = presented_rect(&rt, "home-greeting");
+        assert!(
+            (hello[0] + hello[2] / 2.0 - 769.5).abs() <= 0.5,
+            "home centred reopened {hello:?}"
+        );
+    }
+    // Phone: the free area is the window, and the drawer overlays it.
+    for dark in [false, true] {
+        let mut rt = home_ask((390.0, 844.0), dark);
+        assert!(!rt.state.sidebar_is_open());
+        let hello = presented_rect(&rt, "home-greeting");
+        assert!(
+            (hello[0] + hello[2] / 2.0 - 195.0).abs() <= 0.5,
+            "home centred at 390 {hello:?}"
+        );
+        tap(&mut rt, "sidebar-toggle");
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(rt.state.sidebar_is_open(), "drawer opened");
+        let again = presented_rect(&rt, "home-greeting");
+        assert_eq!(
+            (again[0], again[2]),
+            (hello[0], hello[2]),
+            "drawer moves nothing"
+        );
+    }
 }
 
 /// Long notes: the last row ends below where the old 150 fade began, and is still clear of it.
