@@ -6,11 +6,16 @@ use super::{
     meeting::COLUMN,
     roles,
     theme::Palette,
-    widgets::{ButtonDisabled, ButtonRole, button, hairline, pressable, quiet_button},
+    widgets::{
+        ButtonDisabled, ButtonRole, button, hairline, menu_row, menu_separator, pressable,
+        quiet_button,
+    },
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
-use rune::{Color, El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
+use rune::{
+    Align, Color, El, Key, KeyEvent, Shadow, Side, Spring, SpringPair, Transition, Tx, col, row,
+};
 use rune_kit::{Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
@@ -194,6 +199,7 @@ pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
             ) || matches!(key, "meeting-pause" | "meeting-resume" | "meeting-generate")
                 || live_transcript
                 || key.starts_with("ask-options-")
+                || key.starts_with("ask-model-picker-")
         });
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
@@ -562,8 +568,106 @@ fn prompts(s: &State) -> (&'static str, &'static [&'static str]) {
     }
 }
 
+const OPTIONS_KEY: &str = "ask-options";
+
+#[derive(Default)]
+struct AskMenu {
+    rows: Vec<El>,
+    items: usize,
+}
+
+impl AskMenu {
+    fn item(&mut self, row: El) {
+        self.rows
+            .push(row.key(format!("{OPTIONS_KEY}-item{}", self.items)));
+        self.items += 1;
+    }
+
+    fn section(&mut self, label: impl Into<String>, p: Palette) {
+        self.rows
+            .push(roles::META.line(label, p.faint).px(8.0).pt(6.0).pb(3.0));
+    }
+}
+
+fn ask_menu_row(name: impl Into<String>, p: Palette, detail: Option<&str>) -> El {
+    menu_row(name, p, detail, None, None)
+        .focus_fill(p.sel)
+        .focus_ring(2.0, -2.0, p.accent)
+}
+
+fn ask_menu_checked(
+    name: impl Into<String>,
+    p: Palette,
+    detail: Option<&str>,
+    checked: bool,
+) -> El {
+    let item = ask_menu_row(name, p, detail)
+        .role("menuitemcheckbox")
+        .checked(checked)
+        .focus_selected(checked);
+    if !checked {
+        return item;
+    }
+    item.fill(p.sel)
+        .child(icons::draw(&icons::CHECK, 14.0, p.soft).a11y_hidden())
+}
+
+fn ask_menu_disabled(row: El) -> El {
+    row.disabled(true).focusable(false).layer_opacity(0.5)
+}
+
+fn mount_ask_menu(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    layer: &mut Vec<El>,
+    menu: AskMenu,
+    (label, gutter): (&str, f32),
+    close: fn(&mut State),
+) {
+    let motion = if s.ask_settings.reduced_motion.get() {
+        Transition::none()
+    } else {
+        Transition::opacity().springs(pair::SNAP)
+    };
+    let width = 240.0_f32.min((s.app_w.get() - 16.0).max(0.0));
+    let rows = col()
+        .padding(4.0)
+        .items_stretch()
+        .children(menu.rows)
+        .instant_changes();
+    let scroll = rune_kit::popover::fit_scroll(rows);
+    let surface = col()
+        .key("ask-options-menu")
+        .w(width)
+        .min_h(0.0)
+        .role("menu")
+        .label(label.to_owned())
+        .focus_group()
+        .radius(10.0)
+        .fill(p.raised)
+        .child(
+            rune_kit::scroll_bar(k, "ask-options-scroll-area", "scroll", scroll)
+                .w_full()
+                .shrink()
+                .min_h(0.0),
+        )
+        .shadow(8.0, 24.0, p.shadow)
+        .box_shadow(Shadow {
+            spread: 1.0,
+            color: p.line,
+            ..Shadow::default()
+        })
+        .anchored_fit(OPTIONS_KEY, Side::Top, Align::End, gutter)
+        .transition(motion)
+        .token_motion(k.motion.overlay)
+        .focus_return(OPTIONS_KEY)
+        .modal(true, close);
+    layer.push(rune_kit::scrim("ask-options-scrim", close));
+    layer.push(surface);
+}
+
 fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) -> El {
-    let (prompt, more) = prompts(s);
     let gutter = if chip {
         6.0 + PROMPT_HEIGHT + PROMPT_GAP + (PILL_HEIGHT - DOCK_BUTTON) / 2.0
     } else {
@@ -581,22 +685,24 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     .size(DOCK_BUTTON, DOCK_BUTTON)
     .radius(DOCK_BUTTON / 2.0)
     .hover(p.button_hover)
-    .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
     .hover_group_shared("help-hint-model")
     .child(
         hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
             .dim(0.0)
             .inert(),
-    )
-    .on_press(|s: &mut State| {
+    );
+    let picker = s.runner_open && !s.ask_settings.connection.settings.enabled;
+    let open = s.ask_settings.scope_open;
+    let trigger = super::widgets::menu_trigger(trigger, picker || open, p, |s| {
         if s.runner_open {
             s.runner_open = false;
         } else {
             s.ask_settings.scope_open = !s.ask_settings.scope_open;
         }
-    });
-    if s.runner_open && !s.ask_settings.connection.settings.enabled {
+    })
+    .focus_ring(1.0, 1.0, p.faint);
+    if picker {
         return runner_choice(
             s,
             k,
@@ -606,76 +712,96 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
             layer,
         );
     }
-    let mut menu = Menu::new("ask-options")
-        .trigger(trigger)
-        .open(s.ask_settings.scope_open)
-        .placement(Placement::TopEnd)
-        .gutter(gutter)
-        .min_width(220.0)
-        .on_close(|s: &mut State| s.ask_settings.scope_open = false);
+    if open {
+        mount_ask_menu(
+            s,
+            k,
+            p,
+            layer,
+            scope_choices(s, p, chip),
+            ("Ask options", gutter),
+            |s| {
+                s.ask_settings.scope_open = false;
+            },
+        );
+    }
+    row()
+        .key("ask-model-picker-trigger")
+        .child(trigger)
+        .min_w(0.0)
+        .shrink()
+}
+
+fn scope_choices(s: &State, p: Palette, chip: bool) -> AskMenu {
+    let (prompt, more) = prompts(s);
+    let mut menu = AskMenu::default();
+    menu.section("Prompts", p);
     if chip {
         for prompt in std::iter::once(prompt).chain(more.iter().copied().filter(|p| *p != prompt)) {
-            menu = menu.item(
-                MenuItem::new(prompt).on_select_tx(move |s: &mut State, tx| {
+            menu.item(
+                ask_menu_row(prompt, p, None).on_press_tx(move |s: &mut State, tx| {
                     s.ask_settings.scope_open = false;
                     submit(s, prompt, tx);
                 }),
             );
         }
     }
-    menu = menu.item(MenuItem::new("All prompts").on_select(|s: &mut State| {
-        s.ask_settings.scope_open = false;
-        s.open_hex();
-        s.hex.section = super::hex::Section::PromptLibrary;
-        super::scene_scroll(s, "agent-instructions");
-    }));
+    menu.item(
+        ask_menu_row("All prompts", p, None).on_press(|s: &mut State| {
+            s.ask_settings.scope_open = false;
+            s.open_hex();
+            s.hex.section = super::hex::Section::PromptLibrary;
+            super::scene_scroll(s, "agent-instructions");
+        }),
+    );
     if !s.companies.open {
         let this = s.ask_current_live() || s.ask_meeting_id().is_some();
-        menu = menu
-            .group_label("Ask scope")
-            .item(
-                MenuItem::new("This meeting")
-                    .checked(this)
-                    .disabled(s.selected.is_none() && !s.live_scope_available())
-                    .on_select(|s: &mut State| s.set_ask_scope(false)),
-            )
-            .item(
-                MenuItem::new("All meetings")
-                    .checked(!this)
-                    .on_select(|s: &mut State| s.set_ask_scope(true)),
-            );
+        let this_meeting = ask_menu_checked("This meeting", p, None, this);
+        let this_meeting = if s.selected.is_none() && !s.live_scope_available() {
+            ask_menu_disabled(this_meeting)
+        } else {
+            this_meeting.on_press(|s: &mut State| s.set_ask_scope(false))
+        };
+        menu.rows.push(menu_separator(p));
+        menu.section("Ask scope", p);
+        menu.item(this_meeting);
+        menu.item(
+            ask_menu_checked("All meetings", p, None, !this)
+                .on_press(|s: &mut State| s.set_ask_scope(true)),
+        );
     }
     let connection = &s.ask_settings.connection.settings;
     if connection.enabled {
         let model = connection.model.trim();
-        menu = menu.item(
-            MenuItem::new(if model.is_empty() {
-                "Set up a model"
-            } else {
-                model
-            })
-            .description("Open connection settings")
-            .disabled(s.asks.contains_key(&s.ask_key()))
-            .on_select(|s: &mut State| {
+        let model = if model.is_empty() {
+            "Set up a model"
+        } else {
+            model
+        };
+        let choice = ask_menu_row(model, p, Some("Open connection settings"));
+        menu.rows.push(menu_separator(p));
+        menu.item(if s.asks.contains_key(&s.ask_key()) {
+            ask_menu_disabled(choice)
+        } else {
+            choice.on_press(|s: &mut State| {
                 s.ask_settings.scope_open = false;
                 s.open_connection_settings();
+            })
+        });
+    } else if s.runner_error.is_none() {
+        menu.rows.push(menu_separator(p));
+        menu.item(
+            ask_menu_row("Model", p, Some(&picker_label(s))).on_press_tx(|s: &mut State, tx| {
+                s.ask_settings.scope_open = false;
+                s.runner_open = true;
+                s.reload_runners();
+                if tx.by_keys() {
+                    tx.focus_when_shown("ask-model-picker-item0", true);
+                }
             }),
         );
-    } else if s.runner_error.is_none() {
-        menu = menu.item(
-            MenuItem::new("Model")
-                .description(picker_label(s))
-                .on_select_tx(|s: &mut State, tx| {
-                    s.ask_settings.scope_open = false;
-                    s.runner_open = true;
-                    s.reload_runners();
-                    if tx.by_keys() {
-                        tx.focus_when_shown("ask-options-item0", true);
-                    }
-                }),
-        );
     }
-    menu.build(k, layer).min_w(0.0).shrink()
+    menu
 }
 
 /// "Claude Sonnet (answer only)" reads as "Sonnet": the picker stays small. What the
@@ -743,7 +869,7 @@ fn runner_choice(
     let (default_runner, default_model) = super::ask_settings::default_choice(s);
     let mut kit = k.clone();
     kit.c.text_weak = p.soft;
-    let mut menu = Menu::new("ask-options")
+    let mut menu = Menu::new("ask-model-picker")
         .standard()
         .trigger(trigger)
         .open(s.runner_open)

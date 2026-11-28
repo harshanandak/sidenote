@@ -2502,6 +2502,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return widgets::button_sheet(p).fill(p.bg).w_full().h_full();
     }
     let k = theme::kit(&p);
+    s.ask_settings.reduced_motion.set(cx.is_reduced_motion());
     cx.caption_color(p.ink);
     let insets = cx.chrome_insets();
     s.chrome
