@@ -2989,8 +2989,19 @@ fn ask_card_typing_keeps_the_scope_label_on_top_with_no_hint() {
             assert_eq!(rect_of(&rt, "ask-top-slot")[3], 22.0);
             let scope = element(&rt, "ask-scope");
             let field = rect_of(&rt, "ask-field");
+            assert_eq!(rt.state.question.text, "A draft");
+            // ask_card_pages covers Home and Tasks, both "All meetings" scope.
+            assert_eq!(scope.text.as_deref(), Some("All meetings"), "scope text");
             assert!(inside(scope.rect, card.rect), "scope inside card");
             assert!(scope.rect[1] + scope.rect[3] <= field[1] + 1.0);
+            assert!(
+                scope.rect[0] >= card.rect[0] + card.rect[2] / 2.0,
+                "scope on the right"
+            );
+            assert!(
+                card.rect[0] + card.rect[2] - scope.rect[0] - scope.rect[2] <= 20.0,
+                "scope at the right edge"
+            );
             assert!(!scope.focusable && !scope.focused);
         } else {
             assert_eq!(card.rect[3], 66.0);
