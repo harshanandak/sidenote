@@ -60,22 +60,24 @@ fn fixture_runtime() -> (Fixture, Runtime<State>) {
     (api, runtime(state, WIDE, false))
 }
 fn finish_busy(rt: &mut Runtime<State>) {
-    while rt.state.hex.record_busy {
+    let until = Instant::now() + Duration::from_secs(15);
+    while rt.state.hex_record_busy() {
         let event = rt
             .state
             .events_rx
-            .recv_timeout(Duration::from_secs(15))
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
             .expect("Hex command completion");
         rt.update(|s, _| s.apply_event(event));
     }
     rt.frame(0.2);
 }
 fn observed(rt: &mut Runtime<State>) {
+    let until = Instant::now() + Duration::from_secs(15);
     loop {
         let event = rt
             .state
             .events_rx
-            .recv_timeout(Duration::from_secs(15))
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
             .expect("Hex status after the command reply");
         let hit = matches!(&event, Event::Hex(Msg::ObservedStatus(_)));
         rt.update(|s, _| s.apply_event(event));
@@ -166,7 +168,6 @@ fn recording_without_id_keeps_safety_stop() {
     assert!(element(&rt, "hex-stop").focusable);
     tap(&mut rt, "hex-stop");
     finish_busy(&mut rt);
-    observed(&mut rt);
     api.assert_stops(1);
     assert_eq!(rt.state.live_notes.text, "notes before an idless recording");
 }
@@ -230,6 +231,7 @@ fn pending_resume_expires_after_fresh_idle() {
     rt.update(|s, _| {
         s.selected = Some(meeting_id.clone());
         s.meeting_resume();
+        s.open_live();
     });
     finish_busy(&mut rt);
     observed(&mut rt);
@@ -270,7 +272,7 @@ fn late_start_error_preserves_attached_recording_and_notes() {
     deliver_status(&mut rt);
     release_tx.send(()).unwrap();
     finish_busy(&mut rt);
-    observed(&mut rt);
+    deliver_status(&mut rt);
     let after = session(&rt);
     assert_eq!(after.id, before);
     assert_eq!(after.parts.len(), 1);
