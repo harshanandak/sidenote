@@ -748,7 +748,7 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
             ),
             (
                 folder.join("english-summary.json"),
-                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Sam"," ","Ravi"," Ravi "]}),
+                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":["Sam","Sam"," ","Ravi"," Ravi "],"made_by":{"language_passes":"english_only"}}),
             ),
             (
                 folder.join("tasks.json"),
@@ -4390,7 +4390,7 @@ fn page_with_meta(
             ),
             (
                 folder.join("english-summary.json"),
-                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":people}),
+                serde_json::json!({"title":"Beta launch plan","context":[CONTEXT],"people":people,"made_by":{"language_passes":"english_only"}}),
             ),
             (
                 folder.join("tasks.json"),
@@ -4488,8 +4488,8 @@ fn a_desktop_meeting_title_is_26_on_a_32_line() {
 }
 
 #[test]
-fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
-    if in_parent("a_phone_page_has_a_24_title_then_facts_then_the_view_switch") {
+fn a_phone_page_has_a_32_line_title_then_facts_then_the_view_switch() {
+    if in_parent("a_phone_page_has_a_32_line_title_then_facts_then_the_view_switch") {
         return;
     }
     let rt = page_with_every_meta_item((390.0, 900.0));
@@ -4498,9 +4498,8 @@ fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
     let r = |key: &str| rect_of(&rt, key);
     // The page starts at the sidebar's 1 point divider; the gutter is 16 from there.
     let left = r("meeting-pane")[0] + 16.0;
-    // The title is 24 on a 30 line.
     let title = r("meeting-title");
-    assert_eq!((title[0], title[3]), (left, 30.0), "title {title:?}");
+    assert_eq!((title[0], title[3]), (left, 32.0), "title {title:?}");
     // S4 header order change: facts were below the controls; they now sit between title and controls.
     let (menu, facts_row, facts, view) = (
         r(&more),
@@ -4926,6 +4925,10 @@ fn tap(rt: &mut Runtime<State>, key: &str) {
 
 fn page_with_language_fallback() -> Runtime<State> {
     page_with((390.0, 800.0), || {
+        stamped_summary(
+            &core::meetings_dir().join(MEETING),
+            Some(serde_json::json!({"language_passes":"english_only"})),
+        );
         let dir = core::state_dir().join("local/notes-jobs");
         std::fs::create_dir_all(&dir).unwrap();
         let job = serde_json::json!({
@@ -5017,13 +5020,13 @@ fn a_summary_stamped_routed_shows_nothing() {
 }
 
 #[test]
-fn a_summary_with_no_language_record_shows_the_note() {
-    if in_parent("a_summary_with_no_language_record_shows_the_note") {
+fn a_summary_with_no_language_record_hides_the_note() {
+    if in_parent("a_summary_with_no_language_record_hides_the_note") {
         return;
     }
     // An older summary: it has a `made_by` record, but no word.
     let by = serde_json::json!({"helper": "claude", "model": "claude-sonnet-5-5"});
-    assert!(shows_english_only_note(Some(by), || {}));
+    assert!(!shows_english_only_note(Some(by), || {}));
 }
 
 #[test]
