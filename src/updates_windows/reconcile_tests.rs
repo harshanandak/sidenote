@@ -335,3 +335,128 @@ fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
     assert_eq!(result.unwrap_err(), InstallAdmission::Busy.message());
     assert_eq!(snapshot(), hook_files.unwrap());
 }
+
+#[test]
+fn corrupt_or_newer_record_never_admits_apply() {
+    use serde_json::{Value, json};
+
+    let record = |version: &str, listener: Value, pipeline: Value| {
+        json!({
+            "schema_version": 1, "app_version": version,
+            "listener_work": listener, "pipeline_work": pipeline,
+        })
+        .to_string()
+    };
+    let complete = |version: &str| record(version, json!("Complete"), json!("Complete"));
+    let current = complete(VERSION);
+    let duplicate = current.replace(
+        r#""pipeline_work":"Complete""#,
+        r#""pipeline_work":"Pending","pipeline_work":"Complete""#,
+    );
+    let case_duplicate = duplicate.replacen("pipeline_work", "Pipeline_Work", 1);
+    let mut cases = vec![
+        ("corrupt".into(), Some("{".into()), false, false),
+        ("unreadable".into(), Some(current.clone()), true, false),
+        ("newer".into(), Some(complete("999.0.0")), false, false),
+        ("duplicate".into(), Some(duplicate), false, false),
+        (
+            "case-only duplicate".into(),
+            Some(case_duplicate),
+            false,
+            false,
+        ),
+        ("current".into(), Some(current), false, true),
+        ("older".into(), Some(complete("0.0.1")), false, true),
+        ("absent".into(), None, false, true),
+        (
+            "not configured".into(),
+            Some(record(VERSION, json!("Complete"), json!("NotConfigured"))),
+            false,
+            true,
+        ),
+        (
+            "object work fields".into(),
+            Some(record(
+                VERSION,
+                json!({"Complete": null}),
+                json!({"NotConfigured": null}),
+            )),
+            false,
+            false,
+        ),
+    ];
+    for (shape, listener, pipeline) in [
+        (
+            "object",
+            json!({"Complete": null}),
+            json!({"NotConfigured": null}),
+        ),
+        ("array", json!(["Complete"]), json!(["NotConfigured"])),
+        ("number", json!(1), json!(1)),
+        ("null", Value::Null, Value::Null),
+    ] {
+        cases.push((
+            format!("listener {shape}"),
+            Some(record(VERSION, listener, json!("Complete"))),
+            false,
+            false,
+        ));
+        cases.push((
+            format!("pipeline {shape}"),
+            Some(record(VERSION, json!("Complete"), pipeline)),
+            false,
+            false,
+        ));
+    }
+
+    let mut mismatches = Vec::new();
+    for (name, bytes, unreadable, should_admit) in cases {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("install-state.json");
+        if let Some(bytes) = &bytes {
+            fs::write(&path, bytes).unwrap();
+        }
+        let side_files = [
+            "updates.json",
+            "update-report.json",
+            "install-hook.complete",
+            "pipeline-install.pending",
+            "update-listener.resume",
+        ];
+        if name == "corrupt" {
+            for file in side_files {
+                fs::write(root.path().join(file), file).unwrap();
+            }
+        }
+        let snapshot = || side_files.map(|file| fs::read(root.path().join(file)).ok());
+        let before = snapshot();
+        let lock = unreadable.then(|| exclusive_at(&path).unwrap());
+        let reached_handoff = std::cell::Cell::new(false);
+        let result = apply_installed(
+            root.path(),
+            true,
+            || false,
+            |_| serde_json::Value::Null,
+            |_| {
+                reached_handoff.set(true);
+                Ok(())
+            },
+        );
+        if result.is_ok() != should_admit || reached_handoff.get() != should_admit {
+            mismatches.push(name.clone());
+        }
+        if name == "corrupt" {
+            assert!(result.unwrap_err().contains("install-state.json"));
+        }
+        drop(lock);
+        match bytes {
+            Some(bytes) => assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes(), "{name}"),
+            None => assert!(!path.try_exists().unwrap(), "{name}"),
+        }
+        assert_eq!(snapshot(), before, "side files changed for {name}");
+    }
+    assert!(
+        mismatches.is_empty(),
+        "wrong apply admission: {mismatches:?}"
+    );
+}

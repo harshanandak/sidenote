@@ -18,6 +18,8 @@ use velopack::{
     sources::{FileSource, UpdateSource},
 };
 
+#[path = "updates_windows/install_record.rs"]
+mod install_record;
 #[path = "updates_windows/install_state.rs"]
 mod install_state;
 use install_state::{PipelineCompletion, install_pending_pipeline};
@@ -1761,6 +1763,7 @@ fn apply_installed(
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
+    let _ = install_record::read(directory)?;
     if guard.listener_pending() {
         return Err(
             "Reopen Sidenote to finish restarting its meeting listener, then retry the update."
