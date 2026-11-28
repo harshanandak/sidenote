@@ -4531,7 +4531,7 @@ pub fn spec() -> AppSpec<State> {
             }),
             ("u2-ask-options", |s| {
                 scene_live_dock(s, "recording", false, false);
-                s.ask_settings.scope_open = true;
+                (s.question.focused, s.ask_open, s.ask_settings.scope_open) = (true, true, true);
             }),
             ("u2-live-notes-placeholder", |s| {
                 scene_live_dock(s, "paused", true, false);
