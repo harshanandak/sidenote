@@ -10,6 +10,7 @@ use sidenote::listener::heartbeat;
 use sidenote::updates::{self, Phase, Status};
 
 const RESTARTING: &str = "Restarting to install the update…";
+const CONFIRMATION_NOTICE: &str = "update-confirmation";
 
 pub struct Updates {
     pub status: Status,
@@ -121,21 +122,24 @@ impl State {
         if !updates::installed() {
             return;
         }
-        self.confirm_update(updates::restarted_version());
+        #[cfg(windows)]
+        self.confirm_update(&updates::directory(), updates::VERSION);
         self.start_pending_update(|publish| updates::window_start(publish));
     }
-    fn confirm_update(&mut self, version: Option<&str>) {
-        let Some(version) = version else {
-            return;
-        };
-        let local = self.store.root.join("local");
-        // Claim this version without changing the shared update status or other UI preferences.
-        if std::fs::create_dir_all(&local)
-            .and_then(|()| std::fs::File::create_new(local.join(format!("updated-{version}.seen"))))
-            .is_ok()
-        {
-            self.updates.updated_version = Some(version.into());
+    #[cfg(any(windows, test))]
+    fn confirm_update(&mut self, directory: &std::path::Path, version: &str) {
+        let target = std::fs::read(directory.join(updates::CONFIRMATION_TARGET))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok());
+        if target.as_deref() == Some(version) && !self.update_seen_marker(version).exists() {
+            self.updates.updated_version = target;
         }
+    }
+    fn update_seen_marker(&self, version: &str) -> std::path::PathBuf {
+        self.store
+            .root
+            .join("local")
+            .join(format!("updated-{version}.seen"))
     }
     fn start_pending_update(
         &mut self,
@@ -697,12 +701,28 @@ pub fn settings_scene(s: &mut State) {
     s.open_updates();
 }
 
+pub(super) fn acknowledge_drawn_confirmation(rt: &rune::Runtime<State>) -> bool {
+    let Some(version) = rt.state.updates.updated_version.as_deref() else {
+        return false;
+    };
+    if rt.find(CONFIRMATION_NOTICE).is_none() {
+        return false;
+    }
+    let marker = rt.state.update_seen_marker(version);
+    let _ = std::fs::create_dir_all(rt.state.store.root.join("local"))
+        .and_then(|()| std::fs::File::create_new(marker));
+    true
+}
+
 pub fn notice(s: &State, p: Palette) -> Option<El> {
     let restarting = s.updates.status.phase == Phase::Restarting;
-    let text = if restarting {
-        RESTARTING.into()
+    let message = if restarting {
+        roles::CONTROL.wrap(RESTARTING, p.ink)
     } else {
-        format!("Updated to {}", s.updates.updated_version.as_deref()?)
+        let version = s.updates.updated_version.as_deref()?;
+        roles::CONTROL
+            .wrap(format!("Updated to {version}"), p.ink)
+            .key(CONFIRMATION_NOTICE)
     };
     Some(
         col()
@@ -719,7 +739,7 @@ pub fn notice(s: &State, p: Palette) -> Option<El> {
                     .fill(p.card)
                     .border(1.0, p.line)
                     .shadow(4.0, 16.0, p.shadow)
-                    .child(roles::CONTROL.wrap(text, p.ink).role("status"))
+                    .child(message.role("status"))
                     .children((!restarting).then(|| {
                         super::widgets::quiet_button("Dismiss", "update-notice-dismiss", p)
                             .on_press(|s: &mut State| s.updates.updated_version = None)
@@ -947,36 +967,63 @@ mod listener_tests {
     }
 
     #[test]
-    fn updated_notice_appears_on_only_one_launch_per_version() {
+    fn failed_apply_relaunch_does_not_show_update_confirmation() {
         let root = tempfile::tempdir().unwrap();
-        for (version, shown) in [
-            (None, None),
-            (Some("2.0.0"), Some("Updated to 2.0.0")),
-            (None, None),
-            (Some("2.0.0"), None),
-            (Some("2.0.1"), Some("Updated to 2.0.1")),
-            (Some("2.0.0"), None),
-        ] {
-            let mut rt = notice_window();
-            rt.update(|s, _| {
-                s.store.root = root.path().into();
-                s.listener_finished(Err("Synthetic listener recovery error".into()));
-                s.confirm_update(version);
-            });
-            rt.frame(0.0);
-            let elements = rt.elements();
-            let notice = elements.iter().find_map(|e| {
-                e.text
-                    .as_deref()
-                    .filter(|text| text.starts_with("Updated to "))
-            });
-            assert_eq!(notice, shown);
-            #[cfg(windows)]
-            assert_eq!(
-                listener_problem(&rt.state),
-                Some("Synthetic listener recovery error")
-            );
-        }
+        write_confirmation_target(root.path(), "2.0.0");
+        let mut old_window = launch_after_update(root.path(), "1.9.0");
+        assert_update_confirmation(&mut old_window, None);
+    }
+
+    #[test]
+    fn update_confirmation_survives_a_crash_before_the_first_frame() {
+        let root = tempfile::tempdir().unwrap();
+        write_confirmation_target(root.path(), "2.0.0");
+        drop(launch_after_update(root.path(), "2.0.0"));
+
+        let mut next = launch_after_update(root.path(), "2.0.0");
+        assert_update_confirmation(&mut next, Some("Updated to 2.0.0"));
+        assert!(acknowledge_drawn_confirmation(&next));
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
+
+        write_confirmation_target(root.path(), "2.0.1");
+        assert_update_confirmation(
+            &mut launch_after_update(root.path(), "2.0.1"),
+            Some("Updated to 2.0.1"),
+        );
+    }
+
+    fn write_confirmation_target(root: &std::path::Path, version: &str) {
+        std::fs::write(
+            root.join(updates::CONFIRMATION_TARGET),
+            serde_json::to_vec(version).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn launch_after_update(root: &std::path::Path, version: &str) -> rune::Runtime<State> {
+        let mut rt = notice_window();
+        rt.update(|s, _| {
+            s.store.root = root.into();
+            s.listener_finished(Err("Synthetic listener recovery error".into()));
+            s.confirm_update(root, version);
+        });
+        rt
+    }
+
+    fn assert_update_confirmation(rt: &mut rune::Runtime<State>, expected: Option<&str>) {
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let notice = elements.iter().find_map(|e| {
+            e.text
+                .as_deref()
+                .filter(|text| text.starts_with("Updated to "))
+        });
+        assert_eq!(notice, expected);
+        #[cfg(windows)]
+        assert_eq!(
+            listener_problem(&rt.state),
+            Some("Synthetic listener recovery error")
+        );
     }
 
     fn notice_window() -> rune::Runtime<State> {

@@ -4924,6 +4924,12 @@ pub fn run() {
     }
     let trace = sidenote::env_var("SIDENOTE_TRACE_FIRST_FRAME");
     let refresh_handle = app.handle();
+    let mut confirmation_drawn = false;
+    app = app.on_frame_drawn(move |rt| {
+        if !confirmation_drawn {
+            confirmation_drawn = updates::acknowledge_drawn_confirmation(rt);
+        }
+    });
     let mut first_frame = false;
     app = app.on_frame_encoded(move |f| {
         if f.outcome() == rune::FrameOutcome::Drawn {

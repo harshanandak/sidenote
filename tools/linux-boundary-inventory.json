@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "e86f5c84fb69a74def050ae27ff73c594c6e6a15b82af51d76afb990d0122ca8",
+  "src/ui/mod.rs": "601cb291694632de716e1643217d9f0474d04f75efbe5991fbaa1d72e28a15f5",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -465,11 +465,11 @@
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "8e650ed28743aaa905784c6a93cd4fb5315a68f42f3693f726ac008461693f68",
+  "src/ui/updates.rs": "1fdd3ba48ac1de9b157db3fc87a6ffcb64cd26f136b5c3f81fcde47c150a93a4",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "4941d5e470ae33246ddb159e4c49fc720344595deae5d253bd1bf51d7f8dd5f1",
+  "src/updates_windows.rs": "c9be5c735f43637dca5e0d160cf570a3794bcda1b915e84b07f679801fbbd626",
 
   "src/updates_windows/install_record.rs": "1c5ad14ef7d329f177938904d663d9af57f48ce00f708211dc4e00c8aa060538",
 

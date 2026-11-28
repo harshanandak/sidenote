@@ -57,9 +57,6 @@ pub fn start(_: impl Fn(Status) + Send + 'static) -> Option<std::sync::mpsc::Sen
 pub fn window_start(_: impl Fn(Phase)) -> Result<(), String> {
     Err("Updates are unavailable on Linux.".into())
 }
-pub fn restarted_version() -> Option<&'static str> {
-    None
-}
 pub fn apply(_: bool, _: Vec<String>, _: impl FnMut(Phase)) -> Result<(), String> {
     Err("Updates are unavailable on Linux.".into())
 }
