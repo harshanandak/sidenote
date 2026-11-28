@@ -22,7 +22,15 @@ pub(super) fn configure(app: rune::App<State>) -> rune::App<State> {
     // pushes the bottom (and the Ask bar) off screen. Fit the size to the work area and centre.
     app.on_window(move |win| {
         native_window(win, &close_handle);
+        note_shown();
     })
+    .on_ready(|_| note_shown())
+}
+
+fn note_shown() {
+    if cfg!(not(windows)) || super::hex::window_shown() {
+        super::startup::observe(super::startup::WINDOW_SHOWN, std::time::Instant::now());
+    }
 }
 
 #[cfg(windows)]

@@ -125,16 +125,16 @@ fn native_service_tick() -> io::Result<()> {
     }
     failure.map_or(Ok(()), Err)
 }
-fn log_at(path: &std::path::Path, message: &str) {
+pub(crate) fn log_at(path: &std::path::Path, message: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(
-            file,
-            "{} listener: {message}",
+        let line = format!(
+            "{} listener: {message}\n",
             chrono::Local::now().format("%Y-%m-%dT%H:%M:%S")
         );
+        let _ = file.write_all(line.as_bytes());
     }
 }
 pub(crate) fn pipeline(meeting_id: Option<&str>) -> io::Result<()> {

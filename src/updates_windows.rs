@@ -1038,6 +1038,11 @@ fn finish_listener(result: &Result<(), String>) -> ListenerStatus {
             Err("Could not check whether the listener is running.") => "lock_check_failed",
             Err(_) => "task_validation_failed",
         };
+        #[cfg(feature = "desktop")]
+        if status.ready {
+            use crate::desktop::startup::{LISTENER_READY, observe};
+            observe(LISTENER_READY, Instant::now());
+        }
         crate::listener::log_process(&format!("listener readiness reason={reason}"));
     }
     status
@@ -1247,15 +1252,22 @@ fn prepare_listener() -> Result<(), String> {
     Ok(())
 }
 /// Runs on the window's worker, including recovery after a failed asynchronous apply.
-pub fn window_start(publish: impl Fn(Phase)) -> Result<(), String> {
+pub fn window_start(
+    publish: impl Fn(Phase),
+    publish_listener: impl Fn(ListenerStatus),
+) -> Result<(), String> {
     if !installed() {
         return Ok(());
     }
+    let prepared = |result| {
+        publish_listener(listener_status());
+        result
+    };
     let resume_apply = start_installed(
         &directory(),
         Instant::now(),
-        reconcile_startup,
-        prepare_startup_listener,
+        |guard, started| prepared(reconcile_startup(guard, started)),
+        |guard| prepared(prepare_startup_listener(guard)),
         || install_pipeline_scripts(None),
         || {
             let channel = channel();
@@ -1936,7 +1948,7 @@ fn finish_cli(status: &Status, make_report: impl FnOnce(&Status) -> serde_json::
 
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     let result = if args.iter().any(|a| a == "--update-window-start") {
-        window_start(|_| {}).map(|_| load())
+        window_start(|_| {}, |_| {}).map(|_| load())
     } else if args.iter().any(|a| a == "--update-probe") {
         recording_idle().map(|_| load())
     } else if args.iter().any(|a| a == "--update-apply") {
