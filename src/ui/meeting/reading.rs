@@ -708,10 +708,8 @@ fn rail_label(name: &str, count: Option<usize>, note: Option<El>, open: bool, p:
         .children(note)
 }
 
-fn rail_disclosure(label: El, name: &str, open: bool, p: Palette) -> El {
-    pressable(label)
-        .label(name)
-        .expanded(open)
+fn rail_disclosure(label: El, name: &str, open: bool, p: Palette, toggle: fn(&mut State)) -> El {
+    widgets::menu_trigger(pressable(label).label(name), open, p, toggle)
         .focus_ring(2.0, 1.0, p.accent)
 }
 
@@ -782,7 +780,7 @@ fn rail_task(s: &State, t: &TaskItem, width: f32, p: Palette) -> El {
         toggle: Some(toggle),
     };
     let id = t.meeting_id.clone();
-    rows::task_row(task, rows::Density::Rail, width, false, p)
+    rows::task_row(task, rows::Density::MeetingRail, width, false, p)
         .key(format!("meeting-task-{index}"))
         .on_press(move |s: &mut State| open_rail_task(s, &id, index))
 }
@@ -841,9 +839,10 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         });
         let label = rail_label("Tasks", has_tasks.then_some(total), note, tasks_open, p);
         tasks_card = tasks_card.child(
-            rail_disclosure(label, "Tasks", tasks_open, p)
-                .key("meeting-task-count")
-                .on_press(|s: &mut State| s.meeting_ui.rail.tasks_closed ^= true),
+            rail_disclosure(label, "Tasks", tasks_open, p, |s| {
+                s.meeting_ui.rail.tasks_closed ^= true
+            })
+            .key("meeting-task-count"),
         );
         task_body = task_body.children(task_notice);
     }
@@ -922,9 +921,10 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         rail_card(p)
             .key("meeting-questions-card")
             .child(
-                rail_disclosure(label, "Open questions", questions_open, p)
-                    .key("meeting-questions-toggle")
-                    .on_press(|s: &mut State| s.meeting_ui.rail.questions_closed ^= true),
+                rail_disclosure(label, "Open questions", questions_open, p, |s| {
+                    s.meeting_ui.rail.questions_closed ^= true
+                })
+                .key("meeting-questions-toggle"),
             )
             .children(questions_open.then_some(list))
     });
@@ -935,9 +935,10 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         rail_card(p)
             .key("meeting-memory-card")
             .child(
-                rail_disclosure(label, "Memory", visit.memory_open, p)
-                    .key("meeting-memory-toggle")
-                    .on_press(|s: &mut State| s.meeting_ui.rail.memory_open ^= true),
+                rail_disclosure(label, "Memory", visit.memory_open, p, |s| {
+                    s.meeting_ui.rail.memory_open ^= true
+                })
+                .key("meeting-memory-toggle"),
             )
             .children(
                 visit

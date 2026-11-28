@@ -5048,10 +5048,12 @@ fn meeting_rail_sections_match_design() {
 
     rt.update(|_, tx| tx.focus("meeting-memory-toggle", true));
     rt.frame(0.0);
+    assert!(element(&rt, "meeting-memory-toggle").focused);
     rt.key(KeyEvent {
         key: Key::Enter,
         mods: rune::Mods::default(),
     });
+    rt.settle_all();
     rt.frame(0.2);
     assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(true));
     assert!(rt.find("meeting-settle-memory").is_some());

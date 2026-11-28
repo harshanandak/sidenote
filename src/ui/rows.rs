@@ -20,6 +20,7 @@ pub(super) enum Cursor {
 #[derive(Clone, Copy)]
 pub(super) enum Density {
     Rail,
+    MeetingRail,
     List,
 }
 impl Density {
@@ -187,9 +188,9 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     if !reduced {
         icon = icon.transition(Transition::blur_replace().springs(pair::SNAP));
     }
-    let rail = matches!(density, Density::Rail);
+    let meeting_rail = matches!(density, Density::MeetingRail);
     let shell = shell(&t.row, wide, p);
-    let shell = if rail {
+    let shell = if meeting_rail {
         shell.px(0.0).py(0.0).gap(8.0)
     } else {
         shell
@@ -205,7 +206,7 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
         });
     }
     let color = if done { p.faint } else { p.ink };
-    let role = match (rail, done) {
+    let role = match (meeting_rail, done) {
         (true, _) => roles::Role {
             lh: 18.0,
             ..roles::SMALL
@@ -220,11 +221,11 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     let fade = Spring::new(0.18, 0.0);
     let spring = if reduced { fade } else { SETTLE };
     let body = copy()
-        .gap(if rail { 0.0 } else { 2.0 })
+        .gap(if meeting_rail { 0.0 } else { 2.0 })
         .child(name.motion(spring));
     let owner_ink = t
         .owner
-        .filter(|_| !done && !rail)
+        .filter(|_| !done && !meeting_rail)
         .map_or(p.faint, |_| p.soft);
     let owner = (t.owner.unwrap_or("No owner"), owner_ink, 400.0);
     let dates = t.due.into_iter().flat_map(|(label, urgency, guessed)| {
@@ -236,7 +237,7 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     let save = save_line(t.row.save, p);
     if !wide {
         let details = meta(p, [owner].into_iter().chain(dates).chain(status));
-        let details = if rail {
+        let details = if meeting_rail {
             details.font(
                 roles::Role {
                     size: 11.5,
