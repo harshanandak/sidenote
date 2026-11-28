@@ -1658,6 +1658,43 @@ mod tests {
     }
 
     #[test]
+    fn settings_sidebar_matches_the_main_sidebar() {
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                ensure_open(&mut rt);
+                rt.frame(0.0);
+                let home = el(&rt, "nav");
+
+                rt.update(|s, _| s.open_hex());
+                settle(&mut rt);
+                if width < 600.0 {
+                    key_backslash(&mut rt);
+                }
+                rt.frame(0.0);
+
+                let key = if width < 600.0 {
+                    "settings-drawer"
+                } else {
+                    "settings-sidebar"
+                };
+                let settings = el(&rt, key);
+                let context = format!("width {width}, dark {dark}");
+                assert_eq!(settings.fill, home.fill, "{context}");
+                assert_eq!(settings.rect[2], home.rect[2], "{context}");
+                let workspace = el(&rt, "nav-workspace");
+                let back = el(&rt, "settings-back");
+                assert!(
+                    workspace.path.starts_with(&format!("{}/", settings.path)),
+                    "{context}"
+                );
+                assert_eq!(workspace.rect[1], settings.rect[1], "{context}");
+                assert!(workspace.rect[1] < back.rect[1], "{context}");
+            }
+        }
+    }
+
+    #[test]
     fn hex_page_logo_uses_the_new_mark() {
         // S1a replaced the layered 20-unit mark with the crisp 18 px mark: a #1e1e1c square,
         // a white curve and an #e3aa55 tip, and no #bcb9b0 frame.
