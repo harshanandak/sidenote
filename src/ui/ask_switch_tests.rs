@@ -952,7 +952,7 @@ fn meeting_tasks_cards_keep_every_fact() {
     let late = element(&rt, "meeting-late-count");
     assert_eq!(late.text.as_deref(), Some("1 late"));
     assert_eq!(late.text_color, Some(p.warn));
-    // The 24 pt hit target extends 4 pt outside the visible 16 pt checkbox.
+    // The 32 pt hit target extends 8 pt outside the visible 16 pt checkbox.
     let row = |i: usize| element(&rt, &format!("meeting-task-{i}")).rect;
     for i in 0..3 {
         let tick = rail_checkbox(&rt, i).rect;
@@ -963,8 +963,8 @@ fn meeting_tasks_cards_keep_every_fact() {
             .find(|e| e.path.starts_with(&path) && e.key.as_deref() == Some("title"))
             .unwrap()
             .rect;
-        assert_eq!((tick[2], tick[3]), (24.0, 24.0), "check target {i}");
-        assert_eq!(tick[0] - row(i)[0], -4.0, "tick {i}");
+        assert_eq!((tick[2], tick[3]), (32.0, 32.0), "check target {i}");
+        assert_eq!(tick[0] - row(i)[0], -8.0, "tick {i}");
         assert_eq!(
             (title[0] - row(i)[0], title[1] - row(i)[1]),
             (24.0, 0.0),
@@ -5003,6 +5003,9 @@ fn meeting_rail_sections_match_design() {
         return;
     }
     let mut rt = page_with_tasks(DEFAULT_SIZE);
+    rt.update(|s, _| s.config.features.memory = true);
+    rt.frame(0.0);
+    assert!(rt.state.memory.settled.is_empty());
     assert!(rt.find("meeting-memory-card").is_none());
     rt.update(|s, _| {
         let meetings = core::meetings_dir();
@@ -5015,8 +5018,10 @@ fn meeting_rail_sections_match_design() {
                 &serde_json::json!({"meeting_project":"Atlas","tasks":[]}),
             )
             .unwrap();
-        s.config.features.memory = true;
         s.memory.settled = store.history().unwrap();
+        let mut other = s.current().unwrap().clone();
+        other.id = OTHER_MEETING.into();
+        s.meetings.push(other);
     });
     rt.settle_all();
     rt.frame(0.0);
@@ -5049,12 +5054,31 @@ fn meeting_rail_sections_match_design() {
     rt.update(|_, tx| tx.focus("meeting-memory-toggle", true));
     rt.frame(0.0);
     assert!(element(&rt, "meeting-memory-toggle").focused);
-    rt.key(KeyEvent {
-        key: Key::Enter,
-        mods: rune::Mods::default(),
-    });
-    rt.settle_all();
-    rt.frame(0.2);
+    for (key, open) in [(Key::Enter, true), (Key::Text(" ".into()), false)] {
+        rt.key(KeyEvent {
+            key,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.2);
+        assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(open));
+        assert_eq!(rt.find("meeting-settle-memory").is_some(), open);
+    }
+    let tap = |rt: &mut Runtime<State>, key| {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.2);
+    };
+    tap(&mut rt, "meeting-memory-toggle");
     assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(true));
-    assert!(rt.find("meeting-settle-memory").is_some());
+    rt.update(|s, tx| s.select(OTHER_MEETING, tx));
+    rt.frame(0.2);
+    assert_eq!(rt.state.current().unwrap().id, OTHER_MEETING);
+    rt.update(|s, tx| s.select(MEETING, tx));
+    rt.frame(0.2);
+    assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(false));
+    tap(&mut rt, "meeting-memory-toggle");
+    tap(&mut rt, "meeting-settle-memory");
+    assert!(rt.state.on_memory() && rt.state.memory.settle_all);
+    assert_eq!(rt.state.memory.settle_meeting.as_deref(), Some(MEETING));
 }
