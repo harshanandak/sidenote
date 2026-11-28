@@ -419,9 +419,9 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "972ebf3177474e5da01676e3cb02a8b7323ebc4c8e97cfc35cfdba340d95f6b4",
+  "src/ui/hex.rs": "a182de0ff846cb56d48d31396d1c15b2af8762badedcaa127e4ca2015605161c",
 
-  "src/ui/hex/connection/stop.rs": "06d782f8fa7ed737d5dd3f0752c428b0cff819fb6949683d5c39a164b9ee053a",
+  "src/ui/hex/connection/stop.rs": "cc70264ddd0c7abb781911b10b6467dc81c39833ec00cdbd792a9e21edd1090e",
 
   "src/ui/hex/connection/stop_tests.rs": "20d3bb2764a486d9fb070199960a2f359bbc64af1d34bf3f6bc40e20266bb681",
 
@@ -441,7 +441,7 @@
 
   "src/ui/idle_cpu/measurement.rs": "4cbcf47cc49366986103d21af8d0ba7651a8151919a57fd85d8b230b208c110a",
 
-  "src/ui/live.rs": "f6127b4668600f0bad0cf7ed905a9c13d59c034089db0eb13d3a5afcdcb46d7e",
+  "src/ui/live.rs": "09bb668b89fbd2617973e067dd7afd65748409ad0c561b371f4925ef8e199452",
 
   "src/ui/mcp_connect.rs": "b7372660109d111f146b60c90b4a3387c66b2e9eebdc0332ac2bc07034cbba20",
 
