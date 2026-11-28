@@ -231,7 +231,6 @@ const RAIL_ITEM_W: f32 = 36.0;
 const SIGNAL_D: f32 = 6.0;
 const SIGNAL_INSET: f32 = 10.0;
 
-/// The workspace identity name: 12.5/18 semibold, per the spec nav type.
 const IDENTITY_NAME: roles::Role = roles::Role {
     size: 12.5,
     weight: 600.0,
@@ -552,11 +551,9 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .fill(p.side)
         .px(PAD);
     if wide {
-        // The drawer sits below the page header, which keeps the only toggle and search.
-        // The row cancels the pane's side inset so the identity spans the full 204 px.
         let controls = !s.narrow.get();
         pane = pane
-            .child(workspace_row(p, controls).mx(-PAD))
+            .child(workspace_row(p, controls).w(WIDE).mx(-PAD))
             .child(new_menu(s, p, page, layer));
     } else {
         pane = pane.pt(10.0);
@@ -572,11 +569,6 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
     pane
 }
 
-/// The shared 48 px workspace row: the logo, "Sidenote" and a decorative caret, then the
-/// working collapse and search controls when `controls` is set. Desktop always shows the
-/// controls in the row; a phone drawer leaves them in the title bar, so it passes false to
-/// avoid duplicate keys and tab stops. The identity itself never takes focus or presses.
-/// Only the docked row drags the window; a drawer keeps the title-bar drag region.
 pub(crate) fn workspace_row(p: Palette, controls: bool) -> El {
     let identity = row()
         .grow(1.0)
@@ -608,8 +600,6 @@ pub(crate) fn workspace_row(p: Palette, controls: bool) -> El {
     out
 }
 
-/// The compact 18 px mark shown in the page header while no full sidebar or drawer identity
-/// is visible. It carries the accessible name; the full row's "Sidenote" text names that one.
 pub(crate) fn compact_mark() -> El {
     logo().key("nav-logo").label("Sidenote").help("Sidenote")
 }
@@ -816,10 +806,11 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let status = recording_status(s);
     // The pill never reaches the caption buttons: its title takes what the header leaves.
     let (lead, trail, _) = s.chrome.get();
-    let mut reserve = 130.0;
-    if !s.sidebar_docked() && !s.sidebar_is_open() {
-        reserve = 150.0; // closed-header compact mark and its gap
-    }
+    let reserve = if !s.sidebar_docked() && !s.sidebar_is_open() {
+        150.0
+    } else {
+        130.0
+    };
     let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - reserve).max(0.0);
     let title = s
         .hex
@@ -1157,7 +1148,6 @@ fn profile_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme;
     use rune::{Env, Runtime, text::TextSystem};
 
     fn new_meeting_runtime(width: f32, listener_preparing: bool) -> rune::Runtime<State> {
@@ -1683,12 +1673,6 @@ mod tests {
         );
     }
 
-    const CASES: [(f32, f32, bool); 4] = [
-        (1334.0, 900.0, false),
-        (1334.0, 900.0, true),
-        (390.0, 844.0, false),
-        (390.0, 844.0, true),
-    ];
     const INVENTED_MEETING_ID: &str = "1800000000000-9";
     fn invented_meeting() -> sidenote::core::Meeting {
         let title = "Invented identity standup";
@@ -1716,18 +1700,13 @@ mod tests {
             search: title.to_lowercase(),
         }
     }
-    fn name_want() -> f32 {
-        let mut ts = TextSystem::new(theme::fonts(), (theme::SANS, "Inter"));
-        ts.measure("Sidenote", IDENTITY_NAME.style(), 1.0).0
-    }
     fn identity_rt(width: f32, height: f32, dark: bool) -> rune::Runtime<State> {
         crate::test_paths::isolate();
         let mut state = State::new();
         crate::ui::updates::settings_fixture(&mut state);
         let probed = sidenote::updates::ListenerStatus {
             ready: true,
-            preparing: false,
-            error: None,
+            ..Default::default()
         };
         state.listener_probed(Some(probed), None);
         let mut rt = Runtime::with_text(
@@ -1751,7 +1730,9 @@ mod tests {
         });
         settle(rt);
     }
-    fn assert_full_identity(rt: &rune::Runtime<State>, width: f32, want: f32) {
+    fn assert_full_identity(rt: &rune::Runtime<State>, width: f32) {
+        let mut ts = TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter"));
+        let want = ts.measure("Sidenote", IDENTITY_NAME.style(), 1.0).0;
         assert_eq!(count(rt, "nav-workspace"), 1);
         let workspace = el(rt, "nav-workspace");
         assert_eq!(workspace.rect[3], 48.0);
@@ -1769,12 +1750,22 @@ mod tests {
         assert!(name.path.starts_with(&format!("{}/", workspace.path)));
         assert!(name.rect[2] + 0.5 >= want);
         assert!((caret.rect[0] - (name.rect[0] + name.rect[2]) - 8.0).abs() <= 0.5);
+        let right = name.rect[0] + name.rect[2];
+        assert!(name.rect[0] >= workspace.rect[0] - 0.5);
+        assert!(right <= workspace.rect[0] + workspace.rect[2] + 0.5);
         let header = el(rt, "page-header");
         assert!(!logo.path.starts_with(&format!("{}/", header.path)));
+        let [ax, ay, aw, ah] = workspace.rect;
+        let [bx, by, bw, bh] = header.rect;
+        assert!(
+            ax + aw <= bx + 0.5
+                || bx + bw <= ax + 0.5
+                || ay + ah <= by + 0.5
+                || by + bh <= ay + 0.5
+        );
         if width >= 600.0 {
             let collapse = el(rt, "nav-collapse");
             let search = el(rt, "nav-search");
-            let right = name.rect[0] + name.rect[2];
             assert!(right <= caret.rect[0] + 0.5 && right <= collapse.rect[0] + 0.5);
             assert!(right <= search.rect[0] + 0.5);
         }
@@ -1793,119 +1784,126 @@ mod tests {
         if !rt.state.sidebar_is_open() {
             tap(rt, "sidebar-toggle");
         }
+        assert!(rt.state.sidebar_is_open());
     }
-    fn visit(rt: &mut rune::Runtime<State>, width: f32, key: &str, page: Page, want: f32) {
+    fn visit(rt: &mut rune::Runtime<State>, width: f32, key: &str, page: Page) {
         ensure_open(rt);
         tap(rt, key);
         assert!(rt.state.page() == page);
-        if width < 600.0 {
-            ensure_open(rt);
-        }
-        assert_full_identity(rt, width, want);
+        ensure_open(rt);
+        assert_full_identity(rt, width);
     }
     #[test]
     fn workspace_identity_is_in_the_sidebar_on_every_page() {
-        let want = name_want();
-        for (width, height, dark) in CASES {
-            let mut rt = identity_rt(width, height, dark);
-            rt.update(|s, _| {
-                s.config.features.tasks = true;
-                s.config.features.people = true;
-                s.config.features.memory = true;
-                s.config.features.daily_check = true;
-                s.config.features.annotations = true;
-                s.config.features.other_devices = true;
-                s.meetings.push(invented_meeting());
-                s.refresh_list();
-                s.rebuild_nav();
-            });
-            visit(&mut rt, width, "nav-home", Page::Home, want);
-            visit(&mut rt, width, "nav-meetings", Page::Meetings, want);
-            assert!(rt.state.selected.is_none());
-            if width < 600.0 && rt.state.sidebar_is_open() {
-                tap(&mut rt, "sidebar-toggle");
-            }
-            tap(&mut rt, &format!("meeting-{INVENTED_MEETING_ID}"));
-            assert_eq!(rt.state.selected.as_deref(), Some(INVENTED_MEETING_ID));
-            assert!(rt.state.page() == Page::Meetings);
-            if width < 600.0 {
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                rt.update(|s, _| {
+                    s.config.features.tasks = true;
+                    s.config.features.people = true;
+                    s.config.features.memory = true;
+                    s.config.features.daily_check = true;
+                    s.config.features.annotations = true;
+                    s.meetings.push(invented_meeting());
+                    s.refresh_list();
+                    s.rebuild_nav();
+                });
+                visit(&mut rt, width, "nav-home", Page::Home);
+                visit(&mut rt, width, "nav-meetings", Page::Meetings);
+                assert!(rt.state.selected.is_none());
+                if width < 600.0 && rt.state.sidebar_is_open() {
+                    tap(&mut rt, "sidebar-toggle");
+                }
+                tap(&mut rt, &format!("meeting-{INVENTED_MEETING_ID}"));
+                assert_eq!(rt.state.selected.as_deref(), Some(INVENTED_MEETING_ID));
+                assert!(rt.state.page() == Page::Meetings);
                 ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                visit(&mut rt, width, "view-tasks", Page::Tasks);
+                visit(&mut rt, width, "nav-people", Page::People);
+                visit(&mut rt, width, "view-memory", Page::Memory);
+                visit(&mut rt, width, "nav-annotations", Page::Annotations);
+                visit(&mut rt, width, "view-check", Page::Check);
+                ensure_open(&mut rt);
+                tap(&mut rt, "profile-button");
+                tap(&mut rt, "profile-menu-item4");
+                assert!(rt.state.page() == Page::Hex);
+                assert_full_identity(&rt, width);
+                assert_eq!(count(&rt, "nav-collapse"), usize::from(width >= 600.0));
+                assert_eq!(count(&rt, "sidebar-toggle"), usize::from(width < 600.0));
+                assert_eq!(count(&rt, "nav-search"), 1);
             }
-            assert_full_identity(&rt, width, want);
-            visit(&mut rt, width, "view-tasks", Page::Tasks, want);
-            visit(&mut rt, width, "nav-people", Page::People, want);
-            visit(&mut rt, width, "view-memory", Page::Memory, want);
-            visit(&mut rt, width, "nav-annotations", Page::Annotations, want);
-            visit(&mut rt, width, "view-check", Page::Check, want);
-            ensure_open(&mut rt);
-            tap(&mut rt, "profile-button");
-            tap(&mut rt, "profile-menu-item4");
-            assert!(rt.state.page() == Page::Hex);
-            assert_full_identity(&rt, width, want);
-            assert_eq!(count(&rt, "nav-collapse"), usize::from(width >= 600.0));
-            assert_eq!(count(&rt, "sidebar-toggle"), usize::from(width < 600.0));
-            assert_eq!(count(&rt, "nav-search"), 1);
         }
     }
     #[test]
     fn workspace_identity_compacts_and_restores_through_toggle() {
-        let want = name_want();
-        for (width, height, dark) in CASES {
-            let mut rt = identity_rt(width, height, dark);
-            rt.on_key = Some(crate::ui::on_key);
-            own_prefs(&mut rt);
-            ensure_open(&mut rt);
-            assert_full_identity(&rt, width, want);
-            key_backslash(&mut rt);
-            assert!(!rt.state.sidebar_is_open());
-            assert_compact_identity(&rt);
-            rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
-            key_backslash(&mut rt);
-            assert!(rt.state.sidebar_is_open());
-            assert_full_identity(&rt, width, want);
-            if width >= 600.0 {
-                rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
-            } else {
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                rt.on_key = Some(crate::ui::on_key);
+                own_prefs(&mut rt);
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                key_backslash(&mut rt);
+                assert!(!rt.state.sidebar_is_open());
+                assert_compact_identity(&rt);
                 rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
-            }
-            rt.update(|s, _| {
-                s.hex.status = Some(Ok(sidenote::hex_engine::EngineState {
-                    running: true,
-                    version: "test".into(),
-                    protocol: 1,
-                    recording: Some(sidenote::hex_engine::Recording {
-                        id: None,
-                        title: None,
-                        since: None,
-                        elapsed_seconds: Some(60),
-                    }),
-                    meeting_state: "recording".into(),
-                    dictating: Some(false),
-                    capture_state: "idle".into(),
-                    model: sidenote::hex_engine::ModelState {
-                        id: None,
-                        name: None,
-                        language: None,
-                        installed: None,
-                        preparing: None,
-                        downloaded_bytes: None,
-                    },
-                    labs: Box::default(),
-                }));
-            });
-            ensure_open(&mut rt);
-            assert_full_identity(&rt, width, want);
-            if width >= 600.0 {
-                tap(&mut rt, "nav-collapse");
-            } else {
+                assert!(el(&rt, "sidebar-toggle").focus_visible);
+                key_backslash(&mut rt);
+                assert!(rt.state.sidebar_is_open());
+                assert_full_identity(&rt, width);
+                if width >= 600.0 {
+                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
+                    assert!(el(&rt, "nav-collapse").focus_visible);
+                } else {
+                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+                    assert!(el(&rt, "sidebar-toggle").focus_visible);
+                }
+                rt.update(|s, _| {
+                    s.hex.status = Some(Ok(sidenote::hex_engine::EngineState {
+                        running: true,
+                        version: "test".into(),
+                        protocol: 1,
+                        recording: Some(sidenote::hex_engine::Recording {
+                            id: None,
+                            title: None,
+                            since: None,
+                            elapsed_seconds: Some(60),
+                        }),
+                        meeting_state: "recording".into(),
+                        dictating: Some(false),
+                        capture_state: "idle".into(),
+                        model: sidenote::hex_engine::ModelState {
+                            id: None,
+                            name: None,
+                            language: None,
+                            installed: None,
+                            preparing: None,
+                            downloaded_bytes: None,
+                        },
+                        labs: Box::default(),
+                    }));
+                });
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                if width >= 600.0 {
+                    tap(&mut rt, "nav-collapse");
+                } else {
+                    tap(&mut rt, "sidebar-toggle");
+                }
+                assert_compact_identity(&rt);
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+                assert_eq!(count(&rt, "rail-recording"), 1);
+                assert_eq!(el(&rt, "nav").rect[2], RAIL);
                 tap(&mut rt, "sidebar-toggle");
+                assert_full_identity(&rt, width);
+                if width >= 600.0 {
+                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
+                } else {
+                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+                }
+                assert_eq!(count(&rt, "rail-recording"), 0);
             }
-            assert_compact_identity(&rt);
-            assert_eq!(count(&rt, "rail-recording"), 1);
-            assert_eq!(el(&rt, "nav").rect[2], RAIL);
-            tap(&mut rt, "sidebar-toggle");
-            assert_full_identity(&rt, width, want);
-            assert_eq!(count(&rt, "rail-recording"), 0);
         }
     }
     #[test]
@@ -1922,51 +1920,54 @@ mod tests {
             rt.pointer_move(x, y);
             rt.frame(0.0);
         }
-        for (width, height, dark) in CASES {
-            let mut rt = identity_rt(width, height, dark);
-            tap(&mut rt, "ask-input");
-            type_text(&mut rt, "invented ask probe 7Q");
-            assert_eq!(rt.state.question.text, "invented ask probe 7Q");
-            assert!(rt.state.question.focused);
-            ensure_open(&mut rt);
-            hover(&mut rt, "nav-logo");
-            hover(&mut rt, "nav-caret");
-            hover(&mut rt, "nav-name");
-            assert!(rt.state.question.focused);
-            assert_eq!(rt.state.question.text, "invented ask probe 7Q");
-            type_text(&mut rt, "-again");
-            assert_eq!(rt.state.question.text, "invented ask probe 7Q-again");
-            rt.update(|s, _| s.open_hex());
-            ensure_open(&mut rt);
-            tap(&mut rt, "hex-filter");
-            type_text(&mut rt, "invented settings probe 7Q");
-            assert!(
-                rt.state
-                    .hex
-                    .filter
-                    .text
-                    .contains("invented settings probe 7Q")
-            );
-            assert!(rt.state.hex.filter.focused);
-            hover(&mut rt, "nav-logo");
-            hover(&mut rt, "nav-caret");
-            hover(&mut rt, "nav-name");
-            assert!(rt.state.hex.filter.focused);
-            assert!(
-                rt.state
-                    .hex
-                    .filter
-                    .text
-                    .contains("invented settings probe 7Q")
-            );
-            type_text(&mut rt, "-again");
-            assert!(
-                rt.state
-                    .hex
-                    .filter
-                    .text
-                    .contains("invented settings probe 7Q-again")
-            );
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                tap(&mut rt, "ask-input");
+                type_text(&mut rt, "invented ask probe 7Q");
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q");
+                assert!(rt.state.question.focused);
+                ensure_open(&mut rt);
+                hover(&mut rt, "nav-logo");
+                hover(&mut rt, "nav-caret");
+                hover(&mut rt, "nav-name");
+                assert!(rt.state.question.focused);
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q");
+                type_text(&mut rt, "-again");
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q-again");
+                rt.update(|s, _| s.open_hex());
+                settle(&mut rt);
+                ensure_open(&mut rt);
+                tap(&mut rt, "hex-filter");
+                type_text(&mut rt, "invented settings probe 7Q");
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q")
+                );
+                assert!(rt.state.hex.filter.focused);
+                hover(&mut rt, "nav-logo");
+                hover(&mut rt, "nav-caret");
+                hover(&mut rt, "nav-name");
+                assert!(rt.state.hex.filter.focused);
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q")
+                );
+                type_text(&mut rt, "-again");
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q-again")
+                );
+            }
         }
     }
 

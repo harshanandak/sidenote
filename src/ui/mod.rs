@@ -2472,7 +2472,6 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
         nav::actions(s, p, narrow)
     };
     let docked = s.sidebar_docked();
-    // The full sidebar or drawer identity takes precedence, so there is one visible identity.
     let show_compact = !docked && !s.sidebar_is_open();
     let tools = row()
         .gap(2.0)
