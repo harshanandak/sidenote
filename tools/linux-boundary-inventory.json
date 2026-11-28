@@ -405,7 +405,7 @@
 
   "src/ui/ask_settings.rs": "264cb52764caf1ac397292c65bf3be05003454f74f7657f8a99b80b499300247",
 
-  "src/ui/ask_switch_tests.rs": "5137aad1d213c46f02aa5d45db8458045bfcc07f0df65313816b42be868738c7",
+  "src/ui/ask_switch_tests.rs": "0136783213f1789a0c77d3f628a870ad8d625dd2fd1abcd57d7dbf5e02a03683",
 
   "src/ui/benchmark.rs": "3eea004745d87db3e40f407a7d320827a47772f1185355a0c6397be3df15e9ff",
 
@@ -417,7 +417,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "fa1c8fea4b165ec6ae0b0e17589fb830a0fc9eabecda54bae5c08aeb58e2e031",
+  "src/ui/hex.rs": "76b90a907ab1bf29d78ee2ece46b6294d8072231cc0f00381c060bbdf9811900",
 
   "src/ui/hex/connection/stop.rs": "8f48cb12c5d939112b1dd6ac8c61d9ea1dde2628f247cf8adc7637f2168aa627",
 
@@ -427,7 +427,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "f602446d98114226eb807ad043fe0fef85b4ec4b532e2c52838f4b9f67e95da6",
 
-  "src/ui/hex/settings.rs": "c82273ff2ca1423a1edb5433ed8de5f5acf92444bfe6e372ae7ff0b20664b39f",
+  "src/ui/hex/settings.rs": "d5001888b018a1dfbdf9355d35e0ae5008b113327c5510435be2cc5b8cfcd3f0",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "ace386b695cb91b9340724edd6d9f3444660e98959ae63fe3a2c9c23f750a6a5",
+  "src/ui/mod.rs": "ca7808b98269ca475f051eec687e226d001ad06e55af1cebe38ebd92778e695b",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -455,7 +455,7 @@
 
   "src/ui/project_merge.rs": "90932e67967138d3a7ab461d059a8c6fd0009ce728af4fb92cc381f170fafcd6",
 
-  "src/ui/recording_state_tests.rs": "d8da6ad4b1b2b1b6d56cc8f0ff6e19b56b1cb3cf15e243f7e9b4d251004ce8d3",
+  "src/ui/recording_state_tests.rs": "52ee96e88bd3909f81d2be2e5759eebfeafd5554f432ff2157694fbb6bdf93cf",
 
   "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
 

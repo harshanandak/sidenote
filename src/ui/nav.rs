@@ -163,6 +163,9 @@ impl State {
 
     /// Open: the full sidebar beside the page, or in a narrow window the drawer over it.
     pub fn sidebar_is_open(&self) -> bool {
+        if self.on_hex() {
+            return hex::nav_open(self);
+        }
         if self.narrow.get() {
             self.drawer_open.get()
         } else {
@@ -187,8 +190,22 @@ impl State {
     }
 
     pub fn toggle_sidebar(&mut self) {
+        if self.on_hex() {
+            return hex::toggle_nav(self);
+        }
         let open = !self.sidebar_is_open();
         self.set_sidebar(open);
+    }
+
+    /// Open beside the page, where it carries the toggle in its own top row. A drawer, a rail
+    /// and a closed sidebar leave the toggle to the page header. On Hex Settings it is the
+    /// settings list.
+    pub fn sidebar_docked(&self) -> bool {
+        if self.on_hex() {
+            hex::nav_docked(self)
+        } else {
+            !self.narrow.get() && self.sidebar_open.get()
+        }
     }
 
     /// After going somewhere: a narrow window's drawer closes over the page it opened.
@@ -281,6 +298,21 @@ fn rail_item(place: Place, icon: El, p: Palette) -> El {
         .on_press(place.press)
 }
 
+/// Opens or folds the sidebar. A toggle that had focus unmounts as it flips, so focus moves to
+/// the one shown next.
+pub(super) fn press_toggle(s: &mut State, tx: &mut rune::Tx) {
+    let on_toggle = matches!(tx.focused(), Some("sidebar-toggle" | "nav-collapse"));
+    s.toggle_sidebar();
+    if on_toggle {
+        let key = if s.sidebar_docked() {
+            "nav-collapse"
+        } else {
+            "sidebar-toggle"
+        };
+        tx.focus_when_shown(key, tx.focus_visible());
+    }
+}
+
 pub(super) fn toggle(s: &State, p: Palette) -> El {
     let open = s.sidebar_is_open();
     let name = if open {
@@ -302,7 +334,7 @@ pub(super) fn toggle(s: &State, p: Palette) -> El {
     .size(28.0, 28.0)
     .px(6.0)
     .radius(7.0)
-    .on_press(|s: &mut State| s.toggle_sidebar())
+    .on_press_tx(press_toggle)
 }
 
 /// A place or a tool: what it is called, where it goes and the one signal it may carry.
@@ -511,8 +543,9 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .fill(p.side)
         .px(PAD);
     if wide {
+        // A drawer opens below the page header, which already holds the toggle and search.
         pane = pane
-            .child(workspace_row(p))
+            .children((!s.narrow.get()).then(|| workspace_row(p)))
             .child(new_menu(s, p, page, layer));
     } else {
         pane = pane.pt(10.0);
@@ -528,27 +561,23 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
     pane
 }
 
-/// The open sidebar's first row: the mark, the fixed workspace name, a decorative caret that
-/// opens nothing, then the collapse and search buttons.
+/// The open sidebar's first row: the collapse and search buttons at the top left. While the
+/// sidebar is closed the page header draws the same two icons in the same place.
 fn workspace_row(p: Palette) -> El {
     row()
         .key("nav-workspace")
         .w_full()
         .h(48.0)
         .pl(6.0)
-        .pr(2.0)
         .gap(2.0)
         .items_center()
-        .child(logo().key("nav-logo"))
-        .child(roles::NAV.line("Sidenote", p.ink).pl(6.0))
-        .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.faint).a11y_hidden())
-        .child(el().grow(1.0))
+        .window_drag()
         .child(collapse(p))
         .child(search(p))
 }
 
 /// The sidebar's collapse button. It lives in the workspace row and folds the sidebar.
-fn collapse(p: Palette) -> El {
+pub(super) fn collapse(p: Palette) -> El {
     super::widgets::icon_button(
         &icons::PANEL_CLOSE,
         "Hide sidebar (Ctrl+\\)",
@@ -559,7 +588,7 @@ fn collapse(p: Palette) -> El {
     .size(28.0, 28.0)
     .px(6.0)
     .radius(8.0)
-    .on_press(|s: &mut State| s.toggle_sidebar())
+    .on_press_tx(press_toggle)
 }
 
 fn new_menu(s: &State, p: Palette, page: Palette, layer: &mut Vec<El>) -> El {
@@ -747,6 +776,9 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
     use super::live::RecordingStatus;
     let status = recording_status(s);
+    // The pill never reaches the caption buttons: its title takes what the header leaves.
+    let (lead, trail, _) = s.chrome.get();
+    let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - 130.0).max(0.0);
     let title = s
         .hex
         .status
@@ -775,7 +807,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
                 roles::CONTROL
                     .line(display, p.soft)
                     .truncate()
-                    .max_w(if narrow { 70.0 } else { 230.0 }),
+                    .max_w((if narrow { 70.0_f32 } else { 230.0 }).min(room)),
             ),
         )
         .label(format!("{words}. Open the live meeting"))
@@ -1138,11 +1170,19 @@ mod tests {
                     .find(|e| e.key.as_deref() == Some(key))
                     .unwrap_or_else(|| panic!("missing {key} at width {width}"))
             };
-            let bar = find("top-bar");
+            // No bar spans the window: the sidebar's top row (or the drawer's header above it)
+            // is 48 px, and the menu opens below it.
+            assert!(elements.iter().all(|e| e.key.as_deref() != Some("top-bar")));
+            let header = find("page-header");
             let button = find("new-meeting");
-            assert_eq!(bar.rect[3], crate::ui::TITLEBAR_H);
-            assert!(!button.path.starts_with(&bar.path));
-            assert!(button.rect[1] >= bar.rect[1] + bar.rect[3]);
+            assert!(!button.path.starts_with(&header.path));
+            assert!(button.rect[1] >= crate::ui::TITLEBAR_H);
+            if width < 600.0 {
+                // A drawer opens below the live header, which keeps the toggle.
+                let top = |key| find(key).rect[1];
+                assert!(top("nav-scrim") >= crate::ui::TITLEBAR_H);
+                assert!(top("nav") >= crate::ui::TITLEBAR_H && top("sidebar-toggle") < 48.0);
+            }
             assert_eq!(button.label.as_deref(), Some(label.as_str()));
             assert!(!button.focusable);
             let status = elements.iter().find(|e| e.text.as_deref() == Some(reason));
@@ -1151,7 +1191,7 @@ mod tests {
             } else {
                 let status = status.expect("visible start-blocked reason");
                 assert!(status.path.starts_with(&button.path));
-                assert!(status.rect[1] >= bar.rect[1] + bar.rect[3]);
+                assert!(status.rect[1] >= crate::ui::TITLEBAR_H);
             }
         }
     }
@@ -1261,44 +1301,256 @@ mod tests {
         rt.frame(0.0);
     }
 
+    fn el(rt: &rune::Runtime<State>, key: &str) -> rune::ElementInfo {
+        let mut list = rt.elements().into_iter();
+        list.find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}"))
+    }
+
+    fn count(rt: &rune::Runtime<State>, key: &str) -> usize {
+        let list = rt.elements();
+        list.iter()
+            .filter(|e| e.key.as_deref() == Some(key))
+            .count()
+    }
+
+    fn settle(rt: &mut rune::Runtime<State>) {
+        rt.settle_all();
+        rt.frame(0.0);
+    }
+
+    /// The window's own buttons take `trailing` px at the right edge and `height` px at the top.
+    fn with_insets(rt: &mut rune::Runtime<State>, trailing: f32, height: f32) {
+        let mut insets = rune::ChromeInsets::default();
+        insets.trailing = trailing;
+        insets.height = height;
+        rt.set_chrome_insets(insets);
+        settle(rt);
+    }
+
     #[test]
     fn sidebar_top_row_geometry() {
-        // S1a sizes, rendered: the open sidebar is 204 wide (width adds the divider; old
-        // 230), nav rows are 30 high (old 34), and the first top row is 48 high with the
-        // collapse and search buttons inside the sidebar rather than the top bar.
+        // The open sidebar is 204 wide, nav rows are 30 high, and the first top row is 48 high
+        // with the collapse and search buttons inside the sidebar, which starts at the top.
         let rt = new_meeting_runtime(1334.0, false);
-        let elements = rt.elements();
-        let find = |key| {
-            elements
-                .iter()
-                .find(|e| e.key.as_deref() == Some(key))
-                .unwrap_or_else(|| panic!("missing {key}"))
-        };
-        let bar = find("top-bar");
-        let nav = find("nav");
-        assert_eq!(nav.rect[2], 204.0);
+        let (nav, header) = (el(&rt, "nav"), el(&rt, "page-header"));
+        assert_eq!((nav.rect[1], nav.rect[2]), (0.0, 204.0));
         assert_eq!(width(&rt.state), 204.0 + 1.0);
-        assert_eq!(find("nav-meetings").rect[3], 30.0);
-        assert_eq!(find("nav-workspace").rect[3], 48.0);
+        assert_eq!(el(&rt, "nav-meetings").rect[3], 30.0);
+        assert_eq!(el(&rt, "nav-workspace").rect[3], 48.0);
         for key in ["nav-search", "nav-collapse"] {
-            let control = find(key);
-            assert!(control.path.starts_with(&nav.path), "{key} is inside nav");
-            assert!(
-                !control.path.starts_with(&bar.path),
-                "{key} is not in top-bar"
-            );
+            let path = el(&rt, key).path;
+            assert!(path.starts_with(&nav.path) && !path.starts_with(&header.path));
+        }
+        let counts = ["sidebar-toggle", "top-bar", "nav-search"].map(|k| count(&rt, k));
+        assert_eq!(counts, [0, 0, 1]);
+    }
+
+    /// A page, with the key of an element that sits in or under its header.
+    fn chrome_page(name: &str) -> (rune::Runtime<State>, &'static str) {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        let title = match name {
+            "home" => "home-greeting",
+            "tasks" => "tasks-header",
+            "hex" => "nav-logo",
+            _ => "meetings-title-row",
+        };
+        rt.update(|s, _| match name {
+            "home" => s.go_home(),
+            "tasks" => s.set_view(View::Tasks),
+            "hex" => s.open_hex(),
+            _ => s.go_meetings(),
+        });
+        settle(&mut rt);
+        (rt, title)
+    }
+
+    #[test]
+    fn an_idle_page_has_no_blank_band_above_its_title() {
+        // Sidebar open and nothing to show: the header row holds no control, so it takes only
+        // the height of the window's caption buttons (none without them), never 48 px.
+        for caption in [0.0, crate::ui::TITLEBAR_H] {
+            for name in ["home", "tasks", "meetings"] {
+                let (mut rt, title) = chrome_page(name);
+                with_insets(&mut rt, 0.0, caption);
+                let header = el(&rt, "page-header");
+                let prefix = format!("{}/", header.path);
+                let list = rt.elements();
+                let controls = list.iter().filter(|e| e.path.starts_with(&prefix));
+                assert_eq!(controls.filter(|e| e.focusable).count(), 0, "{name}");
+                assert_eq!((header.rect[1], header.rect[3]), (0.0, caption), "{name}");
+                assert_eq!(count(&rt, "top-bar"), 0, "{name}");
+                assert!(el(&rt, title).rect[1] >= caption, "{name}");
+            }
         }
     }
 
     #[test]
-    fn sidebar_logo_uses_the_new_mark() {
+    fn header_row_keeps_window_drag_and_caption_inset() {
+        const CAPTION: f32 = 138.0;
+        for name in ["home", "tasks", "meetings", "hex"] {
+            let (mut rt, _) = chrome_page(name);
+            with_insets(&mut rt, CAPTION, crate::ui::TITLEBAR_H);
+            let header = el(&rt, "page-header");
+            let prefix = format!("{}/", header.path);
+            for e in rt.elements().iter().filter(|e| e.path.starts_with(&prefix)) {
+                let right = e.rect[0] + e.rect[2];
+                assert!(right <= 1334.0 - CAPTION + 0.5, "{name}: {:?}", e.key);
+            }
+            // A press in the header's empty middle moves the window.
+            let (x, y) = (header.rect[0] + header.rect[2] / 2.0, 24.0);
+            rt.pointer_move(x, y);
+            rt.pointer_down(x, y);
+            let action = rt.take_titlebar_action();
+            assert_eq!(action, Some(rune::TitlebarAction::Drag), "{name}");
+            rt.pointer_up(x, y);
+        }
+    }
+
+    #[test]
+    fn docked_sidebar_headers_drag_from_empty_space() {
+        for (name, sidebar) in [("home", "nav"), ("hex", "settings-sidebar")] {
+            let (mut rt, _) = chrome_page(name);
+            let [x, y, w, _] = el(&rt, sidebar).rect;
+            let (x, y) = (x + w / 2.0, y + 24.0);
+            rt.pointer_down(x, y);
+            assert_eq!(
+                rt.take_titlebar_action(),
+                Some(rune::TitlebarAction::Drag),
+                "{name}"
+            );
+            rt.pointer_up(x, y);
+            tap(&mut rt, "nav-search");
+            assert_eq!(rt.take_titlebar_action(), None, "{name}");
+            assert!(rt.state.finder.is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn collapsing_docked_sidebar_preserves_content_path() {
+        let (mut rt, _) = chrome_page("hex");
+        let path = el(&rt, "hex-scroll").path;
+        tap(&mut rt, "nav-collapse");
+        assert_eq!(el(&rt, "hex-scroll").path, path);
+        tap(&mut rt, "sidebar-toggle");
+        assert_eq!(el(&rt, "hex-scroll").path, path);
+    }
+
+    /// A toggle saves the sidebar preference, which every other test's `State::new` reads from
+    /// the shared folder. A test that toggles keeps its own folder.
+    fn own_prefs(rt: &mut rune::Runtime<State>) {
+        let name = format!("sidenote-nav-{:?}", std::thread::current().id());
+        rt.state.store.root = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&rt.state.store.root).unwrap();
+    }
+
+    fn ctrl_backslash(rt: &mut rune::Runtime<State>) {
+        rt.update(|s, tx| {
+            let mods = rune::Mods {
+                ctrl: true,
+                ..Default::default()
+            };
+            let key = rune::Key::Command('\\');
+            assert!(crate::ui::on_key(s, &rune::KeyEvent { key, mods }, tx));
+        });
+        settle(rt);
+    }
+
+    #[test]
+    fn the_toggles_and_ctrl_backslash_open_and_close_the_sidebar() {
+        // Open: the toggle is in the sidebar. Closed: one toggle and one search at the top left.
+        let mut rt = new_meeting_runtime(1334.0, false);
+        own_prefs(&mut rt);
+        // A hidden sidebar leaves no divider strip at the window's edge.
+        let keys = [
+            "nav-collapse",
+            "sidebar-toggle",
+            "top-bar",
+            "nav-search",
+            "sidebar-divider",
+        ];
+        let shown = |rt: &rune::Runtime<State>| keys.map(|k| count(rt, k));
+        assert_eq!(shown(&rt), [1, 0, 0, 1, 1]);
+        tap(&mut rt, "nav-collapse");
+        assert_eq!(shown(&rt), [0, 1, 0, 1, 0]);
+        assert!(el(&rt, "sidebar-toggle").rect[0] < 40.0);
+        tap(&mut rt, "sidebar-toggle");
+        assert_eq!(shown(&rt), [1, 0, 0, 1, 1]);
+        for open in [false, true] {
+            ctrl_backslash(&mut rt);
+            assert_eq!(rt.state.sidebar_is_open(), open);
+        }
+    }
+
+    #[test]
+    fn hex_settings_toggle_and_ctrl_backslash_control_the_settings_list() {
+        let (mut rt, _) = chrome_page("hex");
+        let width = |rt: &rune::Runtime<State>| el(rt, "settings-sidebar").rect[2];
+        assert!(width(&rt) > 0.0);
+        tap(&mut rt, "nav-collapse");
+        assert_eq!((width(&rt), count(&rt, "sidebar-divider")), (0.0, 0));
+        assert!(el(&rt, "sidebar-toggle").rect[0] < 40.0);
+        for shown in [true, false] {
+            ctrl_backslash(&mut rt);
+            assert_eq!(width(&rt) > 0.0, shown);
+            assert_eq!(count(&rt, "sidebar-divider"), usize::from(shown));
+        }
+        tap(&mut rt, "sidebar-toggle");
+        assert!(width(&rt) > 0.0);
+    }
+
+    #[test]
+    fn focus_follows_the_toggle_that_unmounts() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        own_prefs(&mut rt);
+        rt.update(|_, tx| tx.focus("nav-collapse", true));
+        rt.frame(0.0);
+        rt.update(press_toggle);
+        settle(&mut rt);
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+    }
+
+    #[test]
+    fn the_sidebar_top_is_the_same_on_every_page() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.update(|s, _| {
+            s.config.features.people = true;
+            s.config.features.memory = true;
+        });
+        type Open = fn(&mut State);
+        let pages: [(&str, Open); 6] = [
+            ("home", |s| s.go_home()),
+            ("tasks", |s| s.set_view(View::Tasks)),
+            ("people", |s| s.open_people()),
+            ("companies", |s| s.companies.open = true),
+            ("memory", |s| s.open_memory()),
+            ("hex", |s| s.open_hex()),
+        ];
+        for (name, open) in pages {
+            rt.update(|s, _| {
+                s.companies.open = false;
+                open(s);
+            });
+            settle(&mut rt);
+            let list = rt.elements();
+            let side = ["nav", "settings-sidebar", "page-header"];
+            let tops = list
+                .iter()
+                .filter(|e| side.contains(&e.key.as_deref().unwrap_or_default()));
+            assert!(tops.map(|e| e.rect[1]).all(|y| y == 0.0), "{name}");
+            assert_eq!(count(&rt, "top-bar"), 0, "{name}");
+        }
+    }
+
+    #[test]
+    fn hex_page_logo_uses_the_new_mark() {
         // S1a replaced the layered 20-unit mark with the crisp 18 px mark: a #1e1e1c square,
         // a white curve and an #e3aa55 tip, and no #bcb9b0 frame.
-        let elements = new_meeting_runtime(1334.0, false).elements();
+        let elements = chrome_page("hex").0.elements();
         let logo = elements
             .iter()
             .find(|e| e.key.as_deref() == Some("nav-logo"))
-            .expect("sidebar logo");
+            .expect("Hex page logo");
         assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
         let prefix = format!("{}/", logo.path);
         let tints: Vec<_> = elements

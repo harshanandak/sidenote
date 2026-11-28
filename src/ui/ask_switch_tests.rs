@@ -2323,7 +2323,7 @@ fn ask_on_every_page_settings_drawer_keeps_the_dock() {
     });
     rt.settle_all();
     rt.frame(0.0);
-    tap(&mut rt, "settings-navigation");
+    tap(&mut rt, "sidebar-toggle");
     rt.settle_all();
     rt.frame(0.0);
     assert!(rect_of(&rt, "settings-drawer")[3] > 0.0);

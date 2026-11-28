@@ -380,6 +380,9 @@ pub struct State {
     pub viewport_h: Cell<f32>,
     /// The window's width, as last laid out; the Tasks page sizes its panel from it.
     pub app_w: Cell<f32>,
+    /// What the window's own controls take at the leading and trailing edge, as the view last
+    /// read it (`Cx::chrome_insets`); the page headers keep clear of it.
+    pub chrome: Cell<(f32, f32, f32)>,
     pub app_h: Cell<f32>,
     /// Height of the whole meeting pane; the Ask thread takes a share of it.
     pub pane_h: Cell<f32>,
@@ -616,6 +619,7 @@ impl State {
             narrow: Cell::new(false),
             viewport_h: Cell::new(600.0),
             app_w: Cell::new(DEFAULT_SIZE.0),
+            chrome: Cell::new((0.0, 0.0, 0.0)),
             app_h: Cell::new(DEFAULT_SIZE.1),
             pane_h: Cell::new(800.0),
             live_document_h: Cell::new(340.0),
@@ -803,8 +807,10 @@ impl State {
             return;
         }
         if self.hex_open {
-            if self.app_w.get() < 540.0 {
+            if self.app_w.get() < hex::settings::DRAWER_AT {
                 self.hex.shell.navigation_open = true;
+            } else {
+                self.hex.shell.nav_hidden = false;
             }
             self.hex.filter.focused = true;
             return;
@@ -2287,7 +2293,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if e.is_command('\\') {
-        s.toggle_sidebar();
+        nav::press_toggle(s, tx);
         return true;
     }
     if e.is_command('k') {
@@ -2310,7 +2316,7 @@ fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if e.is_command('b') {
-        s.toggle_sidebar();
+        nav::press_toggle(s, tx);
         return true;
     }
     if s.on_hex() && (e.key == Key::Escape || (e.key == Key::Tab && e.mods.ctrl)) {
@@ -2445,54 +2451,43 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 
 const TITLEBAR_H: f32 = 48.0;
 
-fn titlebar(s: &State, cx: &mut Cx<State>, p: theme::Palette, narrow: bool) -> El {
-    let insets = cx.chrome_insets();
-    cx.caption_color(p.ink);
-    let gutter = if narrow {
-        0.0
-    } else {
-        insets.leading.max(insets.trailing)
-    };
-    // The sidebar's own top row holds its collapse and search buttons while it is open;
-    // the title bar keeps the search button only while the sidebar is closed (and on the
-    // Hex page). The title-bar toggle stays as the window-chrome affordance.
-    let left = row()
-        .pl(insets.leading)
-        .pr((gutter - insets.leading).max(0.0))
-        .gap(4.0)
-        .items_center()
-        .children(s.on_hex().then(nav::logo))
-        .children((!s.on_hex()).then(|| nav::toggle(s, p)))
-        .children((s.on_hex() || !s.sidebar_is_open()).then(|| nav::search(p)));
+/// The first row of the content column, with no bar over an open sidebar. Whenever no docked
+/// sidebar carries them, the row holds the toggle and search icons at the top left, where the
+/// docked sidebar keeps the same two in its own top row, and then spans the whole window. The page's actions (the logo on Hex, the recording pill,
+/// New annotation) sit at the trailing side, clear of the Windows caption buttons
+/// (`State::chrome`). Empty parts of the row drag the window.
+fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
+    let (leading, trailing, caption_h) = s.chrome.get();
     let (pill, action) = if s.on_hex() {
         (None, None)
     } else {
         nav::actions(s, p, narrow)
     };
-    let center = row().h(TITLEBAR_H).center().min_w(0.0).children(pill);
-    let right = row()
-        .pr(insets.trailing)
-        .pl((gutter - insets.trailing).max(0.0))
-        .pt(10.0)
-        .justify_end()
-        .children(action);
-    let (left, center, right) = if narrow {
-        (left, center.grow(1.0), right)
-    } else {
-        (left.grow(1.0), center, right.grow(1.0))
-    };
+    let docked = s.sidebar_docked();
+    let tools = row()
+        .gap(2.0)
+        .items_center()
+        .children((!docked).then(|| nav::toggle(s, p)))
+        .children((!docked).then(|| nav::search(p)));
+    // A row with nothing in it takes only the height the window's own buttons need.
+    let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
+    let h = if bare { caption_h } else { TITLEBAR_H };
     row()
-        .key("top-bar")
+        .key("page-header")
         .w_full()
-        .h(TITLEBAR_H)
-        .min_h(TITLEBAR_H)
-        .max_h(TITLEBAR_H)
-        .px(8.0)
-        .gap(4.0)
+        .h(h)
+        .min_h(h)
+        .max_h(h)
+        .pl(13.0_f32.max(leading))
+        .pr(8.0_f32.max(trailing))
+        .gap(6.0)
+        .items_center()
         .window_drag()
-        .child(left.h(TITLEBAR_H))
-        .child(center)
-        .child(right)
+        .child(tools)
+        .child(rune::el().grow(1.0))
+        .children(s.on_hex().then(|| nav::logo().key("nav-logo")))
+        .children(pill)
+        .children(action)
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -2504,6 +2499,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return widgets::button_sheet(p).fill(p.bg).w_full().h_full();
     }
     let k = theme::kit(&p);
+    cx.caption_color(p.ink);
+    let insets = cx.chrome_insets();
+    s.chrome
+        .set((insets.leading, insets.trailing, insets.height));
     let narrow = cx
         .layout_with("app", |r| u8::from(r[2] < NARROW))
         .unwrap_or(0)
@@ -2615,7 +2614,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         meeting::pane(s, &k, p, narrow, &mut layer)
     };
-    let bar = titlebar(s, cx, p, window_narrow);
+    // Beside a docked sidebar the header is the content column's first row; otherwise it spans
+    // the window above the body, so the toggle never moves for a rail, a drawer or a list.
+    let (above, beside) = if s.sidebar_docked() {
+        (None, Some(page_header(s, p, window_narrow)))
+    } else if on_hex && s.app_w.get() < hex::settings::DRAWER_AT {
+        // Settings paints this header above the drawer's modal layer.
+        (Some(rune::el().h(TITLEBAR_H).min_h(TITLEBAR_H)), None)
+    } else {
+        (Some(page_header(s, p, window_narrow)), None)
+    };
     let mut main = col()
         .key("main")
         .grow(1.0)
@@ -2623,6 +2631,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .min_h(0.0)
         .fill(p.bg)
+        .children(beside)
         .children((!on_hex).then(|| page_actions(s, p)).flatten())
         .children(updates::recorder_gap_notice(s, p));
     if let Some(bar) = hex::error_bar(s, p) {
@@ -2696,10 +2705,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             // A lost focus is not a hide: a window on another monitor still shows the indicator.
             s.hex_visibility(focused || hex::window_shown());
         });
-    app = app.child(bar);
     let open = s.sidebar_is_open();
     let sidebar = theme::sidebar_palette(cx.system_dark(), p);
+    // A hidden sidebar has no width and so no edge; the recording rail keeps its own.
+    let edge = if on_hex {
+        hex::nav_docked(s)
+    } else {
+        s.hex_recording() || (open && !window_narrow)
+    };
     let mut body = row()
+        .key("body")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
@@ -2713,12 +2728,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             nav::sidebar(s, sidebar, p, open && !window_narrow, &mut layer)
         })
-        .child(
+        .children(edge.then(|| {
             rune::el()
+                .key("sidebar-divider")
                 .w(1.0)
                 .h_full()
-                .fill(if on_hex { p.line } else { sidebar.line }),
-        )
+                .fill(if on_hex { p.line } else { sidebar.line })
+        }))
         .child(main);
     if window_narrow && open && !on_hex {
         body = body
@@ -2735,7 +2751,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .shadow(0.0, 32.0, p.shadow),
             );
     }
-    app = app.child(body);
+    app = app.children(above).child(body);
     if let Some(finder) = finder::overlay(s, &k, p, window_narrow) {
         app = app.child(finder);
     }

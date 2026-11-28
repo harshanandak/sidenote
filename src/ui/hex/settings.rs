@@ -10,7 +10,7 @@ mod engine;
 #[cfg(windows)]
 mod host;
 
-const DRAWER_AT: f32 = 600.0;
+pub(in crate::ui) const DRAWER_AT: f32 = 600.0;
 const LIST_WIDE: f32 = 240.0;
 const LIST_ROW_H: f32 = 32.0;
 const TAB_H: f32 = 28.0;
@@ -19,6 +19,8 @@ const PAGE_COLUMN: f32 = 640.0;
 #[derive(Default)]
 pub struct Settings {
     pub navigation_open: bool,
+    /// The settings list is folded away in a window wide enough to show it.
+    pub nav_hidden: bool,
     pub labs: sidenote::hex_labs::Snapshot,
     pub labs_loading: bool,
     labs_show_all: bool,
@@ -1455,7 +1457,7 @@ fn jump(s: &mut State, dest: Destination) {
 }
 
 pub fn sidebar(s: &State, k: &Kit, p: Palette) -> El {
-    if s.app_w.get() < DRAWER_AT {
+    if !nav_docked(s) {
         return col().key("settings-sidebar").w(0.0).h_full();
     }
     let width = if s.app_w.get() < 700.0 {
@@ -1463,11 +1465,31 @@ pub fn sidebar(s: &State, k: &Kit, p: Palette) -> El {
     } else {
         LIST_WIDE
     };
-    settings_list(s, k, p, width)
+    settings_list(s, k, p, width, true).h_full()
 }
 
 fn drawer_open(s: &State) -> bool {
     s.app_w.get() < DRAWER_AT && (s.hex.shell.navigation_open || s.hex.filter.focused)
+}
+
+/// The settings list sits beside the page and carries the sidebar toggle in its own top row.
+pub fn nav_docked(s: &State) -> bool {
+    s.app_w.get() >= DRAWER_AT && !s.hex.shell.nav_hidden
+}
+
+pub fn nav_open(s: &State) -> bool {
+    nav_docked(s) || drawer_open(s)
+}
+
+/// Ctrl+\ and the top-left toggle: fold the list, or open and close the narrow drawer.
+pub fn toggle_nav(s: &mut State) {
+    if s.app_w.get() >= DRAWER_AT {
+        s.hex.shell.nav_hidden = !s.hex.shell.nav_hidden;
+    } else if drawer_open(s) {
+        close_drawer(s);
+    } else {
+        s.hex.shell.navigation_open = true;
+    }
 }
 
 fn close_drawer(s: &mut State) {
@@ -1500,7 +1522,7 @@ fn settings_back(p: Palette) -> El {
         .on_press(back)
 }
 
-fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
+fn settings_list(s: &State, k: &Kit, p: Palette, width: f32, docked: bool) -> El {
     let mut list = col()
         .w_full()
         .gap(1.0)
@@ -1613,9 +1635,18 @@ fn settings_list(s: &State, k: &Kit, p: Palette, width: f32) -> El {
     col()
         .key("settings-sidebar")
         .w(width)
-        .h_full()
         .min_h(0.0)
         .fill(p.side)
+        .children(docked.then(|| {
+            row()
+                .h(48.0)
+                .pl(14.0)
+                .gap(2.0)
+                .items_center()
+                .window_drag()
+                .child(nav::collapse(p))
+                .child(nav::search(p))
+        }))
         .child(scroll(list, "settings-list-scroll"))
 }
 fn path(page: Page, tab: usize) -> String {
@@ -3142,6 +3173,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
     let gutter = if narrow { 16.0 } else { 40.0 };
     let pane_width = PAGE_COLUMN + 2.0 * gutter;
     let drawer = drawer_open(s);
+    let header_layer = layer.len();
     let hex_unavailable = page == Page::Hex && !s.hex.running();
     let page_note = s.hex.page_note().map(|reason| {
         if reason == super::connection::UNKNOWN {
@@ -3207,16 +3239,30 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
     // Its controls stay disabled and the header says why while Hex is unconfirmed.
     doc = doc.child(body(s, k, p, layer, page, tab));
     if drawer {
-        layer.push(rune_kit::scrim("settings-scrim", close_drawer).fill(p.scrim));
+        let top = Some(crate::ui::TITLEBAR_H);
         layer.push(
-            settings_list(s, k, p, LIST_WIDE)
+            rune::el()
+                .key("settings-scrim")
+                .role("none")
+                .pin(Some(0.0), top, Some(0.0), Some(0.0))
+                .fill(p.scrim)
+                .on_press(close_drawer),
+        );
+        layer.push(
+            settings_list(s, k, p, LIST_WIDE, false)
                 .key("settings-drawer")
                 .role("dialog")
                 .label("Settings pages")
-                .pin(Some(0.0), Some(0.0), None, Some(0.0))
-                .focus_return("settings-navigation")
+                .pin(Some(0.0), top, None, Some(0.0))
+                .focus_return("sidebar-toggle")
                 .modal(true, close_drawer),
         );
+    }
+    if narrow {
+        // Rune makes nodes behind a modal inert. Keep the header above the drawer when open,
+        // and below the page's own popovers otherwise.
+        let index = if drawer { layer.len() } else { header_layer };
+        layer.insert(index, crate::ui::page_header(s, p, true).absolute(0.0, 0.0));
     }
     col()
         .key("hex-pane")
@@ -3237,31 +3283,12 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
                     .max_w(pane_width)
                     .px(gutter)
                     .children(narrow.then(|| {
-                        row()
-                            .w_full()
-                            .items_center()
-                            .justify_between()
-                            .mt(12.0)
-                            .child(
-                                settings_back(p)
-                                    .key("settings-header-back")
-                                    .w(76.0)
-                                    .fill(Color::TRANSPARENT),
-                            )
-                            .child(
-                                pressable(row().size(TAB_H, TAB_H).center().child(icons::draw(
-                                    &icons::PANEL_OPEN,
-                                    icons::ROW,
-                                    p.soft,
-                                )))
-                                .key("settings-navigation")
-                                .label("Settings pages")
-                                .radius(7.0)
-                                .hover(p.chip)
-                                .focus_ring(1.0, 0.0, p.line)
-                                .expanded(drawer)
-                                .on_press(|s: &mut State| s.hex.shell.navigation_open = true),
-                            )
+                        row().w_full().items_center().mt(12.0).child(
+                            settings_back(p)
+                                .key("settings-header-back")
+                                .w(76.0)
+                                .fill(Color::TRANSPARENT),
+                        )
                     }))
                     .children(
                         s.hex
@@ -4233,8 +4260,8 @@ mod tests {
         rt.settle_all();
         rt.frame(0.0);
         let (x, y) = rt
-            .find("settings-navigation")
-            .unwrap_or_else(|| panic!("missing settings-navigation"));
+            .find("sidebar-toggle")
+            .unwrap_or_else(|| panic!("missing sidebar-toggle"));
         rt.pointer_move(x, y);
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
@@ -4409,6 +4436,64 @@ mod tests {
         rt.frame(0.2);
     }
 
+    #[test]
+    fn narrow_drawer_closes_via_header_toggle_or_scrim() {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        state.open_hex();
+        let mut rt = settings_runtime(state, (390.0, 844.0));
+        tap_key(&mut rt, "sidebar-toggle");
+        let elements = rt.elements();
+        let [_, y, _, h] = element_rect(&elements, "page-header");
+        for key in ["settings-drawer", "settings-scrim"] {
+            let [_, top, _, height] = element_rect(&elements, key);
+            assert_eq!((top, top + height), (y + h, 844.0), "{key}");
+        }
+        let (x, y) = rt.find("sidebar-toggle").unwrap();
+        rt.pointer_down(x, y);
+        rt.frame(0.0);
+        assert!(rt.state.sidebar_is_open(), "waits for the toggle's release");
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        assert!(!rt.state.sidebar_is_open());
+
+        tap_key(&mut rt, "sidebar-toggle");
+        rt.pointer_down(370.0, 200.0);
+        rt.pointer_up(370.0, 200.0);
+        rt.frame(0.0);
+        assert!(!rt.state.sidebar_is_open());
+    }
+
+    #[test]
+    fn search_shortcuts_reopen_and_focus_settings_navigation() {
+        use rune::{Key, KeyEvent, Mods};
+
+        for key in [Key::Command('f'), Key::Text("/".into())] {
+            for width in [590.0, 1334.0] {
+                crate::test_paths::isolate();
+                let mut state = State::new();
+                state.open_hex();
+                state.hex.shell.nav_hidden = true;
+                let mut rt = settings_runtime(state, (width, 844.0));
+                rt.on_key = Some(crate::ui::on_key);
+                assert!(rt.find("hex-filter").is_none());
+                rt.key(KeyEvent {
+                    key: key.clone(),
+                    mods: Mods::default(),
+                });
+                rt.settle_all();
+                rt.frame(0.0);
+                assert!(rt.find("hex-filter").is_some());
+                rt.key(KeyEvent {
+                    key: Key::Text("sound".into()),
+                    mods: Mods::default(),
+                });
+                rt.frame(0.0);
+                assert_eq!(rt.state.hex.filter.text, "sound");
+            }
+        }
+    }
+
     fn element_rect(elements: &[rune::ElementInfo], key: &str) -> [f32; 4] {
         elements
             .iter()
@@ -4467,7 +4552,7 @@ mod tests {
             let state = work_tasks_state(None);
             let mut rt = settings_runtime(state, size);
             if size.0 < DRAWER_AT {
-                tap_key(&mut rt, "settings-navigation");
+                tap_key(&mut rt, "sidebar-toggle");
                 rt.settle_all();
                 rt.frame(0.0);
             }
