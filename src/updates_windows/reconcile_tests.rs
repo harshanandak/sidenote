@@ -264,6 +264,22 @@ fn listener_recovery_failure_blocks_apply_before_handoff() {
     }
 }
 
+fn fail_window_handoff(path: &Path, rollback: impl FnOnce(&InstallGuard<'_>)) -> String {
+    apply_installed(
+        path,
+        true,
+        || false,
+        |status| serde_json::json!(status),
+        |guard| {
+            guard.mark_listener_pending().unwrap();
+            fs::write(path.join("update-listener.stop"), "synthetic stop request").unwrap();
+            rollback(guard);
+            Err("synthetic handoff failure".into())
+        },
+    )
+    .unwrap_err()
+}
+
 #[test]
 fn window_apply_rollback_retires_resume_with_the_same_guard() {
     let root = tempfile::tempdir().unwrap();
@@ -271,34 +287,42 @@ fn window_apply_rollback_retires_resume_with_the_same_guard() {
     let pending = path.join("pipeline-install.pending");
     let resume = path.join("update-listener.resume");
     let stop = path.join("update-listener.stop");
+    fs::write(path.join("install-hook.complete"), VERSION).unwrap();
     fs::write(&pending, VERSION).unwrap();
 
-    let result = apply_installed(
-        path,
-        true,
-        || false,
-        |status| serde_json::json!(status),
-        |guard| {
-            guard.mark_listener_pending().unwrap();
-            fs::write(&stop, "synthetic stop request").unwrap();
-            restart_listener(guard, || {
-                assert!(matches!(
-                    InstallGuard::acquire(path),
-                    Err(InstallAdmission::Busy)
-                ));
-                assert_eq!(fs::read(&resume).unwrap(), b"resume");
-                assert!(!stop.exists());
-                Ok(())
-            });
-            Err("synthetic handoff failure".into())
-        },
-    );
+    let error = fail_window_handoff(path, |guard| {
+        restart_listener(guard, || {
+            assert!(matches!(
+                InstallGuard::acquire(path),
+                Err(InstallAdmission::Busy)
+            ));
+            assert_eq!(fs::read(&resume).unwrap(), b"resume");
+            assert!(!stop.exists());
+            Ok(())
+        });
+    });
 
-    assert_eq!(result.as_ref().unwrap_err(), "synthetic handoff failure");
-    assert_eq!(read_saved_status(path).error, result.err());
+    assert_eq!(error, "synthetic handoff failure");
+    assert_eq!(
+        read_saved_status(path).error.as_deref(),
+        Some(error.as_str())
+    );
     assert!(!resume.exists());
     assert_eq!(fs::read(&pending).unwrap(), VERSION.as_bytes());
     assert!(InstallGuard::acquire(path).is_ok());
+}
+
+fn start_without_recovery(path: &Path, pending_update: bool) -> bool {
+    start_installed(
+        path,
+        Instant::now(),
+        |_, _| panic!("no recovery pending"),
+        |_| Ok(()),
+        || panic!("no pipeline pending"),
+        || pending_update,
+        |_| panic!("startup wrote a report before apply"),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -307,16 +331,8 @@ fn startup_apply_busy_preserves_the_hooks_successful_status_and_report() {
     let path = root.path();
     let snapshot =
         || ["updates.json", "update-report.json"].map(|name| fs::read(path.join(name)).unwrap());
-    let startup = start_installed(
-        path,
-        Instant::now(),
-        |_, _| panic!("no recovery pending"),
-        |_| Ok(()),
-        || panic!("no pipeline pending"),
-        || true,
-        |_| panic!("startup wrote a report before apply"),
-    )
-    .unwrap();
+    fs::write(path.join("install-hook.complete"), VERSION).unwrap();
+    let startup = start_without_recovery(path, true);
     let mut hook_files = None;
     let result = apply_pending(startup, || {
         let mut rejected = Ok(());
