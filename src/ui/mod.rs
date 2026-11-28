@@ -60,6 +60,7 @@ use rune::{AppSpec, Cx, El, Key, KeyEvent, TextEdit, Tx, Waker, col, row};
 use sidenote::core::{
     self, AskProgress, DayGroup, Meeting, Message, Runner, Saved, SearchHit, StateStore,
 };
+use sidenote::desktop::startup;
 use sidenote::response_time::{self, Action as TimedAction, Operation};
 use std::{
     cell::Cell,
@@ -156,6 +157,7 @@ pub enum Event {
     Update(sidenote::updates::Status),
     UpdateFinished(Result<sidenote::updates::Status, String>),
     ListenerFinished(Result<(), String>),
+    ListenerStartupStatus(sidenote::updates::ListenerStatus),
     ListenerProbed(
         Option<sidenote::updates::ListenerStatus>,
         Option<sidenote::listener::heartbeat::Gap>,
@@ -1725,6 +1727,7 @@ impl State {
             Event::Update(status) => self.update_status(status),
             Event::UpdateFinished(result) => self.update_finished(result),
             Event::ListenerFinished(result) => self.listener_finished(result),
+            Event::ListenerStartupStatus(status) => self.listener_startup_status(status),
             Event::ListenerProbed(status, gap) => self.listener_probed(status, gap),
             Event::Hex(msg) => self.hex_apply(msg),
             Event::Models(msg) => self.model_event(msg),
@@ -1919,6 +1922,7 @@ impl State {
                     self.check.apply_refresh(check);
                 }
                 self.last_updated = refresh::updated_at(self.last_updated, shared, content_changed);
+                startup::observe(startup::DATA_LOADED, Instant::now());
             }
             Event::Progress {
                 id,
@@ -2637,6 +2641,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .fill(p.bg)
         .children(beside)
         .children((!on_hex).then(|| page_actions(s, p)).flatten())
+        .children(updates::listener_wait_notice(s, p))
         .children(updates::recorder_gap_notice(s, p));
     if let Some(bar) = hex::error_bar(s, p) {
         main = main.child(bar);
@@ -4943,6 +4948,7 @@ pub fn run() {
         }
         if !first_frame && f.outcome() == rune::FrameOutcome::Drawn {
             first_frame = true;
+            startup::observe(startup::FIRST_PAINT, f.at());
             refresh::first_frame();
             refresh_handle.update(|s, _| {
                 if let Some(handle) = &s.scan_tx {

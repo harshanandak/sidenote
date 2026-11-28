@@ -1206,6 +1206,57 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn listener_check_status_keeps_navigation_available() {
+        let mut rt = new_meeting_runtime(1334.0, true);
+        rt.state.sidebar_open.set(true);
+        rt.set_full_keyboard_access(true);
+        settle(&mut rt);
+        for key in ["nav-home", "nav-meetings", "nav-search", "nav-new-menu"] {
+            assert!(el(&rt, key).focusable, "{key}");
+        }
+        assert!(rt.find("home-greeting").is_some());
+        assert_eq!(
+            el(&rt, "listener-startup-status").text.as_deref(),
+            Some("Checking the meeting listener…")
+        );
+        let palette = super::super::theme::palette(false);
+        assert_eq!(
+            hex::short_status(&rt.state, palette),
+            (palette.warn, "Recording off".into())
+        );
+
+        tap(&mut rt, "nav-new-menu");
+        let record = el(&rt, "new-meeting");
+        assert_eq!(
+            record.label.as_deref(),
+            Some("Record a meeting (Checking the meeting listener)")
+        );
+        assert!(!record.focusable);
+        tap(&mut rt, "new-meeting");
+        assert!(!rt.state.hex_record_busy());
+        assert!(!rt.state.on_live());
+        assert!(rt.find("listener-startup-status").is_some());
+
+        rt.update(|s, _| s.nav.new_menu = false);
+        settle(&mut rt);
+        tap(&mut rt, "nav-search");
+        assert!(rt.state.finder.is_some());
+        rt.update(|s, _| {
+            s.apply_event(super::super::Event::ListenerStartupStatus(
+                sidenote::updates::ListenerStatus {
+                    ready: true,
+                    ..Default::default()
+                },
+            ));
+        });
+        settle(&mut rt);
+        assert!(rt.state.finder.is_some(), "startup kept the open finder");
+        assert!(rt.find("home-greeting").is_some());
+        assert!(rt.find("listener-startup-status").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn blocked_record_meeting_row_shows_reason_in_sidebar_menu_narrow_listener() {
         let mut rt = open_new_menu(360.0, true);
         let elements = rt.elements();

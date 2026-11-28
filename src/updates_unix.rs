@@ -54,7 +54,7 @@ pub fn ensure_listener() -> Result<(), String> {
 pub fn start(_: impl Fn(Status) + Send + 'static) -> Option<std::sync::mpsc::Sender<CheckRequest>> {
     None
 }
-pub fn window_start(_: impl Fn(Phase)) -> Result<(), String> {
+pub fn window_start(_: impl Fn(Phase), _: impl Fn(ListenerStatus)) -> Result<(), String> {
     Err("Updates are unavailable on Linux.".into())
 }
 pub fn apply(_: bool, _: Vec<String>, _: impl FnMut(Phase)) -> Result<(), String> {
