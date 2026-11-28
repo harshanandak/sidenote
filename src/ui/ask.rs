@@ -1041,15 +1041,20 @@ pub fn overlay_with(
     overlay_at(s, k, p, layer, lead, above, None)
 }
 
+pub(super) struct ReadingPlacement {
+    pub center_offset: f32,
+    pub yield_thread: bool,
+}
+
 pub(super) fn reading_overlay(
     s: &State,
     k: &Kit,
     p: Palette,
     layer: &mut Vec<El>,
     lead: Option<El>,
-    center_offset: f32,
+    placement: ReadingPlacement,
 ) -> El {
-    overlay_at(s, k, p, layer, lead, None, Some(center_offset))
+    overlay_at(s, k, p, layer, lead, None, Some(placement))
 }
 
 fn overlay_at(
@@ -1059,7 +1064,7 @@ fn overlay_at(
     layer: &mut Vec<El>,
     lead: Option<El>,
     above: Option<El>,
-    reading_offset: Option<f32>,
+    reading: Option<ReadingPlacement>,
 ) -> El {
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
@@ -1103,9 +1108,9 @@ fn overlay_at(
     if let Some(mut panel) = thread(s, k, &id, p) {
         if s.selected.is_some() && !s.meeting_ui.tabs && !s.on_live() {
             let mut slot = col().key("ask-thread-slot").w_full();
-            if s.transcript_open
-                && (!s.thread_hidden || pending)
-                && super::meeting::reading::transcript_needs_thread_room(s)
+            if reading
+                .as_ref()
+                .is_some_and(|placement| placement.yield_thread)
             {
                 // Keep the scroll node mounted so closing the transcript restores its offset.
                 slot = slot.h(0.0);
@@ -1144,9 +1149,9 @@ fn overlay_at(
         .pr(if compact { 6.0 } else { 10.0 })
         .radius(PILL_HEIGHT / 2.0);
     let dock = col().key("ask-controls").w_full().gap(PROMPT_GAP);
-    let (dock, bottom_inset) = if let Some(offset) = reading_offset {
+    let (dock, bottom_inset) = if let Some(placement) = reading {
         // Center alignment divides the difference between the two side margins in half.
-        let bias = 2.0 * offset;
+        let bias = 2.0 * placement.center_offset;
         (
             dock.max_w(520.0)
                 .self_center()
