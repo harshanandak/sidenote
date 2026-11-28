@@ -656,3 +656,22 @@ fn status_cli_preserves_legacy_pipeline_priority() {
     assert_eq!(report.phase, Phase::Ready);
     assert_eq!(report.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
 }
+
+#[test]
+fn successful_hook_clears_its_generic_recovery_error() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let report = |status: &Status| serde_json::json!(status);
+    let error = "synthetic listener recovery failure";
+    let failed = hook(path, |_| Err(error.into()), report);
+    assert_eq!(failed.unwrap_err(), error);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(path.join("updates.json")).unwrap()).unwrap();
+
+    hook(path, |_| Ok(()), report).unwrap();
+    assert_eq!(status_cli(path, report), 0);
+    let status = read_status(path);
+    assert_eq!(status.phase, Phase::Idle);
+    assert!(status.error.is_none());
+    assert_eq!(saved["reconcile_error"], true);
+}

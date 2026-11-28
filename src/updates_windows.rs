@@ -427,14 +427,22 @@ fn save_status(status: &Status) -> io::Result<()> {
     if !installed() {
         return Ok(());
     }
-    save_status_at(&directory(), status, report)
+    save_status_at(&directory(), status, false, report)
 }
 fn save_status_at(
     directory: &Path,
     status: &Status,
+    reconcile_error: bool,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> io::Result<()> {
-    write_json(&directory.join("updates.json"), status)?;
+    let path = directory.join("updates.json");
+    if reconcile_error {
+        let mut saved = serde_json::to_value(status)?;
+        saved["reconcile_error"] = true.into();
+        write_json(&path, &saved)?;
+    } else {
+        write_json(&path, status)?;
+    }
     write_json(&directory.join("update-report.json"), &make_report(status))
 }
 fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
@@ -1515,7 +1523,7 @@ impl<'a> InstallGuard<'a> {
         status: &Status,
         make_report: impl FnOnce(&Status) -> serde_json::Value,
     ) -> io::Result<()> {
-        save_status_at(self.directory, status, make_report)
+        save_status_at(self.directory, status, false, make_report)
     }
 }
 
@@ -1672,8 +1680,7 @@ fn reconcile_and_save(
         },
         None => after_update_status(status, directory),
     };
-    let saved = guard
-        .save(&status, make_report)
+    let saved = save_status_at(directory, &status, error.is_some(), make_report)
         .map_err(|_| "Could not save installation status.".to_owned());
     result.and_then(|work| {
         if work.error().is_none() {
