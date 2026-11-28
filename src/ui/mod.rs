@@ -2459,8 +2459,9 @@ fn page_actions(s: &State, p: theme::Palette) -> Option<El> {
 const TITLEBAR_H: f32 = 48.0;
 
 /// The first row of the content column, with no bar over an open sidebar. Whenever no docked
-/// sidebar carries them, the row holds the toggle and search icons at the top left, where the
-/// docked sidebar keeps the same two in its own top row, and then spans the whole window. The page's actions (the logo on Hex, the recording pill,
+/// sidebar carries them, the row holds the compact mark (only while no full workspace row is
+/// visible) and the toggle and search icons at the top left, where the docked sidebar keeps
+/// the same two in its own top row, and then spans the whole window. The page's actions (the recording pill,
 /// New annotation) sit at the trailing side, clear of the Windows caption buttons
 /// (`State::chrome`). Empty parts of the row drag the window.
 fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
@@ -2471,11 +2472,13 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
         nav::actions(s, p, narrow)
     };
     let docked = s.sidebar_docked();
+    let show_compact = !docked && !s.sidebar_is_open();
     let tools = row()
         .gap(2.0)
         .items_center()
         .children((!docked).then(|| nav::toggle(s, p)))
-        .children((!docked).then(|| nav::search(p)));
+        .children((!docked).then(|| nav::search(p)))
+        .children(show_compact.then(nav::compact_mark));
     // A row with nothing in it takes only the height the window's own buttons need.
     let bare = docked && pill.is_none() && action.is_none() && !s.on_hex();
     let h = if bare { caption_h } else { TITLEBAR_H };
@@ -2492,7 +2495,6 @@ fn page_header(s: &State, p: theme::Palette, narrow: bool) -> El {
         .window_drag()
         .child(tools)
         .child(rune::el().grow(1.0))
-        .children(s.on_hex().then(|| nav::logo().key("nav-logo")))
         .children(pill)
         .children(action)
 }
