@@ -447,7 +447,7 @@
 
   "src/ui/memory/settled.rs": "574c9120e61e7c0779743ee449e7d57437b2a60c7aec6a8a6c5a5e44cfdb4a64",
 
-  "src/ui/mod.rs": "601cb291694632de716e1643217d9f0474d04f75efbe5991fbaa1d72e28a15f5",
+  "src/ui/mod.rs": "4c88da5a2b20c11f4bfabddcc43ccba7c1e87fd5a88fbef9a68561256475dfe4",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
@@ -457,19 +457,19 @@
 
   "src/ui/recording_state_tests.rs": "52ee96e88bd3909f81d2be2e5759eebfeafd5554f432ff2157694fbb6bdf93cf",
 
-  "src/ui/refresh.rs": "1f80518c7a033cb08a32171fec989a416cef9f57918fa85b1b9a55f993bb6854",
+  "src/ui/refresh.rs": "6155fe2948d3fbbcaf4447b0419afe182fe544adbc87d7a29ae57f73e8f6bd21",
 
   "src/ui/relay.rs": "661d261d0e621e417a27f04cb4c6d75c23d9bf00aa74432a3c4714e243a83658",
 
-  "src/ui/tasks_board.rs": "dca72526692a8be625cc11b229ea12aee8e00c20993dd942c799e5c99484765c",
+  "src/ui/tasks_board.rs": "e2910328bed68fe383de3d75d644953467da764c18b2d39a79896b39a3f708d8",
 
   "src/ui/theme.rs": "24cd11cce35bc26b730b949e1b424b57f48ec3e7cc6fd55f4c02595025279fb6",
 
-  "src/ui/updates.rs": "1fdd3ba48ac1de9b157db3fc87a6ffcb64cd26f136b5c3f81fcde47c150a93a4",
+  "src/ui/updates.rs": "3e5fd9e9286d40e9336b2293a56acbf3bc4a76cde780c2be151cd8dfd087ea87",
 
   "src/ui/window.rs": "b68643e109d76900d64691a8f413da636286366baec1097325fffae69cb9344d",
 
-  "src/updates_windows.rs": "c9be5c735f43637dca5e0d160cf570a3794bcda1b915e84b07f679801fbbd626",
+  "src/updates_windows.rs": "33be25b5a9eae93b0134f0fbe8e53c7f9d449ca9fc7bce94bb57fccb7d4e644d",
 
   "src/updates_windows/install_record.rs": "1c5ad14ef7d329f177938904d663d9af57f48ce00f708211dc4e00c8aa060538",
 

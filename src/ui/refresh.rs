@@ -203,7 +203,10 @@ fn retain_catalog_in(
             && failed
                 .iter()
                 .any(|p| old.folder.starts_with(p) || p.starts_with(&old.folder))
-            && !incoming.iter().any(|m| m.folder == old.folder)
+            // One copy per meeting id, as the scan keeps: a readable peer copy replaces a failed one.
+            && !incoming
+                .iter()
+                .any(|m| m.folder == old.folder || m.id == old.id)
         {
             incoming.push(old.clone());
         }
@@ -574,5 +577,29 @@ mod recycle_tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn failed_peer_copy_is_not_retained_beside_a_readable_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = temp.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let copy = |device: &str| {
+            let folder = temp.path().join("peers").join(device).join("100-1");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("manifest.json"), br#"{"status":"complete"}"#).unwrap();
+            Meeting::load_pending(&folder).unwrap()
+        };
+        let (failed, readable) = (copy("a"), copy("b"));
+        assert_eq!(failed.id, readable.id);
+        let mut incoming = vec![readable.clone()];
+        assert!(retain_catalog_in(
+            &state,
+            std::slice::from_ref(&failed),
+            &mut incoming,
+            std::slice::from_ref(&failed.folder)
+        ));
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].folder, readable.folder);
     }
 }

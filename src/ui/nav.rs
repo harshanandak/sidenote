@@ -1329,6 +1329,20 @@ mod tests {
     }
 
     #[test]
+    fn shell_divider_uses_the_page_line_outside_settings() {
+        let mut rt = new_meeting_runtime(1334.0, false);
+        rt.set_system_dark(false);
+        settle(&mut rt);
+        let p = crate::ui::theme::palette(false);
+        let divider = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("sidebar-divider"))
+            .expect("sidebar divider");
+        assert_eq!(divider.fill, p.line);
+    }
+
+    #[test]
     fn sidebar_top_row_geometry() {
         // The open sidebar is 204 wide, nav rows are 30 high, and the first top row is 48 high
         // with the collapse and search buttons inside the sidebar, which starts at the top.

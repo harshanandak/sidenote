@@ -288,6 +288,8 @@ pub struct State {
     pub search: TextEdit,
     pub groups: Vec<ListGroup>,
     pub cursor: usize,
+    /// The meetings-list row under the pointer, keyed by meeting id.
+    hovered_meeting: Option<String>,
     pub store: StateStore,
     pub saved: Saved,
     pub notice: Option<String>,
@@ -556,6 +558,7 @@ impl State {
             search: TextEdit::new(""),
             groups: Vec::new(),
             cursor: 0,
+            hovered_meeting: None,
             store,
             saved: Saved::default(),
             notice: settle_recovery_error.map(|_| {
@@ -2733,7 +2736,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                 .key("sidebar-divider")
                 .w(1.0)
                 .h_full()
-                .fill(if on_hex { p.line } else { sidebar.line })
+                .fill(p.line)
         }))
         .child(main);
     if window_narrow && open && !on_hex {
