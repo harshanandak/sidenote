@@ -4,7 +4,11 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, io, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io,
+    path::Path,
+};
 
 pub(super) const FILE: &str = "summary-edits.json";
 pub(super) const STALE: &str = "This note line changed. Your changes are kept.";
@@ -139,6 +143,28 @@ pub struct Line {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryVersion {
+    AiOriginal,
+    UserEdited,
+}
+
+#[derive(Clone, Debug)]
+pub struct Effective {
+    pub value: Value,
+    pub version: SummaryVersion,
+    pub detached: Vec<Edit>,
+    pub warning: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Save {
+    pub field: Field,
+    pub expected: Line,
+    pub text: String,
+}
+
 pub struct Store<'a> {
     root: &'a Path,
     folder: &'a Path,
@@ -161,12 +187,20 @@ impl<'a> Store<'a> {
         )?)
     }
 
+    fn edits_report(&self) -> io::Result<(Vec<Edit>, bool)> {
+        let (records, warning) = sync_state::load_report::<Records>(self.root, FILE)?;
+        Ok((
+            records
+                .edits
+                .into_values()
+                .filter(|edit| edit.meeting == self.meeting)
+                .collect(),
+            warning,
+        ))
+    }
+
     pub fn edits(&self) -> io::Result<Vec<Edit>> {
-        Ok(sync_state::load::<Records>(self.root, FILE)?
-            .edits
-            .into_values()
-            .filter(|edit| edit.meeting == self.meeting)
-            .collect())
+        self.edits_report().map(|(edits, _)| edits)
     }
 
     pub(super) fn corrections(&self, summary: &Value) -> io::Result<Vec<Edit>> {
@@ -179,9 +213,10 @@ impl<'a> Store<'a> {
             .collect())
     }
 
-    pub fn overlay(&self, summary: &mut Value) -> io::Result<Vec<Edit>> {
+    fn overlay_edits(summary: &mut Value, edits: Vec<Edit>) -> (bool, Vec<Edit>) {
+        let mut applied = false;
         let mut aside = Vec::new();
-        for edit in self.edits()? {
+        for edit in edits {
             if edit.field.read(summary).as_ref() != Some(&edit.base) {
                 aside.push(edit);
             } else if edit.text != edit.base
@@ -192,9 +227,31 @@ impl<'a> Store<'a> {
                 } else {
                     json!(edit.text)
                 };
+                applied = true;
             }
         }
-        Ok(aside)
+        (applied, aside)
+    }
+
+    pub fn effective(&self, generated: &Value) -> io::Result<Effective> {
+        let (edits, warning) = self.edits_report()?;
+        let mut value = generated.clone();
+        let (applied, detached) = Self::overlay_edits(&mut value, edits);
+        Ok(Effective {
+            value,
+            version: if applied {
+                SummaryVersion::UserEdited
+            } else {
+                SummaryVersion::AiOriginal
+            },
+            detached,
+            warning,
+        })
+    }
+
+    pub fn overlay(&self, summary: &mut Value) -> io::Result<Vec<Edit>> {
+        let (edits, _) = self.edits_report()?;
+        Ok(Self::overlay_edits(summary, edits).1)
     }
 
     pub fn current(&self, field: Field) -> io::Result<Line> {
@@ -218,6 +275,35 @@ impl<'a> Store<'a> {
         self.record(field, expected, |_| Ok(SnapshotEdit::by_you(text)))
     }
 
+    pub fn save_many(&self, saves: &[Save]) -> io::Result<()> {
+        self.update(|records, summary| {
+            let mut keys = BTreeSet::new();
+            for save in saves {
+                if !keys.insert(save.field.id()) {
+                    return Err(stale());
+                }
+                let key = Self::key(self.meeting, save.field);
+                if Self::line(summary, save.field, records.edits.get(&key))? != save.expected {
+                    return Err(stale());
+                }
+            }
+            for save in saves {
+                if save.text == save.expected.text {
+                    continue;
+                }
+                Self::write(
+                    records,
+                    self.meeting,
+                    save.field,
+                    &save.expected,
+                    SnapshotEdit::by_you(&save.text),
+                    summary,
+                );
+            }
+            Ok(())
+        })
+    }
+
     pub fn restore(&self, field: Field, expected: &Line, version: &str) -> io::Result<()> {
         self.record(field, expected, |edit| {
             let version = edit
@@ -237,6 +323,56 @@ impl<'a> Store<'a> {
         expected: &Line,
         snapshot: impl Fn(Option<&Edit>) -> io::Result<SnapshotEdit>,
     ) -> io::Result<()> {
+        self.update(|records, summary| {
+            let key = Self::key(self.meeting, field);
+            let old = records.edits.get(&key);
+            if &Self::line(summary, field, old)? != expected {
+                return Err(stale());
+            }
+            let next = snapshot(old)?;
+            if next.text == expected.text {
+                return Ok(());
+            }
+            Self::write(records, self.meeting, field, expected, next, summary);
+            Ok(())
+        })
+    }
+
+    fn key(meeting: &str, field: Field) -> String {
+        format!("{meeting}/{}", field.id())
+    }
+
+    fn write(
+        records: &mut Records,
+        meeting: &str,
+        field: Field,
+        expected: &Line,
+        next: SnapshotEdit,
+        summary: &Value,
+    ) {
+        let edit = records
+            .edits
+            .entry(Self::key(meeting, field))
+            .or_insert_with(|| Edit {
+                meeting: meeting.into(),
+                field,
+                base: expected.base.clone(),
+                text: expected.base.clone(),
+                history: vec![SnapshotEdit::original(&expected.base, summary)],
+            });
+        if edit.base != expected.base {
+            edit.history
+                .push(SnapshotEdit::original(&expected.base, summary));
+            edit.base.clone_from(&expected.base);
+        }
+        edit.text.clone_from(&next.text);
+        edit.history.push(next);
+    }
+
+    fn update(
+        &self,
+        mut change: impl FnMut(&mut Records, &Value) -> io::Result<()>,
+    ) -> io::Result<()> {
         if !settle::valid_id(self.meeting)
             || self.folder.file_name().and_then(|name| name.to_str()) != Some(self.meeting)
         {
@@ -246,38 +382,17 @@ impl<'a> Store<'a> {
             return Err(stale());
         };
         let _lock = settle::summary_lock(self.root)?;
-        let key = format!("{}/{}", self.meeting, field.id());
+        let revision = std::cell::RefCell::new(String::new());
         sync_state::update_merged_validated(
             self.root,
             FILE,
             |records: &mut Records| {
-                let old = records.edits.get(&key);
                 let summary = self.generated()?;
-                if &Self::line(&summary, field, old)? != expected {
-                    return Err(stale());
-                }
-                let next = snapshot(old)?;
-                if next.text == expected.text {
-                    return Ok(());
-                }
-                let edit = records.edits.entry(key.clone()).or_insert_with(|| Edit {
-                    meeting: self.meeting.into(),
-                    field,
-                    base: expected.base.clone(),
-                    text: expected.base.clone(),
-                    history: vec![SnapshotEdit::original(&expected.base, &summary)],
-                });
-                if edit.base != expected.base {
-                    edit.history
-                        .push(SnapshotEdit::original(&expected.base, &summary));
-                    edit.base.clone_from(&expected.base);
-                }
-                edit.text.clone_from(&next.text);
-                edit.history.push(next);
-                Ok(())
+                *revision.borrow_mut() = snapshot_id(&summary);
+                change(records, &summary)
             },
             || {
-                if field.read(&self.generated()?).as_ref() != Some(&expected.base) {
+                if snapshot_id(&self.generated()?) != revision.borrow().as_str() {
                     return Err(stale());
                 }
                 Ok(())
@@ -310,6 +425,20 @@ mod tests {
         for entry in std::fs::read_dir(from.join(&path)).unwrap() {
             let entry = entry.unwrap();
             std::fs::copy(entry.path(), to.join(&path).join(entry.file_name())).unwrap();
+        }
+    }
+
+    fn write_summary(folder: &Path, value: Value) -> Vec<u8> {
+        let bytes = value.to_string().into_bytes();
+        std::fs::write(folder.join("english-summary.json"), &bytes).unwrap();
+        bytes
+    }
+
+    fn draft(field: Field, expected: Line, text: &str) -> Save {
+        Save {
+            field,
+            expected,
+            text: text.into(),
         }
     }
 
@@ -480,5 +609,137 @@ mod tests {
         let kept = store.overlay(&mut generated).unwrap();
         assert_eq!(kept.len(), 1);
         assert_eq!(generated["title"], "Regenerated title");
+    }
+
+    #[test]
+    fn effective_view_loads_missing_and_legacy_stores() {
+        let (_dir, root, folder) = fixture();
+        let generated = json!({
+            "title": "Original title",
+            "context": [],
+            "topics": [],
+            "custom": {"keep": true}
+        });
+        write_summary(&folder, generated.clone());
+        let store = Store::new(&root, &folder, "100-200");
+        let missing = store.effective(&generated).unwrap();
+        assert_eq!(missing.value, generated);
+        assert_eq!(missing.version, SummaryVersion::AiOriginal);
+        assert!(missing.detached.is_empty());
+        assert!(!missing.warning);
+
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(FILE),
+            br#"{"edits":{"100-200/title":{"meeting":"100-200","field":"title","base":"Original title","text":"Legacy title","history":[{"text":"Legacy title","by":"you","request":null,"at":"2026-11-22T00:00:00Z"}]}}}"#,
+        )
+        .unwrap();
+        let legacy = store.effective(&generated).unwrap();
+        assert_eq!(legacy.value["title"], "Legacy title");
+        assert_eq!(legacy.value["custom"], json!({"keep": true}));
+        assert_eq!(legacy.version, SummaryVersion::UserEdited);
+        assert!(!legacy.warning);
+    }
+
+    #[test]
+    fn context_edit_joins_generated_parts() {
+        let (_dir, root, folder) = fixture();
+        let generated = json!({"context": ["First part.", "Second part."], "topics": []});
+        write_summary(&folder, generated.clone());
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Context).unwrap();
+        assert_eq!(before.base, "First part. Second part.");
+        store
+            .save_many(&[draft(Field::Context, before, "Joined context")])
+            .unwrap();
+        let effective = store.effective(&generated).unwrap();
+        assert_eq!(effective.value["context"], json!(["Joined context"]));
+        assert_eq!(effective.version, SummaryVersion::UserEdited);
+    }
+
+    #[test]
+    fn stale_batch_save_changes_nothing_and_preserves_generated_bytes() {
+        let (_dir, root, folder) = fixture();
+        let original = json!({"title": "Original title", "context": ["Original context"]});
+        write_summary(&folder, original);
+        let store = Store::new(&root, &folder, "100-200");
+        let title = store.current(Field::Title).unwrap();
+        let context = store.current(Field::Context).unwrap();
+        let changed = json!({"title": "Original title", "context": ["New context"]});
+        let path = folder.join("english-summary.json");
+        let changed_bytes = write_summary(&folder, changed);
+        let saves = [
+            draft(Field::Title, title, "Batch title"),
+            draft(Field::Context, context, "Batch context"),
+        ];
+        assert!(store.save_many(&saves).is_err());
+        assert!(store.edits().unwrap().is_empty());
+        assert_eq!(store.current(Field::Title).unwrap().text, "Original title");
+        assert_eq!(std::fs::read(&path).unwrap(), changed_bytes);
+    }
+
+    #[test]
+    fn equal_to_base_edit_is_ai_original() {
+        let (_dir, root, folder) = fixture();
+        let generated = json!({"title": "Original title"});
+        write_summary(&folder, generated.clone());
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        store.save(Field::Title, &before, "My title").unwrap();
+        let edited = store.current(Field::Title).unwrap();
+        store.save(Field::Title, &edited, "Original title").unwrap();
+        let effective = store.effective(&generated).unwrap();
+        assert_eq!(effective.version, SummaryVersion::AiOriginal);
+        assert_eq!(effective.value["title"], "Original title");
+    }
+
+    #[test]
+    fn detached_edit_is_reported_without_marking_summary_edited() {
+        let (_dir, root, folder) = fixture();
+        write_summary(&folder, json!({"title": "Original title"}));
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        store.save(Field::Title, &before, "My title").unwrap();
+        let regenerated = json!({"title": "Regenerated title"});
+        write_summary(&folder, regenerated.clone());
+        let effective = store.effective(&regenerated).unwrap();
+        assert_eq!(effective.detached.len(), 1);
+        assert_eq!(effective.detached[0].text, "My title");
+        assert_eq!(effective.value["title"], "Regenerated title");
+        assert_eq!(effective.version, SummaryVersion::AiOriginal);
+        assert!(!effective.warning);
+    }
+
+    #[test]
+    fn save_many_rejects_duplicate_fields() {
+        let (_dir, root, folder) = fixture();
+        write_summary(&folder, json!({"title": "Original title"}));
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        let save = draft(Field::Title, before, "Batch title");
+        assert!(store.save_many(&[save.clone(), save]).is_err());
+        assert!(store.edits().unwrap().is_empty());
+    }
+
+    #[test]
+    fn corrupt_journal_is_reported_as_a_warning() {
+        let (_dir, root, folder) = fixture();
+        let generated = json!({"title": "Original title"});
+        write_summary(&folder, generated.clone());
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        store.save(Field::Title, &before, "My title").unwrap();
+        let device = super::super::DeviceSettings::load_in(&root).unwrap().id;
+        let key = blake3::hash(FILE.as_bytes()).to_string();
+        let journal_dir = root.join("state").join(device).join(key);
+        let journal = std::fs::read_dir(&journal_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        std::fs::write(journal, b"corrupt").unwrap();
+        let effective = store.effective(&generated).unwrap();
+        assert!(effective.warning);
     }
 }
