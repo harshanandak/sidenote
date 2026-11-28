@@ -3173,6 +3173,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
     let gutter = if narrow { 16.0 } else { 40.0 };
     let pane_width = PAGE_COLUMN + 2.0 * gutter;
     let drawer = drawer_open(s);
+    let header_layer = layer.len();
     let hex_unavailable = page == Page::Hex && !s.hex.running();
     let page_note = s.hex.page_note().map(|reason| {
         if reason == super::connection::UNKNOWN {
@@ -3242,6 +3243,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
         layer.push(
             rune::el()
                 .key("settings-scrim")
+                .role("none")
                 .pin(Some(0.0), top, Some(0.0), Some(0.0))
                 .fill(p.scrim)
                 .on_press(close_drawer),
@@ -3257,8 +3259,10 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
         );
     }
     if narrow {
-        // Rune makes nodes behind a modal inert. Keep the same header above it in both states.
-        layer.push(crate::ui::page_header(s, p, true).absolute(0.0, 0.0));
+        // Rune makes nodes behind a modal inert. Keep the header above the drawer when open,
+        // and below the page's own popovers otherwise.
+        let index = if drawer { layer.len() } else { header_layer };
+        layer.insert(index, crate::ui::page_header(s, p, true).absolute(0.0, 0.0));
     }
     col()
         .key("hex-pane")
