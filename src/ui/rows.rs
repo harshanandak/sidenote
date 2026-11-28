@@ -20,6 +20,7 @@ pub(super) enum Cursor {
 #[derive(Clone, Copy)]
 pub(super) enum Density {
     Rail,
+    MeetingRail,
     List,
 }
 impl Density {
@@ -97,7 +98,7 @@ fn glyph(icon: &'static Icon, ink: Color) -> El {
     icons::draw(icon, icons::ROW, ink).trace_name(icon.name)
 }
 
-fn tick(task: &Task<'_>, mark: El, narrow: bool, p: Palette) -> El {
+fn tick(task: &Task<'_>, mark: El, large_target: bool, p: Palette) -> El {
     let slot = el().size(16.0, 19.0);
     let Some(toggle) = task.toggle.clone() else {
         return slot.child(mark.mt(1.5));
@@ -112,7 +113,7 @@ fn tick(task: &Task<'_>, mark: El, narrow: bool, p: Palette) -> El {
     };
     let done = matches!(task.status, Status::Done);
     let verb = if done { "open" } else { "done" };
-    let side = if narrow { 32.0 } else { 24.0 };
+    let side = if large_target { 32.0 } else { 24.0 };
     let target = el().size(side, side).items_center().justify_center();
     let target = target.role("checkbox").checked(done).focusable(false);
     let target = target.label(format!("Mark {} {verb}", task.row.title));
@@ -135,12 +136,13 @@ fn meta<'a>(p: Palette, parts: impl IntoIterator<Item = Meta<'a>>) -> El {
     line.wrap_anywhere().max_lines(2)
 }
 
-fn date_style(p: Palette, done: bool, urgency: Urgency) -> (Color, f32) {
+fn date_style(p: Palette, done: bool, urgency: Urgency, meeting_rail: bool) -> (Color, f32) {
     match (done, urgency) {
-        (true, _) | (_, Urgency::Calm) => (p.faint, 400.0),
+        (true, _) => (p.faint, 400.0),
+        (_, Urgency::Calm) if !meeting_rail => (p.faint, 400.0),
         (_, Urgency::Late) => (p.warn, 600.0),
-        (_, Urgency::Today) => (p.ink, 600.0),
-        (_, Urgency::Soon) => (p.soft, 400.0),
+        (_, Urgency::Today) => (if meeting_rail { p.soft } else { p.ink }, 600.0),
+        (_, Urgency::Calm | Urgency::Soon) => (p.soft, 400.0),
     }
 }
 
@@ -187,7 +189,14 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     if !reduced {
         icon = icon.transition(Transition::blur_replace().springs(pair::SNAP));
     }
-    let mut shell = shell(&t.row, wide, p).child(tick(&t, icon, narrow, p));
+    let meeting_rail = matches!(density, Density::MeetingRail);
+    let shell = shell(&t.row, wide, p);
+    let shell = if meeting_rail {
+        shell.px(0.0).py(0.0).gap(8.0)
+    } else {
+        shell
+    };
+    let mut shell = shell.child(tick(&t, icon, narrow || meeting_rail, p));
     if let Some(toggle) = t.toggle {
         shell = shell.on_key(move |s: &mut State, event, _| {
             if matches!(&event.key, rune::Key::Text(key) if key == " ") {
@@ -198,18 +207,30 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
         });
     }
     let color = if done { p.faint } else { p.ink };
-    let role = if done { roles::SMALL } else { roles::NAME };
+    let role = match (meeting_rail, done) {
+        (true, _) => roles::Role {
+            lh: 18.0,
+            ..roles::SMALL
+        },
+        (_, true) => roles::SMALL,
+        _ => roles::NAME,
+    };
     let mut name = title(t.row.title, role, color, if narrow { 3 } else { 2 });
     if done {
         name = name.strike(0, t.row.title.len(), None);
     }
     let fade = Spring::new(0.18, 0.0);
     let spring = if reduced { fade } else { SETTLE };
-    let body = copy().child(name.motion(spring));
-    let owner_ink = t.owner.filter(|_| !done).map_or(p.faint, |_| p.soft);
+    let body = copy()
+        .gap(if meeting_rail { 0.0 } else { 2.0 })
+        .child(name.motion(spring));
+    let owner_ink = t
+        .owner
+        .filter(|_| !done && !meeting_rail)
+        .map_or(p.faint, |_| p.soft);
     let owner = (t.owner.unwrap_or("No owner"), owner_ink, 400.0);
     let dates = t.due.into_iter().flat_map(|(label, urgency, guessed)| {
-        let (ink, weight) = date_style(p, done, urgency);
+        let (ink, weight) = date_style(p, done, urgency, meeting_rail);
         let hint = guessed.then_some(("guessed", p.faint, 400.0));
         [(label, ink, weight)].into_iter().chain(hint)
     });
@@ -217,6 +238,11 @@ pub(super) fn task_row(t: Task<'_>, density: Density, width: f32, reduced: bool,
     let save = save_line(t.row.save, p);
     if !wide {
         let details = meta(p, [owner].into_iter().chain(dates).chain(status));
+        let details = if meeting_rail {
+            details.font(roles::MEETING_META.style())
+        } else {
+            details
+        };
         return shell.child(body.child(details).children(save));
     }
     let grey = if done { p.faint } else { p.soft };
@@ -419,5 +445,14 @@ fn row_states_draw_glyphs_without_pills_and_borders() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn meeting_due_dates_use_soft_ink_for_today_and_calm_dates() {
+    for dark in [false, true] {
+        let p = super::theme::palette(dark);
+        assert_eq!(date_style(p, false, Urgency::Today, true), (p.soft, 600.0));
+        assert_eq!(date_style(p, false, Urgency::Calm, true), (p.soft, 400.0));
     }
 }

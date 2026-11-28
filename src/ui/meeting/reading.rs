@@ -15,6 +15,9 @@ const POINT_GAP: f32 = 9.0;
 #[derive(Default)]
 pub(crate) struct RailVisit {
     done_open: bool,
+    questions_closed: bool,
+    tasks_closed: bool,
+    memory_open: bool,
     kept: BTreeSet<usize>,
 }
 
@@ -680,20 +683,34 @@ fn narrative(
     .children(crate::ui::notes_status::provenance(m, p))
 }
 
-/// The label over a rail card: the name at 600 in soft, the count at 400 in faint, and any
-/// urgency note at the row's end.
-fn rail_label(name: String, count: Option<usize>, note: Option<El>, p: Palette) -> El {
+fn rail_card(p: Palette) -> El {
+    cards::panel(p).px(14.0).py(12.0).gap(8.0)
+}
+
+fn rail_label(name: &str, count: Option<usize>, note: Option<El>, open: bool, p: Palette) -> El {
+    let icon = if open {
+        &*icons::CHEVRON_DOWN
+    } else {
+        &*icons::CHEVRON_RIGHT
+    };
+    let title = roles::Role {
+        lh: 18.0,
+        ..roles::NAME
+    };
     row()
         .w_full()
         .items_center()
         .gap(6.0)
-        .h(22.0)
-        .px(8.0)
-        .mb(4.0)
-        .child(roles::FACT.bold().wrap(name, p.soft))
-        .children(count.map(|n| roles::COUNT.wrap(n.to_string(), p.faint)))
+        .child(icons::draw(icon, 12.0, p.faint).a11y_hidden())
+        .child(title.wrap(name, p.ink))
+        .children(count.map(|n| META.line(n.to_string(), p.faint)))
         .child(el().grow(1.0))
         .children(note)
+}
+
+fn rail_disclosure(label: El, name: &str, open: bool, p: Palette, toggle: fn(&mut State)) -> El {
+    widgets::menu_trigger(pressable(label).label(name), open, p, toggle)
+        .focus_ring(2.0, 1.0, p.accent)
 }
 
 /// The small label over one side of the tasks ("Ours 4", "They will 2").
@@ -763,19 +780,14 @@ fn rail_task(s: &State, t: &TaskItem, width: f32, p: Palette) -> El {
         toggle: Some(toggle),
     };
     let id = t.meeting_id.clone();
-    rows::task_row(task, rows::Density::Rail, width, false, p)
+    rows::task_row(task, rows::Density::MeetingRail, width, false, p)
         .key(format!("meeting-task-{index}"))
         .on_press(move |s: &mut State| open_rail_task(s, &id, index))
 }
 
-fn rail_list(s: &State, mut list: El, tasks: &[&TaskItem], width: f32, p: Palette) -> El {
-    for (i, t) in tasks.iter().enumerate() {
-        if i > 0 {
-            list = list.child(rows::Density::Rail.separator(width, p));
-        }
-        list = list.child(rail_task(s, t, width, p));
-    }
-    list
+fn rail_list(s: &State, list: El, tasks: &[&TaskItem], width: f32, p: Palette) -> El {
+    list.gap(8.0)
+        .children(tasks.iter().map(|task| rail_task(s, task, width, p)))
 }
 
 fn rail(s: &State, m: &Meeting, p: Palette) -> El {
@@ -787,10 +799,11 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         .iter()
         .filter(|t| t.meeting_id == m.id && !t.manual)
         .partition(|t| t.done && !visit.kept.contains(&t.index));
-    let mut questions_card = cards::panel(p).padding(4.0).key("meeting-questions-card");
-    let mut tasks_card = cards::panel(p).padding(4.0).key("meeting-tasks-card");
-    let mut top = 0.0;
-    let mut task_notice = notes_status::tasks_notice(s, m, p).map(|n| n.px(8.0).mb(4.0));
+    let tasks_open = !visit.tasks_closed;
+    let questions_open = !visit.questions_closed;
+    let mut tasks_card = rail_card(p).key("meeting-tasks-card");
+    let mut task_body = col().w_full().gap(8.0);
+    let task_notice = notes_status::tasks_notice(s, m, p);
     let groups: Vec<_> = [(false, "Ours"), (true, "They will")]
         .into_iter()
         .map(|(external, name)| {
@@ -820,23 +833,24 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         let total = items.iter().filter(|t| !t.done).count();
         let late = items.iter().filter(|t| t.is_overdue(s.tasks.today)).count();
         let note = (late > 0).then(|| {
-            roles::META
-                .bold()
+            META.bold()
                 .line(format!("{late} late"), p.warn)
                 .key("meeting-late-count")
         });
-        tasks_card = tasks_card
-            .child(
-                rail_label("Tasks".into(), has_tasks.then_some(total), note, p)
-                    .key("meeting-task-count"),
-            )
-            .children(task_notice.take());
+        let label = rail_label("Tasks", has_tasks.then_some(total), note, tasks_open, p);
+        tasks_card = tasks_card.child(
+            rail_disclosure(label, "Tasks", tasks_open, p, |s| {
+                s.meeting_ui.rail.tasks_closed ^= true
+            })
+            .key("meeting-task-count"),
+        );
+        task_body = task_body.children(task_notice);
     }
     let mut keys = Vec::new();
     for (external, name, group) in groups {
         if sides {
             let count = group.iter().filter(|t| !t.done).count();
-            tasks_card = tasks_card.child(rail_side(name, count, p).mt(top).key(if external {
+            task_body = task_body.child(rail_side(name, count, p).key(if external {
                 "meeting-external-task-count"
             } else {
                 "meeting-ours-task-count"
@@ -852,15 +866,14 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
                 .iter()
                 .map(|t| (format!("meeting-task-{}", t.index), Some(t.index))),
         );
-        tasks_card = tasks_card.child(rail_list(s, list, &group, width, p));
-        top = roles::SECTION_TOP;
+        task_body = task_body.child(rail_list(s, list, &group, width, p));
     }
     if !folded.is_empty() {
         let toggle = Rc::new(|s: &mut State| s.meeting_ui.rail.done_open ^= true);
         let key = "meeting-done";
         keys.push((key.into(), None));
-        tasks_card =
-            tasks_card.child(rows::done_line(folded.len(), visit.done_open, toggle, p).key(key));
+        task_body =
+            task_body.child(rows::done_line(folded.len(), visit.done_open, toggle, p).key(key));
         if visit.done_open {
             keys.extend(
                 folded
@@ -868,48 +881,91 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
                     .map(|t| (format!("meeting-task-{}", t.index), Some(t.index))),
             );
             let list = col().w_full().key("meeting-done-tasks");
-            tasks_card = tasks_card.child(rail_list(s, list, &folded, width, p));
+            task_body = task_body.child(rail_list(s, list, &folded, width, p));
         }
     }
-    let show_questions = !m.summary.to_settle.is_empty();
-    if show_questions {
-        questions_card = questions_card.child(rail_label(
-            "Open questions".into(),
+    let questions_card = (!m.summary.to_settle.is_empty()).then(|| {
+        let label = rail_label(
+            "Open questions",
             Some(m.summary.to_settle.len()),
             None,
+            questions_open,
             p,
-        ));
-        let mut list = col().w_full().key("meeting-questions");
-        for (i, q) in m.summary.to_settle.iter().enumerate() {
-            if i > 0 {
-                list = list.child(rows::Density::Rail.separator(width, p));
-            }
-            let details = q.waits_on.as_ref().map(|name| format!("Waiting on {name}"));
-            let question = rows::Row {
-                title: &q.question,
-                ..rows::Row::default()
-            };
-            let item =
-                rows::question_row(question, details.as_deref().unwrap_or(""), false, width, p)
-                    .border_sides([0.0, 0.0, 0.0, 2.0], p.line)
-                    .border_layout();
-            list = list.child(item.key(format!("meeting-question-{i}")));
-        }
-        questions_card = questions_card.child(list);
-    }
-    let mut rail = col().key("meeting-actions");
-    if show_questions || show_tasks {
-        rail = rail.gap(10.0).child(
-            roles::META
-                .line("Sorted by what needs you", p.faint)
-                .key("meeting-rail-caption"),
         );
-        if show_questions {
-            rail = rail.child(questions_card);
-        }
-        if show_tasks {
-            rail = rail.child(tasks_card);
-        }
+        let list = col().w_full().gap(8.0).key("meeting-questions").children(
+            m.summary.to_settle.iter().enumerate().map(|(i, q)| {
+                let details = q.waits_on.as_ref().map_or_else(
+                    || "Not answered yet".into(),
+                    |name| format!("Waiting on {name}"),
+                );
+                let copy = roles::Role {
+                    lh: 18.0,
+                    ..roles::SMALL
+                };
+                col()
+                    .w_full()
+                    .gap(2.0)
+                    .pl(10.0)
+                    .py(2.0)
+                    .border_sides([0.0, 0.0, 0.0, 2.0], p.line)
+                    .border_layout()
+                    .key(format!("meeting-question-{i}"))
+                    .child(
+                        copy.wrap(&q.question, p.ink)
+                            .wrap_anywhere()
+                            .key("question-text"),
+                    )
+                    .child(META.wrap(details, p.faint).wrap_anywhere())
+            }),
+        );
+        rail_card(p)
+            .key("meeting-questions-card")
+            .child(
+                rail_disclosure(label, "Open questions", questions_open, p, |s| {
+                    s.meeting_ui.rail.questions_closed ^= true
+                })
+                .key("meeting-questions-toggle"),
+            )
+            .children(questions_open.then_some(list))
+    });
+    use crate::ui::memory::settled;
+    let memory = settled::meeting_count(s, m);
+    let memory_card = (memory > 0).then(|| {
+        let label = rail_label("Memory", Some(memory), None, visit.memory_open, p);
+        rail_card(p)
+            .key("meeting-memory-card")
+            .child(
+                rail_disclosure(label, "Memory", visit.memory_open, p, |s| {
+                    s.meeting_ui.rail.memory_open ^= true
+                })
+                .key("meeting-memory-toggle"),
+            )
+            .children(
+                visit
+                    .memory_open
+                    .then(|| settled::meeting_link(m, memory, p)),
+            )
+    });
+    let mut rail = col().key("meeting-actions");
+    if questions_card.is_some() || show_tasks || memory_card.is_some() {
+        rail = rail
+            .gap(8.0)
+            .child(
+                META.line("Sorted by what needs you", p.faint)
+                    .key("meeting-rail-caption"),
+            )
+            .child(
+                col()
+                    .gap(10.0)
+                    .children(questions_card)
+                    .children(
+                        show_tasks.then(|| tasks_card.children(tasks_open.then_some(task_body))),
+                    )
+                    .children(memory_card),
+            );
+    }
+    if !tasks_open {
+        keys.clear();
     }
     let id = m.id.clone();
     rail.on_key(move |s: &mut State, e, tx| {
@@ -943,7 +999,6 @@ fn rail(s: &State, m: &Meeting, p: Palette) -> El {
         }
         true
     })
-    .child(crate::ui::memory::settled::meeting_footer(s, m, p).mt(20.0))
 }
 
 pub(super) const TIME_CONTROLS_MIN_HEIGHT: f32 = 256.0;

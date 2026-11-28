@@ -952,7 +952,7 @@ fn meeting_tasks_cards_keep_every_fact() {
     let late = element(&rt, "meeting-late-count");
     assert_eq!(late.text.as_deref(), Some("1 late"));
     assert_eq!(late.text_color, Some(p.warn));
-    // Each row: 8 all round, with a 24 px checkbox target around its 16 px mark.
+    // The 32 pt hit target extends 8 pt outside the visible 16 pt checkbox.
     let row = |i: usize| element(&rt, &format!("meeting-task-{i}")).rect;
     for i in 0..3 {
         let tick = rail_checkbox(&rt, i).rect;
@@ -963,15 +963,14 @@ fn meeting_tasks_cards_keep_every_fact() {
             .find(|e| e.path.starts_with(&path) && e.key.as_deref() == Some("title"))
             .unwrap()
             .rect;
-        assert_eq!((tick[2], tick[3]), (24.0, 24.0), "check target {i}");
-        assert_eq!(tick[0] - row(i)[0], 4.0, "tick {i}");
+        assert_eq!((tick[2], tick[3]), (32.0, 32.0), "check target {i}");
+        assert_eq!(tick[0] - row(i)[0], -8.0, "tick {i}");
         assert_eq!(
             (title[0] - row(i)[0], title[1] - row(i)[1]),
-            (34.0, 8.0),
+            (24.0, 0.0),
             "title {i}"
         );
-        // S4 geometry/card change: rows were 316 in a 300 rail with 8 overhang; now 282 inside a 290 card.
-        assert_eq!(row(i)[2], 282.0, "row width {i}");
+        assert_eq!(row(i)[2], 262.0, "row width {i}");
     }
     // Only the late task's due date uses warning colour.
     let warn = p.warn.premul(1.0);
@@ -984,10 +983,10 @@ fn meeting_tasks_cards_keep_every_fact() {
     };
     assert!(has_warn(0), "late row has no warning text");
     assert!(!has_warn(1), "on-time row uses warning text");
-    // 4 px from the label to the first row; question and task rows align inside their cards.
+    // Questions and tasks align inside cards with the same heading-to-row gap.
     let label = element(&rt, "meeting-task-count").rect;
-    assert_eq!(label[3], 22.0);
-    assert_eq!(row(0)[1] - (label[1] + label[3]), 4.0);
+    assert_eq!(label[3], 18.0);
+    assert_eq!(row(0)[1] - (label[1] + label[3]), 8.0);
     assert_eq!(element(&rt, "meeting-question-0").rect[0], row(0)[0]);
     // The rail shows the title and plain metadata. The description lives in detail.
     let elements = rt.elements();
@@ -1025,15 +1024,15 @@ fn meeting_tasks_column_fits_a_narrow_window() {
     let rt = page_with_tasks((390.0, 900.0));
     for i in 0..3 {
         let row = element(&rt, &format!("meeting-task-{i}")).rect;
-        // S4 card change: rows were flush with the 16/17 px gutter; card padding adds 4 px.
+        // The 14 pt card inset keeps the entire row within the phone gutters.
         assert!(
-            (20.0..=21.0).contains(&row[0]) && (370.0..=371.0).contains(&(row[0] + row[2])),
+            (30.0..=31.0).contains(&row[0]) && (360.0..=361.0).contains(&(row[0] + row[2])),
             "row {i}: {row:?}"
         );
         let tick = rail_checkbox(&rt, i).rect;
         assert_eq!(
             (tick[0], tick[2], tick[3]),
-            (row[0], 32.0, 32.0),
+            (row[0] - 8.0, 32.0, 32.0),
             "tick {i}"
         );
     }
@@ -1157,17 +1156,17 @@ fn meeting_tasks_label_names_the_sides_only_when_they_will_has_tasks() {
         inside(&rt, "meeting-external-task-count"),
         ["They will", "1"]
     );
-    // The first side label sits 4 under the Tasks label's row; 28 between the two lists.
+    // The card uses 8 pt between the heading and each group.
     let (tasks, ours, theirs) = (
         element(&rt, "meeting-task-count").rect,
         element(&rt, "meeting-ours-task-count").rect,
         element(&rt, "meeting-external-task-count").rect,
     );
     let list = element(&rt, "meeting-tasks").rect;
-    assert_eq!(ours[1] - (tasks[1] + tasks[3]), 4.0);
+    assert_eq!(ours[1] - (tasks[1] + tasks[3]), 8.0);
     assert_eq!(
         theirs[1] - (list[1] + list[3]),
-        28.0,
+        8.0,
         "theirs {theirs:?}, list {list:?}"
     );
 }
@@ -3852,11 +3851,11 @@ fn meeting_grid_keeps_its_strip_and_column_below_its_width_with_the_tasks_stacke
         28.0,
         "tasks below the notes"
     );
-    // S4 card change: rows were 656 and hung 8 outside the column; now they sit 4 inside its card.
+    // The stacked rail card uses the same 14 pt horizontal padding.
     let task = r(&rt, "meeting-task-0");
     assert_eq!(
         (task[0], task[2]),
-        (main[0] + 4.0, 612.0),
+        (main[0] + 14.0, 592.0),
         "task row {task:?}"
     );
     // The Ask bar and the transcript sheet start on the notes edge too.
@@ -4996,4 +4995,90 @@ fn meeting_summary_keeps_scroll_across_the_rail_breakpoint() {
     rt.frame(0.0);
     assert!(rt.find("meeting-tasks-column").is_none());
     assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+}
+
+#[test]
+fn meeting_rail_sections_match_design() {
+    if in_parent("meeting_rail_sections_match_design") {
+        return;
+    }
+    let mut rt = page_with_tasks(DEFAULT_SIZE);
+    rt.update(|s, _| s.config.features.memory = true);
+    rt.frame(0.0);
+    assert!(rt.state.memory.settled.is_empty());
+    assert!(rt.find("meeting-memory-card").is_none());
+    rt.update(|s, _| {
+        let meetings = core::meetings_dir();
+        std::fs::write(meetings.join(MEETING).join("manifest.json"), "{}").unwrap();
+        let store = core::settle::Store::new(s.store.root.clone(), meetings);
+        store
+            .publish_projects(
+                MEETING,
+                "Beta launch plan",
+                &serde_json::json!({"meeting_project":"Atlas","tasks":[]}),
+            )
+            .unwrap();
+        s.memory.settled = store.history().unwrap();
+        let mut other = s.current().unwrap().clone();
+        other.id = OTHER_MEETING.into();
+        s.meetings.push(other);
+    });
+    rt.settle_all();
+    rt.frame(0.0);
+    let rect = |key: &str| rect_of(&rt, key);
+    let caption = rect("meeting-rail-caption");
+    let questions = rect("meeting-questions-card");
+    let tasks = rect("meeting-tasks-card");
+    let memory = rect("meeting-memory-card");
+    assert_eq!(questions[1] - (caption[1] + caption[3]), 8.0);
+    assert_eq!(tasks[1] - (questions[1] + questions[3]), 10.0);
+    assert_eq!(memory[1] - (tasks[1] + tasks[3]), 10.0);
+    assert_eq!(questions[2], 290.0);
+    assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(false));
+    assert!(rt.find("meeting-settle-memory").is_none());
+    let question = element(&rt, "meeting-question-0");
+    let elements = rt.elements();
+    let question_path = format!("{}/", question.path);
+    let copy = elements
+        .iter()
+        .find(|item| {
+            item.path.starts_with(&question_path) && item.key.as_deref() == Some("question-text")
+        })
+        .unwrap();
+    assert_eq!(question.rect[0] - questions[0], 14.0);
+    assert_eq!(copy.rect[0] - question.rect[0], 12.0);
+    assert_eq!(copy.rect[1] - question.rect[1], 2.0);
+    let first = rect("meeting-task-0");
+    assert_eq!(rect("meeting-task-1")[1] - (first[1] + first[3]), 8.0);
+
+    rt.update(|_, tx| tx.focus("meeting-memory-toggle", true));
+    rt.frame(0.0);
+    assert!(element(&rt, "meeting-memory-toggle").focused);
+    for (key, open) in [(Key::Enter, true), (Key::Text(" ".into()), false)] {
+        rt.key(KeyEvent {
+            key,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.2);
+        assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(open));
+        assert_eq!(rt.find("meeting-settle-memory").is_some(), open);
+    }
+    let tap = |rt: &mut Runtime<State>, key| {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.2);
+    };
+    tap(&mut rt, "meeting-memory-toggle");
+    assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(true));
+    rt.update(|s, tx| s.select(OTHER_MEETING, tx));
+    rt.frame(0.2);
+    assert_eq!(rt.state.current().unwrap().id, OTHER_MEETING);
+    rt.update(|s, tx| s.select(MEETING, tx));
+    rt.frame(0.2);
+    assert_eq!(element(&rt, "meeting-memory-toggle").expanded, Some(false));
+    tap(&mut rt, "meeting-memory-toggle");
+    tap(&mut rt, "meeting-settle-memory");
+    assert!(rt.state.on_memory() && rt.state.memory.settle_all);
+    assert_eq!(rt.state.memory.settle_meeting.as_deref(), Some(MEETING));
 }
