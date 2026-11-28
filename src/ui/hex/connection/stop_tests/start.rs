@@ -315,7 +315,13 @@ fn assert_ask_usable(rt: &mut Runtime<State>) {
     assert!(w > 0.0 && h > 0.0 && x >= left && y >= top);
     assert!(x + w <= left + width + 0.5 && y + h <= top + height + 0.5);
     tap(rt, "ask-input");
-    assert!(element(rt, "ask-input").focused);
+    let textbox = element(rt, "ask-input");
+    let editor = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.starts_with(&textbox.path) && e.key.as_deref() == Some("input"))
+        .expect("Ask editor");
+    assert!(editor.focused);
 }
 
 fn reopen_pending(rt: &mut Runtime<State>, meeting_id: &str, notes: &str) {
@@ -426,10 +432,10 @@ fn timing_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     meetings_pointer(rt);
     assert!(element(rt, "hex-pause").focusable);
     tap(rt, "hex-pause");
+    tap(rt, "recording-open");
     finish_busy(rt);
     api.assert_stops(1);
     assert!(rt.state.hex_stop_confirmed());
-    tap(rt, "recording-open");
     assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
     let paused = session(rt);
     assert_eq!(paused.id, before.id);
@@ -744,11 +750,11 @@ fn failed_start_retry_keeps_controls(api: &Fixture, rt: &mut Runtime<State>) {
     assert_eq!(attached.pending_start_ms, None);
     assert_eq!(attached.parts[0].id, "300-3");
     assert!(rt.find("meeting-pause").is_some());
+    let last_good = rt.state.hex.status.clone().unwrap();
+    let now = Instant::now();
     rt.update(|s, _| {
-        s.hex_status_at(
-            Err(HexError::Timeout),
-            Instant::now() - Duration::from_secs(11),
-        );
+        s.hex_status_at(last_good, now - Duration::from_secs(11));
+        s.hex_status_at(Err(HexError::Timeout), now);
     });
     rt.frame(0.2);
     assert!(rt.state.hex_status_unknown());
