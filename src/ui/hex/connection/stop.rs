@@ -120,22 +120,6 @@ impl State {
         }
     }
 
-    pub(in crate::ui) fn hex_finish_observed_stop(&mut self) -> bool {
-        if self.hex.record_busy
-            || !self.hex_stop_unconfirmed()
-            || !self
-                .hex
-                .status
-                .as_ref()
-                .is_some_and(|r| r.as_ref().is_ok_and(terminal))
-        {
-            return false;
-        }
-        self.hex.error = None;
-        self.hex_complete_stop(self.hex.stop.as_ref().unwrap().recording);
-        true
-    }
-
     fn hex_complete_stop(&mut self, recording: u64) {
         self.hex.stop = None;
         if self.live.as_ref().map(|l| l.recording_id) == Some(recording) {

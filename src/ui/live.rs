@@ -647,8 +647,6 @@ impl State {
             Some("Waiting for Hex to start recording.")
         } else if !live.can_close(&self.live_notes.text) {
             Some("Save your meeting notes before installing.")
-        } else if live.notes_request.strong_count() > 0 {
-            Some("Waiting to queue the meeting summary.")
         } else {
             None
         }
@@ -735,7 +733,7 @@ impl State {
 
     /// The New meeting button: start Hex recording and show the live page.
     pub fn new_meeting(&mut self) {
-        if self.hex.connection.begin_action() {
+        if !self.updates.applying && self.hex.connection.begin_action() {
             self.new_meeting_continue();
         }
     }
@@ -774,14 +772,13 @@ impl State {
                 }
             }
             Err(_) => {
-                self.parts_start_failed();
                 self.hex.error = Some("Could not save meeting before recording.");
                 self.hex.connection.finish_action();
                 return;
             }
         }
-        if !self.hex_record_start() {
-            self.parts_start_failed();
+        self.hex_record_start();
+        if !self.hex_record_busy() {
             self.hex.connection.finish_action();
         }
         self.nav_done();
@@ -876,10 +873,9 @@ impl State {
         if live.close_failed {
             return;
         }
-        let idle_or_stopped = self.hex.stopped()
-            || matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status));
-        let pending_expired = idle_or_stopped
+        let pending_expired = running
             && !busy
+            && matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status))
             && live
                 .session
                 .as_ref()
@@ -894,7 +890,7 @@ impl State {
         match live.phase {
             Phase::Starting if confirmed => live.phase = Phase::Recording,
             Phase::Starting
-                if idle_or_stopped
+                if running
                     && !busy
                     && !recording
                     && !live.start_failed
@@ -1288,6 +1284,9 @@ impl State {
 
     /// Writes the notes now. True when the page's state changed.
     fn live_save(&mut self) -> bool {
+        if self.updates.applying {
+            return false;
+        }
         let text = self.live_notes.text.clone();
         let hint = hex::recording_id(self);
         let start_ms = hex::recording_start(self).map(|(at, _)| at.timestamp_millis());
@@ -1601,10 +1600,15 @@ fn notes_view(s: &State, k: &Kit, p: Palette, narrow: bool, starting: bool) -> E
         .color(p.ink)
         .placeholder("\u{2009}Write notes\u{2026}", p.faint)
         .caret(p.ink, k.selection())
-        .label("Your notes")
-        .on_edit(|s: &mut State| &mut s.live_notes)
-        // Return starts a new line here; it would otherwise submit.
-        .on_submit(|s: &mut State, _| s.live_notes.insert("\n"));
+        .label("Your notes");
+    let field = if s.updates.applying {
+        field.read_only(true)
+    } else {
+        field
+            .on_edit(|s: &mut State| &mut s.live_notes)
+            // Return starts a new line here; it would otherwise submit.
+            .on_submit(|s: &mut State, _| s.live_notes.insert("\n"))
+    };
     let mut c = col()
         .w_full()
         .items_start()

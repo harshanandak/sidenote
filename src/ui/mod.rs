@@ -353,6 +353,7 @@ pub struct State {
     /// What the user types during the meeting. Saved to the meeting folder's `notes.md`.
     pub live_notes: TextEdit,
     live_writer: Option<live::NoteWriter>,
+    live_notes_requests: Vec<std::sync::Weak<()>>,
     /// A finished meeting to open the next time the UI can scroll.
     live_ready: Option<String>,
     /// The home list's keyboard cursor is showing (arrow keys were used).
@@ -605,6 +606,7 @@ impl State {
             live_open: false,
             live_notes: TextEdit::new(""),
             live_writer: None,
+            live_notes_requests: Vec::new(),
             live_ready: None,
             keyboard: false,
             project_menu: None,

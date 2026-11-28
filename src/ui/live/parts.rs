@@ -321,7 +321,7 @@ impl State {
         true
     }
     pub(in crate::ui) fn meeting_resume(&mut self) {
-        if self.hex_stop_pending() {
+        if self.updates.applying || self.hex_stop_pending() {
             return;
         }
         if let Some(live) = &mut self.live {
@@ -352,7 +352,6 @@ impl State {
         }
         m.pending_start_ms = Some(chrono::Utc::now().timestamp_millis());
         if m.save(&root).is_err() {
-            m.pending_start_ms = None;
             self.hex.error = Some("Could not save meeting before Resume.");
             return;
         }
@@ -361,9 +360,7 @@ impl State {
             self.live_open = true;
         }
         // Keep the page and its notes; the next status supplies the new Hex part id.
-        if !self.hex_record_start() {
-            self.parts_start_failed();
-        }
+        self.hex_record_start();
     }
     pub(in crate::ui) fn meeting_generate(&mut self) {
         if self.hex_stop_pending() {
@@ -379,7 +376,16 @@ impl State {
         self.generate_live_notes();
     }
 
+    fn track_notes_request(&mut self, pending: &std::sync::Weak<()>) {
+        self.live_notes_requests
+            .retain(|request| request.strong_count() > 0);
+        self.live_notes_requests.push(pending.clone());
+    }
+
     fn generate_live_notes(&mut self) {
+        if self.updates.applying {
+            return;
+        }
         let Some(live) = &mut self.live else {
             return;
         };
@@ -422,6 +428,7 @@ impl State {
                     self.hex.error = Some("Could not start notes. Try Generate notes again.");
                     return;
                 }
+                self.track_notes_request(&pending);
                 if let Some(live) = &mut self.live {
                     live.phase = Phase::Making;
                     live.notes_request = pending;
@@ -439,4 +446,29 @@ impl State {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn switching_meetings_keeps_the_pending_summary_install_blocker() {
+    crate::test_paths::isolate();
+    let mut s = State::new();
+    s.live = Some(Live::scene(Phase::Making, None).scene_pending("100-1"));
+    let submission = Arc::new(());
+    let pending = Arc::downgrade(&submission);
+    s.track_notes_request(&pending);
+    s.live.as_mut().unwrap().notes_request = pending;
+
+    let root = core::state_dir();
+    let mut other = Meeting::pending(&root, chrono::Utc::now().timestamp_millis()).unwrap();
+    other.pending_start_ms = None;
+    other.pause(&root).unwrap();
+    s.selected = Some(other.id.clone());
+    assert!(s.parts_select());
+    let live = s.live.as_ref().unwrap();
+    assert_eq!(live.session.as_ref().unwrap().id, other.id);
+    let reason = Some("Waiting to queue the meeting summary.");
+    assert_eq!(s.install_blocker(), reason);
+    drop(submission);
+    assert_eq!(s.install_blocker(), None);
 }

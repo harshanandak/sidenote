@@ -27,7 +27,7 @@ pub struct Updates {
     dismissed: bool,
     notes_open: bool,
     scene: bool,
-    applying: bool,
+    pub(super) applying: bool,
     pub(super) summary_running: bool,
     updated_version: Option<String>,
 }
@@ -354,6 +354,12 @@ impl State {
             Some("Stop the recording before installing.")
         } else if let Some(reason) = self.live_install_blocker() {
             Some(reason)
+        } else if self
+            .live_notes_requests
+            .iter()
+            .any(|request| request.strong_count() > 0)
+        {
+            Some("Waiting to queue the meeting summary.")
         } else if self.asks.values().any(|ask| ask.live) {
             Some("Waiting for Ask to finish.")
         } else if self.edit_busy {
@@ -896,6 +902,9 @@ pub fn listener_preparing_scene(s: &mut State) {
 }
 
 pub fn listener_start_blocked(s: &State) -> Option<&'static str> {
+    if s.updates.applying {
+        return Some("Wait for Sidenote to finish installing the update.");
+    }
     let status = if s.updates.scene {
         s.updates.listener.clone()
     } else {
@@ -1278,6 +1287,46 @@ mod install_tests {
             .hex_apply(hex::Msg::NotesRequested(Err(HexError::Unsupported)));
         assert_eq!(rt.state.live.as_ref().unwrap().phase, LivePhase::Paused);
         assert_install(&mut rt, READY);
+    }
+
+    #[test]
+    fn applying_freezes_live_input_and_start_until_failure() {
+        use sidenote::hex_engine::{Feature, Support, sample_status};
+
+        let mut s = ready_card().state;
+        let status = hex::notes_stop_tests::status(false);
+        let caps = [(Feature::RecordStart, Support::Supported)].into();
+        s.hex_apply(hex::Msg::Caps(status.version.clone(), Ok(caps)));
+        s.live = Some(Live::scene(LivePhase::Paused, None));
+        s.hex_apply(hex::Msg::ObservedStatus(sample_status(|| Ok(status))));
+        assert!(hex::start_blocked(&s).is_none());
+        s.live_open = true;
+        s.live.as_mut().unwrap().generate_after_pause = true;
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1334.0, 900.0), rune::Env::default());
+        let attempt = rt.state.install_update_with(|_| Err("Apply failed".into()));
+        rt.update(|s, _| {
+            s.new_meeting();
+            s.meeting_resume();
+            assert!(s.live.as_ref().unwrap().generate_after_pause);
+            assert!(!s.hex_record_busy());
+        });
+        let type_notes = |rt: &mut rune::Runtime<State>| {
+            rt.settle_all();
+            rt.frame(0.0);
+            let (x, y) = rt.find("live-notes-input").unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.key(rune::Key::Text("Draft".into()).into());
+            rt.key(rune::Key::Enter.into());
+        };
+        type_notes(&mut rt);
+        assert!(rt.state.live_notes.text.is_empty());
+        attempt.unwrap().join().unwrap();
+        let event = rt.state.events_rx.try_recv().unwrap();
+        assert!(matches!(event, Event::UpdateFinished(Err(_))));
+        rt.update(|s, _| s.apply_event(event));
+        type_notes(&mut rt);
+        assert_eq!(rt.state.live_notes.text, "Draft\n");
     }
 
     #[test]
