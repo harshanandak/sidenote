@@ -3293,17 +3293,17 @@ fn presented_rect(rt: &Runtime<State>, key: &str) -> [f32; 4] {
     rt.presented(key).unwrap_or_else(|| panic!("{key}")).0
 }
 
-/// Closes or opens the sidebar the way a keyboard person does. Unlike a pointer tap, which
-/// hands focus to the toggle that appears (`nav::press_toggle`), Ctrl+\ leaves focus alone,
-/// so the Ask field keeps it.
+/// Closes or opens the sidebar through real key routing, the way a keyboard person
+/// does. Unlike a pointer tap, which hands focus to the toggle that appears
+/// (`nav::press_toggle`), Ctrl+\ leaves focus alone, so the Ask field keeps it.
 fn ctrl_backslash(rt: &mut Runtime<State>) {
-    rt.update(|s, tx| {
-        let mods = rune::Mods {
+    rt.on_key = Some(crate::ui::on_key);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Command('\\'),
+        mods: rune::Mods {
             ctrl: true,
             ..Default::default()
-        };
-        let key = rune::Key::Command('\\');
-        assert!(crate::ui::on_key(s, &rune::KeyEvent { key, mods }, tx));
+        },
     });
     rt.settle_all();
     rt.frame(0.0);
@@ -3473,15 +3473,27 @@ fn recentring_the_grid_keeps_scroll_focus_and_the_ask_bar() {
     for dark in [false, true] {
         let mut rt = tasks_page((1334.0, 900.0), true);
         rt.set_system_dark(dark);
-        rt.update(|s, _| s.meetings[0].summary.verify = vec![POINT.into(); 40]);
+        rt.update(|s, _| {
+            scene_agents(s, ALL_AGENTS);
+            s.meetings[0].summary.verify = vec![POINT.into(); 40];
+            s.meetings[0].summary.to_settle = vec![
+                core::Unsettled {
+                    question: "Invented open question for the rail scroll probe.".into(),
+                    waits_on: None,
+                };
+                40
+            ];
+        });
         rt.settle_all();
         rt.frame(0.0);
+        assert!(rt.find("ask-input").is_some());
         rt.update(|_, tx| tx.scroll_to_instant("meeting-scroll", 0.0, 96.0));
-        rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
+        rt.update(|_, tx| tx.scroll_to_instant("meeting-rail-scroll", 0.0, 96.0));
         rt.settle_all();
         rt.frame(0.0);
         assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
         let rail_scrolled = element(&rt, "meeting-task-0").scrolled[1];
+        assert_eq!(rail_scrolled, 96.0);
         // Focus the Ask field and type invented text.
         rt.update(|_, tx| tx.focus("ask-input", true));
         rt.frame(0.0);
@@ -3538,21 +3550,23 @@ fn recentring_the_grid_keeps_scroll_focus_and_the_ask_bar() {
         rt.update(|_, tx| tx.focus("ask-input", true));
         rt.frame(0.0);
         ctrl_backslash(&mut rt);
+        assert!(!rt.state.sidebar_is_open(), "first Ctrl+\\ closes");
         assert!(
             rt.state.question.focused,
             "keyboard toggle keeps the editor"
         );
-        rt.update(|_, tx| assert_eq!(tx.focused(), Some("ask-input")));
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("input")));
         assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
         assert_eq!(element(&rt, "meeting-task-0").scrolled[1], rail_scrolled);
         assert_eq!(rt.state.question.text, "Recentre check 336");
         pill_centre(&rt);
         ctrl_backslash(&mut rt);
+        assert!(rt.state.sidebar_is_open(), "second Ctrl+\\ opens");
         assert!(
             rt.state.question.focused,
             "keyboard toggle keeps the editor"
         );
-        rt.update(|_, tx| assert_eq!(tx.focused(), Some("ask-input")));
+        rt.update(|_, tx| assert_eq!(tx.focused(), Some("input")));
         assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
         assert_eq!(element(&rt, "meeting-task-0").scrolled[1], rail_scrolled);
         assert_eq!(rt.state.question.text, "Recentre check 336");
@@ -3629,6 +3643,7 @@ fn home_column_stays_centred_when_the_sidebar_toggles() {
     // Phone: the free area is the window, and the drawer overlays it.
     for dark in [false, true] {
         let mut rt = home_ask((390.0, 844.0), dark);
+        assert!(!rt.state.sidebar_is_open());
         let hello = presented_rect(&rt, "home-greeting");
         assert!(
             (hello[0] + hello[2] / 2.0 - 195.0).abs() <= 0.5,
@@ -3637,6 +3652,7 @@ fn home_column_stays_centred_when_the_sidebar_toggles() {
         tap(&mut rt, "sidebar-toggle");
         rt.settle_all();
         rt.frame(0.0);
+        assert!(rt.state.sidebar_is_open(), "drawer opened");
         let again = presented_rect(&rt, "home-greeting");
         assert_eq!(
             (again[0], again[2]),
