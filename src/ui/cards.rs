@@ -10,7 +10,8 @@ pub fn panel(p: Palette) -> El {
         .radius(12.0)
         .clip_rounded(12.0)
         .fill(p.card)
-        .shadow(0.0, 8.0, p.shadow)
+        .border(1.0, p.line)
+        .shadow(1.0, 2.0, p.shadow)
 }
 
 pub fn icon_tile(icon: &'static Icon, p: Palette) -> El {
@@ -139,7 +140,7 @@ mod soft_card_tests {
     }
 
     #[test]
-    fn soft_card_is_radius_12_with_tile_free_rows() {
+    fn soft_card_matches_the_approved_ring_and_small_shadow() {
         let p = super::super::theme::palette(false);
         let mut rt = rune::Runtime::with_text(
             p,
@@ -165,8 +166,14 @@ mod soft_card_tests {
             .unwrap_or(src.len());
         let panel_fn = &src[start..end];
         assert!(panel_fn.contains(".clip_rounded(12.0)"), "soft card clips");
-        assert!(panel_fn.contains(".shadow("), "soft card has a shadow");
-        assert!(!panel_fn.contains(".border("), "soft card has no border");
+        assert!(
+            panel_fn.contains(".border(1.0, p.line)"),
+            "soft card has the approved one-pixel line ring"
+        );
+        assert!(
+            panel_fn.contains(".shadow(1.0, 2.0, p.shadow)"),
+            "soft card has the approved small shadow"
+        );
         // No element is keyed as a divider or tile; the helpers are gone (see below).
         assert!(
             !nodes.iter().any(|e| e
