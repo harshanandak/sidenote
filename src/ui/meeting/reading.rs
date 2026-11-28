@@ -595,7 +595,7 @@ fn point(s: &State, pt: &Point, origin: String, timed: bool, p: Palette) -> El {
         line = line.child(if super::phone(s) {
             pill.pin(None, Some(3.0), Some(6.0), None)
         } else {
-            pill
+            pill.mr(6.0)
         });
     }
     if s.back.as_deref() == Some(&origin) {
