@@ -304,19 +304,24 @@ impl<'a> Store<'a> {
         })
     }
 
-    pub fn revert_to_original(&self) -> io::Result<()> {
+    pub fn revert_to_original(&self, expected: &[(Field, Line)]) -> io::Result<()> {
         self.update(|records, summary| {
-            for edit in records
-                .edits
-                .values_mut()
-                .filter(|edit| edit.meeting == self.meeting)
-            {
-                if edit.text == edit.base || edit.field.read(summary).as_ref() != Some(&edit.base) {
-                    continue;
+            for (field, line) in expected {
+                let key = Self::key(self.meeting, *field);
+                if Self::line(summary, *field, records.edits.get(&key))? != *line {
+                    return Err(stale());
                 }
-                let original = edit.base.clone();
-                edit.text.clone_from(&original);
-                edit.history.push(SnapshotEdit::by_you(&original));
+            }
+            for (field, _) in expected {
+                let key = Self::key(self.meeting, *field);
+                if let Some(edit) = records.edits.get_mut(&key)
+                    && edit.text != edit.base
+                    && edit.field.read(summary).as_ref() == Some(&edit.base)
+                {
+                    let original = edit.base.clone();
+                    edit.text.clone_from(&original);
+                    edit.history.push(SnapshotEdit::by_you(&original));
+                }
             }
             Ok(())
         })
@@ -458,6 +463,17 @@ mod tests {
             expected,
             text: text.into(),
         }
+    }
+
+    fn reviewed(store: &Store, fields: &[Field]) -> Vec<(Field, Line)> {
+        fields
+            .iter()
+            .map(|f| (*f, store.current(*f).unwrap()))
+            .collect()
+    }
+
+    fn edits_json(store: &Store) -> String {
+        serde_json::to_string(&store.edits().unwrap()).unwrap()
     }
 
     #[test]
@@ -646,19 +662,12 @@ mod tests {
         assert!(missing.detached.is_empty());
         assert!(!missing.warning);
 
-        let mut records = Records::default();
-        records.edits.insert(
-            Store::key("100-200", Field::Title),
-            Edit {
-                meeting: "100-200".into(),
-                field: Field::Title,
-                base: "Original title".into(),
-                text: "Legacy title".into(),
-                history: vec![SnapshotEdit::by_you("Legacy title")],
-            },
-        );
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join(FILE), serde_json::to_vec(&records).unwrap()).unwrap();
+        std::fs::write(
+            root.join(FILE),
+            br#"{"edits":{"100-200/title":{"meeting":"100-200","field":"title","base":"Original title","text":"Legacy title","history":[{"text":"Legacy title","by":"you","request":null,"at":"2026-11-22T00:00:00Z"}]}}}"#,
+        )
+        .unwrap();
         let legacy = store.effective(&generated).unwrap();
         assert_eq!(legacy.value["title"], "Legacy title");
         assert_eq!(legacy.value["custom"], json!({"keep": true}));
@@ -723,7 +732,8 @@ mod tests {
             store.effective(&generated).unwrap().version,
             SummaryVersion::UserEdited
         );
-        store.revert_to_original().unwrap();
+        let view = reviewed(&store, &[Field::Title, Field::Context]);
+        store.revert_to_original(&view).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let effective = store.effective(&generated).unwrap();
         assert_eq!(effective.value, generated);
@@ -767,6 +777,60 @@ mod tests {
         assert_eq!(effective.value["title"], "Regenerated title");
         assert_eq!(effective.version, SummaryVersion::AiOriginal);
         assert!(!effective.warning);
+    }
+
+    #[test]
+    fn newer_device_edit_rejects_stale_revert_then_fresh_revert_succeeds() {
+        let (dir, _, folder) = fixture();
+        write_summary(&folder, json!({"title": "Original title"}));
+        let a_root = dir.path().join("device-a");
+        let b_root = dir.path().join("device-b");
+        let a = Store::new(&a_root, &folder, "100-200");
+        let b = Store::new(&b_root, &folder, "100-200");
+        let before = a.current(Field::Title).unwrap();
+        a.save(Field::Title, &before, "My title").unwrap();
+        let stale_view = reviewed(&a, &[Field::Title]);
+        copy_journal(&a_root, &b_root);
+        let b_before = b.current(Field::Title).unwrap();
+        b.save(Field::Title, &b_before, "Reviewed title").unwrap();
+        copy_journal(&b_root, &a_root);
+        assert_eq!(a.current(Field::Title).unwrap().text, "Reviewed title");
+        let merged = edits_json(&a);
+        assert!(a.revert_to_original(&stale_view).is_err());
+        assert_eq!(edits_json(&a), merged);
+        let fresh_view = reviewed(&a, &[Field::Title]);
+        a.revert_to_original(&fresh_view).unwrap();
+        let after = a.edits().unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].text, "Original title");
+        assert_eq!(after[0].history.len(), 4);
+        let texts: Vec<_> = after[0].history.iter().map(|s| s.text.as_str()).collect();
+        assert!(texts.contains(&"My title") && texts.contains(&"Reviewed title"));
+    }
+
+    #[test]
+    fn revert_leaves_a_detached_record_untouched() {
+        let (_dir, root, folder) = fixture();
+        write_summary(&folder, json!({"title": "Original title"}));
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        store.save(Field::Title, &before, "My title").unwrap();
+        write_summary(&folder, json!({"title": "Regenerated title"}));
+        let detached = edits_json(&store);
+        let view = reviewed(&store, &[Field::Title]);
+        store.revert_to_original(&view).unwrap();
+        assert_eq!(edits_json(&store), detached);
+    }
+
+    #[test]
+    fn save_many_rejects_duplicate_fields() {
+        let (_dir, root, folder) = fixture();
+        write_summary(&folder, json!({"title": "Original title"}));
+        let store = Store::new(&root, &folder, "100-200");
+        let before = store.current(Field::Title).unwrap();
+        let save = draft(Field::Title, before, "Batch title");
+        assert!(store.save_many(&[save.clone(), save]).is_err());
+        assert!(store.edits().unwrap().is_empty());
     }
 
     #[test]
