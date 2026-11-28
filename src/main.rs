@@ -330,7 +330,7 @@ fn main() {
         std::process::exit(sidenote::core::daily_check::run_cli());
     }
     #[cfg(feature = "desktop")]
-    sidenote::desktop::run(ui::run);
+    sidenote::desktop::run(process_started, ui::run);
     #[cfg(not(feature = "desktop"))]
     {
         eprintln!("UNAVAILABLE_ON_PLATFORM");

@@ -1,7 +1,9 @@
 //! Shared desktop launch policy; screens and native window hooks are supplied separately.
 use crate::platform;
 
-pub fn run(open_screens: impl FnOnce()) {
+pub mod startup;
+
+pub fn run(process_started: std::time::Instant, open_screens: impl FnOnce()) {
     if crate::service::role() != crate::service::DeviceRole::Full {
         eprintln!("UNAVAILABLE_ON_PLATFORM");
         return;
@@ -46,6 +48,9 @@ pub fn run(open_screens: impl FnOnce()) {
             }
         }
     };
+    if !headless && !offscreen_bench {
+        startup::start(process_started);
+    }
     if !headless && (!offscreen_bench || crate::env_var("SIDENOTE_BENCH_NO_WARM").is_none()) {
         rune::warm_gpu(Default::default());
     }
