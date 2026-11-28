@@ -11,6 +11,7 @@ use sidenote::updates::{self, Phase, Status};
 
 const RESTARTING: &str = "Restarting to install the update…";
 const CONFIRMATION_NOTICE: &str = "update-confirmation";
+const READY: &str = "Ready to install. Restart now, or Sidenote will retry when it reopens.";
 
 pub struct Updates {
     pub status: Status,
@@ -26,7 +27,8 @@ pub struct Updates {
     dismissed: bool,
     notes_open: bool,
     scene: bool,
-    applying: bool,
+    pub(super) applying: bool,
+    pub(super) summary_running: bool,
     updated_version: Option<String>,
 }
 impl Default for Updates {
@@ -46,6 +48,7 @@ impl Default for Updates {
             notes_open: false,
             scene: false,
             applying: false,
+            summary_running: false,
             updated_version: None,
         }
     }
@@ -98,7 +101,10 @@ impl State {
         self.updates.listener_probed = Some(std::time::Instant::now());
         let events = self.events_tx.clone();
         let wake = self.waker.clone();
+        let root = self.store.root.clone();
         std::thread::spawn(move || {
+            let running = sidenote::core::notes::queue::worker_running(&root);
+            let _ = events.send(Event::SummaryWorkerProbed(running));
             let status = updates::probe_listener();
             let gap = heartbeat::pending_gap();
             let _ = events.send(Event::ListenerProbed(status, gap));
@@ -328,19 +334,10 @@ impl State {
         run: impl FnOnce(&dyn Fn(Phase)) -> Result<(), String> + Send + 'static,
     ) -> Option<std::thread::JoinHandle<()>> {
         if self.updates.scene
-            || self.updates.applying
             || self.updates.status.phase != Phase::Ready
             || rune::tooling::headless_run().is_some()
+            || self.install_blocker().is_some()
         {
-            return None;
-        }
-        if self.hex_recording()
-            || self.hex_record_busy()
-            || !self.asks.is_empty()
-            || self.live.is_some()
-        {
-            self.updates.status.error =
-                Some("Finish recording and wait for your jobs before installing.".into());
             return None;
         }
         self.updates.applying = true;
@@ -348,6 +345,36 @@ impl State {
         self.updates.status.error = None;
         Some(self.update_worker(run))
     }
+    pub(super) fn install_blocker(&self) -> Option<&'static str> {
+        if self.updates.applying {
+            Some("Sidenote is getting the update ready to install.")
+        } else if self.hex_record_busy() {
+            Some("Waiting for the Hex recording command.")
+        } else if self.hex_recording() {
+            Some("Stop the recording before installing.")
+        } else if let Some(reason) = self.live_install_blocker() {
+            Some(reason)
+        } else if self
+            .live_notes_requests
+            .iter()
+            .any(|request| request.strong_count() > 0)
+        {
+            Some("Waiting to queue the meeting summary.")
+        } else if self.asks.values().any(|ask| ask.live) {
+            Some("Waiting for Ask to finish.")
+        } else if self.edit_busy {
+            Some("Waiting for edits to save.")
+        } else if self.annotations.working() {
+            Some("Waiting for the annotation note to finish.")
+        } else if self.ai_notes.pending.is_some() {
+            Some("Waiting for the Meeting summary task.")
+        } else if self.updates.summary_running {
+            Some("Waiting for the meeting summary to finish.")
+        } else {
+            None
+        }
+    }
+
     fn open_updates(&mut self) {
         self.open_hex();
         self.hex.section = hex::Section::Updates;
@@ -366,20 +393,8 @@ fn busy(status: &Status) -> bool {
     )
 }
 fn install(s: &State, p: Palette, footer: bool) -> El {
-    let ready = s.updates.status.phase == Phase::Ready
-        && !s.hex_recording()
-        && !s.hex_record_busy()
-        && s.asks.is_empty()
-        && s.live.is_none()
-        && !s.edit_busy
-        && !s.annotations.working()
-        && s.ai_notes.pending.is_none()
-        && !s.ai_notes.jobs.values().any(|job| {
-            matches!(
-                job.state,
-                sidenote::core::notes::JobState::Queued | sidenote::core::notes::JobState::Running
-            )
-        });
+    let blocker = s.install_blocker();
+    let ready = s.updates.status.phase == Phase::Ready && blocker.is_none();
     let title = match s.updates.status.phase {
         Phase::Preparing => "Preparing update",
         Phase::StoppingListener => "Stopping the listener",
@@ -404,11 +419,7 @@ fn install(s: &State, p: Palette, footer: bool) -> El {
     if ready {
         b.on_press(|s: &mut State| s.install_update())
     } else {
-        b.help(if s.updates.status.phase == Phase::Ready {
-            "Finish recording, Ask and background jobs before installing."
-        } else {
-            "Sidenote is getting the update ready to install."
-        })
+        b.help(blocker.unwrap_or("Sidenote is getting the update ready to install."))
     }
 }
 fn actions(s: &State, p: Palette, footer: bool) -> El {
@@ -608,7 +619,11 @@ pub fn section(s: &State, p: Palette) -> El {
                 );
         }
         Phase::Ready => {
-            card = card.child(roles::SMALL.wrap("Ready to install. Restart now, or keep working and install next time you open Sidenote.", p.soft));
+            card = card.child(
+                roles::SMALL
+                    .wrap(s.install_blocker().unwrap_or(READY), p.soft)
+                    .role("status"),
+            );
         }
         _ => {}
     }
@@ -631,7 +646,7 @@ pub fn section(s: &State, p: Palette) -> El {
     card = card.child(actions(s, p, false));
     if s.updates.dismissed {
         card = card.child(roles::META.wrap(
-            "You can keep working. The update will wait until the next restart.",
+            "You can keep working. Sidenote will try again next time you open the app.",
             p.soft,
         ));
     }
@@ -646,7 +661,7 @@ pub fn section(s: &State, p: Palette) -> El {
     }
     col().w_full().mt(18.0).gap(8.0)
         .child(roles::GROUP.wrap("Application",p.soft)).child(application)
-        .child(roles::META.wrap("Sidenote checks every 6 hours and installs when recording, Ask and jobs are idle.",p.faint).mt(8.0))
+        .child(roles::META.wrap("Sidenote checks every 6 hours and checks for a downloaded update when you reopen it.",p.faint).mt(8.0))
 }
 pub fn source(s: &State, p: Palette) -> El {
     if cfg!(target_os = "linux") {
@@ -677,6 +692,7 @@ pub fn footer(s: &State, p: Palette, wide: bool) -> Option<El> {
                 .on_press(|s: &mut State| s.open_updates()),
         );
     }
+    let blocker = s.install_blocker();
     Some(
         col()
             .w_full()
@@ -686,7 +702,9 @@ pub fn footer(s: &State, p: Palette, wide: bool) -> Option<El> {
             .child(
                 crate::ui::widgets::action("Restart to update", p)
                     .key("update-footer-install")
-                    .on_press(|s: &mut State| s.install_update()),
+                    .on_press(|s: &mut State| s.install_update())
+                    .button_disabled(blocker.is_some())
+                    .help(blocker.unwrap_or("Restart to install the update.")),
             ),
     )
 }
@@ -884,6 +902,9 @@ pub fn listener_preparing_scene(s: &mut State) {
 }
 
 pub fn listener_start_blocked(s: &State) -> Option<&'static str> {
+    if s.updates.applying {
+        return Some("Wait for Sidenote to finish installing the update.");
+    }
     let status = if s.updates.scene {
         s.updates.listener.clone()
     } else {
@@ -1170,5 +1191,161 @@ mod listener_tests {
             channel_row_title(None, Channel::Dev),
             "Get updates from · Dev"
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod install_tests {
+    use super::*;
+    use crate::ui::{
+        AskRun,
+        live::{Live, Phase as LivePhase},
+    };
+    use sidenote::{
+        core::{
+            AskProgress,
+            notes::{self, JobState},
+        },
+        hex_engine::HexError,
+    };
+
+    fn ready_card() -> rune::Runtime<State> {
+        crate::test_paths::isolate();
+        let detect = hex::SKIP_INSTALL_DETECT.replace(true);
+        let mut state = State::new();
+        hex::SKIP_INSTALL_DETECT.set(detect);
+        state.updates.status.phase = Phase::Ready;
+        rune::Runtime::new(
+            state,
+            |s, _| section(s, super::super::theme::palette(false)),
+            (690.0, 800.0),
+            rune::Env::default(),
+        )
+    }
+
+    fn assert_install(rt: &mut rune::Runtime<State>, copy: &str) {
+        let ready = copy == READY;
+        rt.update(|_, _| {});
+        rt.frame(0.0);
+        let elements = rt.elements();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.key.as_deref() == Some("update-install") && e.focusable == ready)
+        );
+        assert!(elements.iter().any(|e| e.text.as_deref() == Some(copy)));
+        if !ready {
+            assert!(!elements.iter().any(|e| e.text.as_deref() == Some(READY)));
+            assert!(rt.state.install_update_with(|_| Ok(())).is_none());
+        }
+    }
+
+    #[test]
+    fn persisted_summary_states_yield_to_the_worker_lifetime() {
+        let mut rt = ready_card();
+        let dir = rt.state.store.root.join("local/notes-jobs");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("100-1.json"), r#"{"state":"queued"}"#).unwrap();
+        let record = notes::status_record(&rt.state.store.root, "100-1").unwrap();
+        assert_eq!(record.state, JobState::Queued);
+        rt.state.ai_notes.jobs.insert("100-1".into(), record);
+        assert_install(&mut rt, READY);
+        use std::os::windows::fs::OpenOptionsExt;
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(dir.join("worker.lock"))
+            .unwrap();
+        let probe = |s: &mut State| {
+            s.apply_event(Event::SummaryWorkerProbed(notes::queue::worker_running(
+                &s.store.root,
+            )));
+        };
+        probe(&mut rt.state);
+        assert_install(&mut rt, "Waiting for the meeting summary to finish.");
+        drop(lock);
+        probe(&mut rt.state);
+        assert_install(&mut rt, READY);
+    }
+
+    #[test]
+    fn failed_start_and_retained_meeting_page_allow_install_when_safe() {
+        let mut rt = ready_card();
+        rt.state.live = Some(Live::scene(LivePhase::Starting, None));
+        assert_install(&mut rt, "Waiting for Hex to start recording.");
+        let failed = hex::Msg::Done(hex::Action::Start, Err(HexError::HexNotRunning));
+        rt.state.hex_apply(failed);
+        assert!(rt.state.live.is_none());
+        assert_install(&mut rt, READY);
+
+        rt.state.live = Some(Live::scene(LivePhase::Making, None));
+        rt.state.live_notes = rune::TextEdit::new("Draft");
+        assert_install(&mut rt, "Save your meeting notes before installing.");
+        rt.state.live_notes = rune::TextEdit::default();
+        rt.state
+            .hex_apply(hex::Msg::NotesRequested(Err(HexError::Unsupported)));
+        assert_eq!(rt.state.live.as_ref().unwrap().phase, LivePhase::Paused);
+        assert_install(&mut rt, READY);
+    }
+
+    #[test]
+    fn applying_freezes_live_input_and_start_until_failure() {
+        use sidenote::hex_engine::{Feature, Support, sample_status};
+
+        let mut s = ready_card().state;
+        let status = hex::notes_stop_tests::status(false);
+        let caps = [(Feature::RecordStart, Support::Supported)].into();
+        s.hex_apply(hex::Msg::Caps(status.version.clone(), Ok(caps)));
+        s.live = Some(Live::scene(LivePhase::Paused, None));
+        s.hex_apply(hex::Msg::ObservedStatus(sample_status(|| Ok(status))));
+        assert!(hex::start_blocked(&s).is_none());
+        s.live_open = true;
+        s.live.as_mut().unwrap().generate_after_pause = true;
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1334.0, 900.0), rune::Env::default());
+        let attempt = rt.state.install_update_with(|_| Err("Apply failed".into()));
+        rt.update(|s, _| {
+            s.new_meeting();
+            s.meeting_resume();
+            assert!(s.live.as_ref().unwrap().generate_after_pause);
+            assert!(!s.hex_record_busy());
+        });
+        let type_notes = |rt: &mut rune::Runtime<State>| {
+            rt.settle_all();
+            rt.frame(0.0);
+            let (x, y) = rt.find("live-notes-input").unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.key(rune::Key::Text("Draft".into()).into());
+            rt.key(rune::Key::Enter.into());
+            rt.frame(0.0);
+        };
+        type_notes(&mut rt);
+        assert!(rt.state.live_notes.text.is_empty());
+        attempt.unwrap().join().unwrap();
+        let event = rt.state.events_rx.try_recv().unwrap();
+        assert!(matches!(event, Event::UpdateFinished(Err(_))));
+        rt.update(|s, _| s.apply_event(event));
+        type_notes(&mut rt);
+        assert_eq!(rt.state.live_notes.text, "Draft\n");
+    }
+
+    #[test]
+    fn an_ask_failure_releases_install() {
+        let mut rt = ready_card();
+        let id = rt.state.ask_key();
+        let mut ask = AskRun::stand_in("Test", &[], 0);
+        ask.live = true;
+        rt.state.asks.insert(id.clone(), ask);
+        assert_install(&mut rt, "Waiting for Ask to finish.");
+        let event = AskProgress::Failed {
+            message: "Ask could not start".into(),
+        };
+        rt.state.apply_event(Event::Progress {
+            id,
+            generation: 0,
+            event,
+        });
+        assert_install(&mut rt, READY);
     }
 }

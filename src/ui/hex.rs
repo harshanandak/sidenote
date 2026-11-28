@@ -2363,7 +2363,7 @@ mod model_action_tests {
 }
 
 #[cfg(test)]
-mod notes_stop_tests {
+pub(super) mod notes_stop_tests {
     use super::*;
     use crate::ui::live::Phase;
     use sidenote::core::{self, notes};
@@ -2450,7 +2450,7 @@ mod notes_stop_tests {
         Some(state)
     }
 
-    fn status(recording: bool) -> EngineState {
+    pub(in crate::ui) fn status(recording: bool) -> EngineState {
         EngineState {
             running: true,
             version: "test".into(),

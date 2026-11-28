@@ -101,7 +101,8 @@ fn job_eligible(root: &Path, meetings: &Path, id: &str, job: &Job) -> io::Result
         || ((job.request == Some(Request::RedoTasks)
             || (job.transcript_revision.is_some()
                 && core::meeting_router::jobs::notes_enabled(root)?))
-            && eligibility == core::recording_guard::Eligibility::Unknown))
+            && eligibility == core::recording_guard::Eligibility::Unknown
+            && complete(&meetings.join(id))))
 }
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -925,6 +926,7 @@ pub(super) fn drain_locked(
         }
         let mut ready = Vec::new();
         let mut missing = Vec::new();
+        let suppressed = core::meeting_delete::suppressed_ids(root)?;
         store_io::reject_reparse(&jobs(root))?;
         for entry in fs::read_dir(jobs(root))? {
             let entry = entry?;
@@ -935,7 +937,7 @@ pub(super) fn drain_locked(
             let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            if !valid_id(id) {
+            if !valid_id(id) || suppressed.contains(id) {
                 continue;
             }
             match scheduled_job(root, id) {
@@ -998,7 +1000,7 @@ pub(super) fn drain_locked(
             return Ok(());
         };
         let Some(_recycle) = core::meeting_delete::claim_write(root, &id)? else {
-            return Ok(());
+            continue;
         };
         let _job_lock = store_io::lock(&jobs(root).join(format!("{id}.lock")))?;
         let Some(mut job) = read(root, &id)? else {
@@ -1143,6 +1145,7 @@ pub(super) fn start_worker_in(
     launch: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     store_io::reject_reparse(&jobs(root))?;
+    let suppressed = core::meeting_delete::suppressed_ids(root)?;
     if !fs::read_dir(jobs(root)).is_ok_and(|entries| {
         entries.flatten().any(|e| {
             let path = e.path();
@@ -1152,6 +1155,9 @@ pub(super) fn start_worker_in(
             let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
                 return false;
             };
+            if !valid_id(id) || suppressed.contains(id) {
+                return false;
+            }
             match scheduled_job(root, id) {
                 Ok(Some(job)) => {
                     job.ready(time, root) && job_eligible(root, meetings, id, &job).unwrap_or(false)
@@ -1187,8 +1193,11 @@ fn launch_worker() -> io::Result<()> {
         .at(Stage::NotesWorkerSpawn)?;
     crate::service::own_child(child)
 }
+pub fn worker_running(root: &Path) -> bool {
+    core::meeting_delete::lock_busy(&jobs(root).join("worker.lock")).unwrap_or(false)
+}
+
 pub fn run_pending() -> io::Result<()> {
-    core::settle::Store::default().recover()?;
     let root = core::state_dir();
     let meetings = core::meetings_dir();
     let _worker = match store_io::lock(&jobs(&root).join("worker.lock")) {
@@ -1201,6 +1210,12 @@ pub fn run_pending() -> io::Result<()> {
         }
         Err(e) => return Err(e),
     };
+    let _activity = match crate::updates::activity() {
+        Ok(activity) => activity,
+        Err(error) if core::meeting_delete::busy(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    core::settle::Store::default().recover()?;
     drain_locked(
         &root,
         &meetings,
