@@ -113,11 +113,52 @@ remote_tag_sha() {
     printf '%s\n' "$object_sha"
 }
 
+compare_status() {
+    local base=$1 head=$2
+    read_or_fail "Failed to compare $base with $head." \
+        gh api "repos/$repo/compare/$base...$head?per_page=1" --jq .status
+}
+
+published_latest_version() {
+    read_or_fail 'Failed to download the published Latest feed.' gh release download latest-main \
+        --repo "$repo" --pattern releases.latest.json --output - |
+        jq -er '[.Assets | arrays[] | select(.Type == "Full")] | select(length == 1) | .[0] |
+            select(.PackageId == "sidenote" and (.Version | type) == "string") |
+            select(.FileName == ("sidenote-" + .Version + "-latest-full.nupkg")) | .Version'
+}
+
+latest_asset_matches() {
+    local asset=$1 checksum
+    checksum=$(sha256sum -- "$asset") || return 1
+    [[ ${existing[${asset##*/}]-} == "sha256:${checksum%% *}" ]]
+}
+
+finish_latest_release() {
+    if [[ $latest_tag_exists == true && $latest_status != identical ]]; then
+        run_write gh api -X PATCH "repos/$repo/git/refs/tags/latest-main" -f "sha=$sha" -F force=true --silent
+    elif [[ $latest_tag_exists == false && $rolling_draft == false ]]; then
+        run_write gh api -X POST "repos/$repo/git/refs" -f ref=refs/tags/latest-main -f "sha=$sha" --silent
+    fi
+    run_write gh release edit latest-main --repo "$repo" --target "$sha" --title "Sidenote latest $tag" \
+        --notes-file "$notes_file" --draft=false --prerelease --latest=false
+}
+
 refresh_latest_release() {
-    local asset name digest checksum inventory version previous= count=0
+    local asset name digest inventory version previous= count=0 published_version published_cmp= published_notes
     local -A existing=()
     local -a obsolete=()
     local package_pattern="^sidenote-(${latest:2:-1})-latest-(full|delta)\.nupkg$"
+    if [[ $rolling_state == exists && $rolling_draft == false && $latest_status != identical ]]; then
+        if ! published_version=$(published_latest_version) ||
+            ! published_cmp=$(version_cmp "$tag" "v$published_version" 5 "$latest"); then
+            echo 'Could not identify the published Latest package version.' >&2
+            exit 1
+        fi
+        if [[ $published_cmp == -1 ]]; then
+            echo "Package $tag is older than published Latest v$published_version; skipping Latest publish."
+            return 0
+        fi
+    fi
     if [[ $rolling_state == exists ]]; then
         inventory=$(read_or_fail 'Failed to list Latest assets.' gh release view latest-main --repo "$repo" \
             --json assets --jq '.assets[] | [.name, (.digest // "")] | @tsv') || exit 1
@@ -125,11 +166,29 @@ refresh_latest_release() {
             if [[ -n $name ]]; then existing[$name]=$digest; fi
         done <<< "$inventory"
     fi
+    if [[ $latest_status == identical || $published_cmp == 0 ]]; then
+        # A retry can finish the tag or release edit once every proved asset is already present.
+        for asset in "${assets[@]}"; do
+            if ! latest_asset_matches "$asset"; then
+                echo "Latest asset ${asset##*/} is missing or differs from the proved package; refusing to resume." >&2
+                exit 1
+            fi
+        done
+        if [[ $latest_status == identical && $rolling_draft == false && $rolling_name == "Sidenote latest $tag" ]]; then
+            published_notes=$(read_or_fail 'Failed to read Latest release notes.' gh release view latest-main \
+                --repo "$repo" --json isPrerelease,body --jq 'select(.isPrerelease == true) | .body') || exit 1
+            if [[ $published_notes == "$(<"$notes_file")" ]]; then
+                echo "Latest already publishes the proved package $tag; skipping Latest publish."
+                return 0
+            fi
+        fi
+        finish_latest_release
+        return
+    fi
     for asset in "$asset_dir/"*.nupkg; do
         name=${asset##*/}
         if [[ -n ${existing[$name]+x} ]]; then
-            checksum=$(sha256sum -- "$asset")
-            if [[ ${existing[$name]} != "sha256:${checksum%% *}" ]]; then
+            if ! latest_asset_matches "$asset"; then
                 echo "Existing asset $name differs from the proved package; refusing to replace it." >&2
                 exit 1
             fi
@@ -166,11 +225,7 @@ refresh_latest_release() {
     for name in "${obsolete[@]}"; do
         run_write gh release delete-asset latest-main "$name" --repo "$repo" --yes
     done
-    if [[ $rolling_draft == false ]]; then
-        run_write gh api -X PATCH "repos/$repo/git/refs/tags/latest-main" -f "sha=$sha" -F force=true --silent
-    fi
-    run_write gh release edit latest-main --repo "$repo" --target "$sha" --title "Sidenote latest $tag" \
-        --notes-file "$notes_file" --draft=false --prerelease --latest=false
+    finish_latest_release
 }
 
 stable_latest=true
@@ -213,11 +268,39 @@ if [[ $channel != latest ]]; then
 fi
 
 if [[ $channel == latest ]]; then
-    main_sha=$(read_or_fail 'Failed to resolve main.' gh api "repos/$repo/git/ref/heads/main" --jq .object.sha) || exit 1
-    if [[ $main_sha != "$sha" ]]; then
-        echo 'Main advanced during packaging; skipping Latest publish.'
-        exit 0
-    fi
+    # The publish job serializes Latest writes, so read the tag here after acquiring that slot.
+    main_status=$(compare_status "$sha" heads/main) || exit 1
+    case $main_status in
+        ahead|identical) ;;
+        behind|diverged)
+            echo "Commit $sha is outside main history ($main_status); skipping Latest publish."
+            exit 0
+            ;;
+        *) echo "Unexpected main comparison status: $main_status" >&2; exit 1 ;;
+    esac
+    latest_tag_exists=$(read_or_fail 'Failed to look up the latest-main tag.' \
+        gh api "repos/$repo/git/matching-refs/tags/latest-main" |
+        jq -r 'def valid_refs:
+            if type == "array" then all(.[]; if type == "object" then (.ref | type) == "string" else false end)
+            else false end;
+            if valid_refs then any(.[]; .ref == "refs/tags/latest-main")
+            else error("Malformed latest-main tag lookup response") end') || exit 1
+    latest_status=missing
+    case $latest_tag_exists in
+        true)
+            latest_status=$(compare_status tags/latest-main "$sha") || exit 1
+            case $latest_status in
+                ahead|identical) ;;
+                behind|diverged)
+                    echo "Commit $sha is $latest_status relative to latest-main; skipping Latest publish."
+                    exit 0
+                    ;;
+                *) echo "Unexpected latest-main comparison status: $latest_status" >&2; exit 1 ;;
+            esac
+            ;;
+        false) ;;
+        *) echo "Unexpected latest-main tag lookup result: $latest_tag_exists" >&2; exit 1 ;;
+    esac
 elif [[ $DRY_RUN == 1 ]]; then
     echo 'Dry run: skipping remote tag identity check.'
 else
@@ -254,12 +337,8 @@ esac
 
 if [[ $channel == dev || $channel == latest ]]; then
     rolling_tag=dev
-    rolling_regex=$dev
-    rolling_parts=4
     if [[ $channel == latest ]]; then
         rolling_tag=latest-main
-        rolling_regex=$latest
-        rolling_parts=5
     fi
     rolling_prefix="Sidenote $channel "
     rolling_create=(gh release create "$rolling_tag" "${assets[@]}" --repo "$repo" --target "$sha" --title "$rolling_prefix$tag" --notes-file "$notes_file" --prerelease --latest=false)
@@ -274,13 +353,13 @@ if [[ $channel == dev || $channel == latest ]]; then
     esac
     echo "Rolling $rolling_tag release branch: $rolling_state"
     rolling_replace=1
-    # A draft is an interrupted create: replace it even at the same version, or the feed stays down.
+    # Resume interrupted drafts without comparing release titles.
     if [[ $rolling_state == exists && $rolling_draft != false ]]; then
         echo "Rolling $rolling_tag release is a draft (isDraft=$rolling_draft); replacing it."
-    elif [[ $rolling_state == exists ]]; then
+    elif [[ $channel == dev && $rolling_state == exists ]]; then
         rolling_version=
         if [[ $rolling_name == "$rolling_prefix"* ]]; then rolling_version=${rolling_name#$rolling_prefix}; fi
-        if [[ -n $rolling_version ]] && cmp=$(version_cmp "$rolling_version" "$tag" "$rolling_parts" "$rolling_regex"); then
+        if [[ -n $rolling_version ]] && cmp=$(version_cmp "$rolling_version" "$tag" 4 "$dev"); then
             if [[ $cmp != -1 ]]; then
                 rolling_replace=0
                 echo "Rolling $rolling_tag release is $rolling_version, the same as or newer than $tag; skipping rolling replacement."
@@ -289,7 +368,21 @@ if [[ $channel == dev || $channel == latest ]]; then
             echo "Rolling $rolling_tag release name '$rolling_name' has no readable $channel version; treating it as older."
         fi
     fi
-    if (( rolling_replace )) && [[ $channel == latest && $rolling_state == exists ]]; then
+    if [[ $channel == latest ]]; then
+        if [[ $rolling_state == exists && $rolling_draft != true && $rolling_draft != false ]]; then
+            echo "Unexpected Latest draft state: $rolling_draft" >&2
+            exit 1
+        fi
+        if [[ $rolling_state == missing ]]; then
+            if [[ $latest_status == identical ]]; then
+                echo 'The latest-main tag matches the proved commit, but its release is missing.' >&2
+                exit 1
+            fi
+            # An existing tag still guards against older runs while the draft is prepared.
+            run_write gh release create latest-main --repo "$repo" --target "$sha" --title "$rolling_prefix$tag" \
+                --notes-file "$notes_file" --draft --prerelease --latest=false
+            rolling_draft=true
+        fi
         refresh_latest_release
     elif (( rolling_replace )); then
         # The feed returns 404 between delete and create; the app treats that as a failed check, never a wrong package.
@@ -307,13 +400,6 @@ if [[ $channel == dev || $channel == latest ]]; then
                 *) exit 1 ;;
             esac
         fi
-        if [[ $channel == latest ]]; then
-            run_write gh release create latest-main --repo "$repo" --target "$sha" --title "$rolling_prefix$tag" \
-                --notes-file "$notes_file" --draft --prerelease --latest=false
-            rolling_draft=true
-            refresh_latest_release
-        else
-            run_write "${rolling_create[@]}"
-        fi
+        run_write "${rolling_create[@]}"
     fi
 fi
