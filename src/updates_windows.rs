@@ -1750,19 +1750,7 @@ fn after_update_status(status: Status, directory: &Path) -> Status {
     pipeline_status(status, directory)
 }
 pub fn restarted() {
-    let _ = arm_confirmation_after_older_updater(&directory());
     let _ = after_update();
-}
-/// This version writes the confirmation target before its own handoff, so a restart into it
-/// with no target came from an older updater, and the install succeeded.
-fn arm_confirmation_after_older_updater(directory: &Path) -> io::Result<()> {
-    let target = directory.join(crate::updates::CONFIRMATION_TARGET);
-    match fs::metadata(&target) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            write_json(&target, &crate::updates::VERSION)
-        }
-        _ => Ok(()),
-    }
 }
 fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(), String>) {
     if guard.listener_pending() {
@@ -2049,21 +2037,6 @@ mod window_lock_tests {
 mod tests {
     use super::*;
     use PipelineCompletion::Complete;
-
-    #[test]
-    fn restart_from_an_older_updater_arms_the_confirmation_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join(crate::updates::CONFIRMATION_TARGET);
-        arm_confirmation_after_older_updater(dir.path()).unwrap();
-        let armed: String = serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
-        assert_eq!(armed, crate::updates::VERSION);
-
-        // A target this version wrote for a later update is never replaced.
-        write_json(&target, &"99.0.0").unwrap();
-        arm_confirmation_after_older_updater(dir.path()).unwrap();
-        let kept: String = serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
-        assert_eq!(kept, "99.0.0");
-    }
 
     fn reconcile_install(
         directory: &Path,
