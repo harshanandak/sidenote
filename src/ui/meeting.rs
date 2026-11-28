@@ -57,17 +57,16 @@ pub enum Tab {
     Notes,
 }
 
-/// The saved meeting page's notes column, text width. Wide pages lay out left to right as a strip
-/// kept for the section rail, the notes, a gap and the tasks, centred as one 990 point grid.
+/// Reading grid dimensions. The desktop section marks sit in the page's leading gutter.
 pub const COLUMN: f32 = 620.0;
 pub const STRIP: f32 = 44.0;
 pub const GAP: f32 = 36.0;
 pub const TASKS: f32 = 290.0;
-pub const GRID: f32 = STRIP + COLUMN + GAP + TASKS;
+const GRID: f32 = COLUMN + GAP + TASKS;
+const WIDE_PAGE: f32 = 1040.0;
+const WIDE_SIDE: f32 = 32.0;
 /// Page gutter below the wide grid.
 pub const SIDE: f32 = 24.0;
-/// Space kept right of the wide grid (the mock's page padding); the grid is centred in the rest.
-pub const EDGE: f32 = 16.0;
 /// The widest the other reading pages get; lines stay near 80 characters.
 pub const PAGE_COLUMN: f32 = 760.0;
 
@@ -82,9 +81,9 @@ fn page_w(s: &State) -> f32 {
     s.app_w.get() - super::nav::width(s)
 }
 
-/// Room for the whole grid and its right edge. Below it the tasks sit under the notes.
+/// Below the desktop grid and its gutters, tasks sit under the notes.
 pub fn wide(s: &State) -> bool {
-    page_w(s) >= GRID + EDGE
+    page_w(s) >= GRID + 2.0 * WIDE_SIDE
 }
 
 /// Room for the 44 strip and the notes column with the page gutter either side. The wide grid and

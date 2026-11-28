@@ -56,7 +56,7 @@ impl Visit {
             label: label.into(),
         };
         let glow = self.selected.as_ref() == Some(&section);
-        let heading = roles::SECTION
+        let heading = roles::COMPACT_SECTION
             .wrap(label, p.ink)
             .key(section.key.clone())
             .selectable(true);
@@ -64,8 +64,8 @@ impl Visit {
             sections.push(section);
         }
         col()
-            .mt(if first { 0.0 } else { roles::SECTION_TOP })
-            .mb(8.0)
+            .mt(if first { 0.0 } else { 20.0 })
+            .mb(6.0)
             .children(glow.then(|| {
                 el().key(format!("section-glow-{}", self.pulse))
                     .pin(Some(-4.0), Some(-2.0), Some(0.0), Some(-2.0))

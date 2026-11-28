@@ -6,6 +6,25 @@ use rune_kit::{Placement, Popover};
 use sidenote::core::{self, TaskItem, TaskStatus, Urgency, people::Side};
 use std::{collections::BTreeSet, rc::Rc};
 
+const META: roles::Role = roles::Role {
+    size: 11.5,
+    lh: 16.0,
+    ..roles::META
+};
+const CONTROL: roles::Role = roles::Role {
+    size: 12.0,
+    lh: 17.0,
+    ..roles::CONTROL
+};
+const READ: roles::Role = roles::Role {
+    size: 13.5,
+    lh: 22.0,
+    ..roles::READ
+};
+const REPLY: roles::Role = roles::Role { size: 13.0, ..READ };
+const MARKER: f32 = 16.0;
+const POINT_GAP: f32 = 9.0;
+
 #[derive(Default)]
 pub(crate) struct RailVisit {
     done_open: bool,
@@ -206,12 +225,9 @@ fn picked_template(s: &State, m: &Meeting) -> &'static str {
 
 fn fact(icon: &'static rune::Icon, p: Palette) -> El {
     row()
-        .h(28.0)
-        .gap(6.0)
+        .gap(5.0)
         .items_center()
-        .px(6.0)
-        .radius(8.0)
-        .child(icons::draw(icon, 14.0, p.faint).a11y_hidden())
+        .child(icons::draw(icon, 15.0, p.faint).a11y_hidden())
 }
 
 fn meeting_facts(m: &Meeting, p: Palette) -> Option<El> {
@@ -223,21 +239,21 @@ fn meeting_facts(m: &Meeting, p: Palette) -> Option<El> {
         (None, Some(duration)) => format!("Duration: {duration}"),
         (None, None) => return None,
     };
-    let separator = date.is_some() && duration.is_some();
+    let item = |icon: &'static rune::Icon, key: &str, label: String| {
+        fact(icon, p)
+            .key(key)
+            .child(META.line(label, p.soft).a11y_hidden())
+    };
     Some(
-        fact(&icons::DIARY, p)
+        row()
             .key("meeting-facts")
+            .gap(14.0)
             .role("text")
             .label(name)
             .focusable(true)
             .focus_ring(2.0, 1.0, p.accent)
-            .children(date.map(|date| roles::FACT.line(date, p.soft).a11y_hidden()))
-            .children(separator.then(|| {
-                widgets::dot(3.0, p.mark)
-                    .key("meeting-fact-separator")
-                    .a11y_hidden()
-            }))
-            .children(duration.map(|duration| roles::FACT.line(duration, p.soft).a11y_hidden())),
+            .children(date.map(|date| item(&icons::DIARY, "meeting-date", date)))
+            .children(duration.map(|duration| item(&icons::CLOCK, "meeting-duration", duration))),
     )
 }
 
@@ -254,15 +270,15 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
         .focus_group()
         .h(28.0)
         .padding(2.0)
-        .radius(8.0)
+        .radius(9.0)
         .fill(p.chip)
         .equal_columns(3)
         .child(
             el().key("indicator")
                 .h(24.0)
-                .radius(6.0)
-                .fill(p.bg)
-                .shadow(0.0, 1.0, p.shadow)
+                .radius(7.0)
+                .fill(p.card)
+                .shadow(1.0, 2.0, p.shadow)
                 .token_motion(k.motion.control)
                 .a11y_hidden()
                 .grid_cell(selected),
@@ -286,9 +302,9 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                         .focus_selected(on)
                         .focus_ring(2.0, 1.0, p.accent)
                         .h(24.0)
-                        .px(10.0)
+                        .px(12.0)
                         .center()
-                        .radius(6.0)
+                        .radius(7.0)
                         .hover(p.button_hover)
                         .on_press_tx(move |s: &mut State, tx| {
                             if index == 2 {
@@ -308,12 +324,8 @@ fn view_switch(s: &State, k: &Kit, p: Palette) -> El {
                             }
                         })
                         .child(
-                            rune::text(name)
-                                .font(rune::TextStyle {
-                                    weight: if on { 600.0 } else { k.ty.ui.weight },
-                                    ..k.ty.ui
-                                })
-                                .color(if on { p.ink } else { p.soft })
+                            (if on { CONTROL.bold() } else { CONTROL })
+                                .line(name, if on { p.ink } else { p.soft })
                                 .a11y_hidden(),
                         )
                         .grid_cell(index)
@@ -423,8 +435,7 @@ fn people_fact(names: String, p: Palette) -> El {
         .focusable(true)
         .focus_ring(2.0, 1.0, p.accent)
         .child(
-            roles::FACT
-                .line(names.clone(), p.soft)
+            META.line(names.clone(), p.soft)
                 .a11y_hidden()
                 .help_when_truncated(names)
                 .shrink(),
@@ -432,7 +443,6 @@ fn people_fact(names: String, p: Palette) -> El {
         .shrink()
 }
 
-/// `side` is the page gutter; the wide page puts the header in the notes column and passes 0.
 fn header(
     s: &State,
     k: &Kit,
@@ -444,14 +454,21 @@ fn header(
 ) -> El {
     let phone = super::phone(s);
     let menu = more::menu(s, k, m, "meeting", p, layer);
+    let title_style = crate::ui::theme::display(if phone { 24.0 } else { 26.0 }).lh(if phone {
+        30.0
+    } else {
+        32.0
+    });
     let title = row()
         .key("meeting-title-row")
         .w_full()
         .gap(8.0)
         .items_start()
         .child(
-            // 26 on a page, 24 on a phone; the line is a quarter taller than the size.
-            text_title(&m.title, if phone { 24.0 } else { 26.0 }, p)
+            text(&m.title)
+                .font(title_style)
+                .color(p.ink)
+                .wrap()
                 .wrap_anywhere()
                 .max_lines(2)
                 .key("meeting-title")
@@ -479,7 +496,7 @@ fn header(
             .key("meeting-facts-row")
             .w_full()
             .flex_wrap()
-            .gaps(2.0, 8.0)
+            .gaps(2.0, 14.0)
             .items_center()
             .children(facts_items)
     });
@@ -500,7 +517,7 @@ fn header(
         .w_full()
         .px(side)
         .pt(18.0)
-        .pb(22.0)
+        .pb(20.0)
         .child(title)
         .child(
             controls
@@ -519,12 +536,9 @@ fn bullet(kind: &str, origin: &str, p: Palette) -> El {
         "open" => el().size(5.0, 5.0).radius(2.5).border(1.0, p.mark),
         _ => widgets::dot(5.0, p.mark),
     };
-    // 5 px in from the 6 px row padding puts the dot 11 px from the row edge; 9 px down centres
-    // it on the first 23 px line below the 2 px row padding.
     col()
-        .w(20.0)
-        .pt(9.0)
-        .pl(5.0)
+        .size(MARKER, READ.lh)
+        .center()
         .child(mark.key(format!("meeting-bullet-{origin}")))
 }
 
@@ -532,26 +546,24 @@ fn point(s: &State, pt: &Point, origin: String, timed: bool, p: Palette) -> El {
     let key = format!("meeting-point-{origin}");
     let source_key = format!("meeting-source-{origin}");
     let decided = pt.kind == "decided";
+    let reply = pt.kind == "response";
     let ink = match pt.kind.as_str() {
         "decided" => p.ink,
         "open" => p.soft,
         _ => p.body,
     };
-    let mut body = roles::READ
+    let role = if reply { REPLY } else { READ };
+    let body = (if decided { role.bold() } else { role })
         .wrap(&pt.text, ink)
         .key(format!("meeting-point-text-{origin}"))
         .selectable(true)
         .w_full();
-    if decided {
-        body = body.font(roles::READ.bold().style());
-    }
     let mut line = row()
         .key(key)
         .w_full()
-        .gap(0.0)
-        .py(2.0)
-        .pl(if pt.kind == "response" { 26.0 } else { 6.0 })
-        .pr(6.0)
+        .gap(POINT_GAP)
+        .py(if reply { 1.0 } else { 2.0 })
+        .pl(if reply { MARKER + POINT_GAP } else { 0.0 })
         .radius(6.0)
         .items_start()
         // Pointing at the line, or keyboard focus on its time, tints the row and shows the time.
@@ -643,8 +655,7 @@ fn narrative(
         || (summary.context.is_empty() && summary.topics.is_empty() && summary.verify.is_empty())
     {
         return body.child(notes_status::meeting_banner(s, m, p).unwrap_or_else(|| {
-            roles::READ
-                .wrap("No summary is available for this meeting.", p.soft)
+            READ.wrap("No summary is available for this meeting.", p.soft)
                 .key("meeting-empty-summary")
         }));
     }
@@ -654,8 +665,7 @@ fn narrative(
         body = body
             .child(heading("Context", "sec-context".into(), first, p))
             .child(
-                roles::READ
-                    .wrap(summary.context.join(" "), p.body)
+                READ.wrap(summary.context.join(" "), p.body)
                     .key("ctx-0")
                     .selectable(true),
             );
@@ -678,8 +688,7 @@ fn narrative(
         ));
         for (i, line) in summary.verify.iter().enumerate() {
             body = body.child(
-                roles::READ
-                    .wrap(line, p.soft)
+                READ.wrap(line, p.soft)
                     .key(format!("verify-{i}"))
                     .py(2.0)
                     .selectable(true),
@@ -1017,8 +1026,6 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     };
     let wide = super::wide(s);
     let strip = super::strip(s);
-    // The wide grid already sets the notes 44 points in from its edge, so its column has no
-    // gutter of its own; below the grid's width the notes keep the page gutter.
     let side = super::gutter(s);
     let phone = super::phone(s);
     const DOCK_MARGIN: f32 = 6.0;
@@ -1095,7 +1102,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
                 scroll(
                     doc.max_w(COLUMN + 2.0 * side)
                         .px(side)
-                        .pt(6.0)
+                        .pt(if wide { 0.0 } else { 6.0 })
                         .pb(bottom_pad),
                     "meeting-scroll",
                 )
@@ -1165,7 +1172,6 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     });
     let mut columns = row().w_full().grow(1.0).min_h(0.0).min_w(0.0);
     if wide {
-        columns = columns.pr(EDGE);
         let tasks = scroll(
             col().pb(24.0).child(
                 col()
@@ -1180,15 +1186,17 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         .max_w(TASKS)
         .grow(0.0)
         .ml(GAP);
-        columns = columns
-            .justify_center()
-            .child(grid("meeting-grid", main, GRID, marks).child(tasks));
+        columns = columns.justify_center().child(wide_frame(
+            grid(main, WIDE_SIDE, GRID + WIDE_SIDE, marks)
+                .ml(-WIDE_SIDE)
+                .child(tasks),
+        ));
     } else if strip {
         // Narrower than the grid but wide enough for the strip: the notes keep their column and
         // the tasks sit under them.
         columns = columns
             .justify_center()
-            .child(grid("meeting-grid", main, STRIP + COLUMN, marks));
+            .child(grid(main, STRIP, STRIP + COLUMN, marks));
     } else {
         columns = columns.child(main);
     }
@@ -1205,17 +1213,13 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
         },
         chip,
     );
-    if strip {
+    if wide {
+        head = row().w_full().justify_center().child(wide_frame(head));
+    } else if strip {
         head = row()
             .w_full()
-            .pr(if wide { EDGE } else { 0.0 })
             .justify_center()
-            .child(grid(
-                "meeting-header-grid",
-                head.w(COLUMN).min_w(COLUMN).max_w(COLUMN),
-                if wide { GRID } else { STRIP + COLUMN },
-                None,
-            ));
+            .child(row().w(STRIP + COLUMN).pl(STRIP).child(head));
     }
     let mut pane = col()
         .key("meeting-pane")
@@ -1238,21 +1242,23 @@ pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -
     pane.child(head).child(columns)
 }
 
-/// The grid row, `width` wide: the 44 point strip kept for the section rail, then `notes`. The
-/// header and the page body both sit in one, so the title lines up with the notes.
-fn grid(key: &str, notes: El, width: f32, marks: Option<El>) -> El {
+fn wide_frame(content: El) -> El {
+    row().w_full().max_w(WIDE_PAGE).px(WIDE_SIDE).child(content)
+}
+
+fn grid(notes: El, strip: f32, width: f32, marks: Option<El>) -> El {
     row()
-        .key(key)
+        .key("meeting-grid")
         .w(width)
         .min_w(width)
         .max_w(width)
         .child(
             marks
                 .unwrap_or_else(el)
-                .key(format!("{key}-strip"))
-                .w(STRIP)
-                .min_w(STRIP)
-                .max_w(STRIP),
+                .key("meeting-grid-strip")
+                .w(strip)
+                .min_w(strip)
+                .max_w(strip),
         )
         .child(notes)
 }
