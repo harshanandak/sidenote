@@ -429,6 +429,8 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "f602446d98114226eb807ad043fe0fef85b4ec4b532e2c52838f4b9f67e95da6",
 
+  "src/ui/hex/connection/stop_tests/start.rs": "c80c8ac4d607a2234f0bd46d45c310884ad4727a496715b693117f1cc1a448ff",
+
   "src/ui/hex/settings.rs": "0a07a6062e5c86792b31b9d9c2fb570b4b313f62efd2e8f005762f31c21fdbe3",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
