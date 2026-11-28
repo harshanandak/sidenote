@@ -1010,6 +1010,17 @@ const PROMPT_GAP: f32 = 4.0;
 const CARD_RADIUS: f32 = 18.0;
 const FIELD_RADIUS: f32 = 14.0;
 const CARD_PAD: (f32, f32, f32) = (10.0, 8.0, 8.0);
+const LABEL_ROW: f32 = 22.0;
+
+fn scope_text(s: &State) -> &'static str {
+    if s.companies.open {
+        "This company"
+    } else if s.ask_current_live() || s.ask_meeting_id().is_some() {
+        "This meeting"
+    } else {
+        "All meetings"
+    }
+}
 
 fn card_open(s: &State) -> bool {
     s.ask_open || !s.question.text.trim().is_empty()
@@ -1235,6 +1246,22 @@ fn overlay_at(
         .pl(left)
         .pr(right);
     let radius = if open { CARD_RADIUS } else { PILL_HEIGHT / 2.0 };
+    let mut top_slot = col().key("ask-top-slot").w_full();
+    if open && !compact {
+        top_slot = top_slot.child(
+            row()
+                .w_full()
+                .h(LABEL_ROW)
+                .px(6.0)
+                .pb(6.0)
+                .justify_end()
+                .child(
+                    roles::MEETING_META
+                        .line(scope_text(s), p.faint)
+                        .key("ask-scope"),
+                ),
+        );
+    }
     let pill = col()
         .key("ask-pill")
         .w_full()
@@ -1242,7 +1269,7 @@ fn overlay_at(
         .radius(radius)
         .instant_changes()
         .motion(Spring::NONE)
-        .child(col().key("ask-top-slot"));
+        .child(top_slot);
     let dock = col().key("ask-controls").w_full().gap(PROMPT_GAP);
     let (dock, bottom_inset) = if let Some(placement) = reading {
         // Center alignment divides the difference between the two side margins in half.

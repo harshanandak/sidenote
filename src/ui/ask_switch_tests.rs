@@ -2011,7 +2011,7 @@ fn reduced_motion_opens_the_ask_panel_without_moving_the_bottom_edge() {
     rt.frame(0.016);
     let opened = rt.presented("ask-pill").unwrap().0;
     assert_eq!(bottom(opened), bottom(pill));
-    assert_eq!(opened[3], 66.0);
+    assert_eq!(opened[3], 88.0);
 }
 
 #[cfg(debug_assertions)]
@@ -2411,7 +2411,7 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
         (card[0], card[2], bottom(card)),
         (pill[0], pill[2], bottom(pill))
     );
-    assert_eq!(card[3], 66.0);
+    assert_eq!(card[3], if size == DEFAULT_SIZE { 88.0 } else { 66.0 });
     assert_eq!(input[1] + input[3] / 2.0, field[1] + field[3] / 2.0);
 
     rt.update(|s, _| s.runner_found.clear());
@@ -2702,11 +2702,12 @@ fn ask_card_focus_opens_one_surface_with_a_model_chip() {
     }
     for (mut rt, p) in ask_card_pages() {
         let rest = rect_of(&rt, "ask-pill");
+        let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
         focus_ask_card(&mut rt);
         let card = rt.presented("ask-pill").unwrap().0;
         assert_eq!(
             (card[2], bottom(card), card[3]),
-            (rest[2], bottom(rest), 66.0)
+            (rest[2], bottom(rest), if wide { 88.0 } else { 66.0 })
         );
         assert_ask_bar_edge(&rt, p.line, (12.0, 32.0), p);
         for key in ["ask-input", "ask-model", "ask-send"] {
@@ -2968,6 +2969,121 @@ fn ask_card_keeps_the_input_mounted_across_open_and_close() {
         assert_eq!(rect_of(&rt, "ask-pill"), rest);
         assert_eq!(element(&rt, "ask-input").path, path);
         assert_eq!(caret(&rt), before);
+    }
+}
+
+#[test]
+fn ask_card_typing_keeps_the_scope_label_on_top_with_no_hint() {
+    if in_parent("ask_card_typing_keeps_the_scope_label_on_top_with_no_hint") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
+        focus_ask_card(&mut rt);
+        rt.key(Key::Text("A draft".into()).into());
+        rt.frame(0.0);
+        settle_ask_bar(&mut rt);
+        let card = element(&rt, "ask-pill");
+        if wide {
+            assert_eq!(card.rect[3], 88.0);
+            assert_eq!(rect_of(&rt, "ask-top-slot")[3], 22.0);
+            let scope = element(&rt, "ask-scope");
+            let field = rect_of(&rt, "ask-field");
+            assert_eq!(rt.state.question.text, "A draft");
+            // ask_card_pages covers Home and Tasks, both "All meetings" scope.
+            assert_eq!(scope.text.as_deref(), Some("All meetings"), "scope text");
+            assert!(inside(scope.rect, card.rect), "scope inside card");
+            assert!(scope.rect[1] + scope.rect[3] <= field[1] + 1.0);
+            assert!(
+                scope.rect[0] >= card.rect[0] + card.rect[2] / 2.0,
+                "scope on the right"
+            );
+            assert!(
+                card.rect[0] + card.rect[2] - scope.rect[0] - scope.rect[2] <= 20.0,
+                "scope at the right edge"
+            );
+            assert!(!scope.focusable && !scope.focused);
+        } else {
+            assert_eq!(card.rect[3], 66.0);
+            assert!(rt.find("ask-scope").is_none());
+        }
+        assert!(!element(&rt, "ask-send").inert);
+        assert_no_ask_hint(&rt.elements());
+    }
+}
+
+fn check_ask_scope_label(rt: &mut Runtime<State>, wide: bool, want: &str) {
+    focus_ask_card(rt);
+    rt.frame(0.0);
+    let card = element(rt, "ask-pill");
+    let field = rect_of(rt, "ask-field");
+    if wide {
+        assert_eq!(card.rect[3], 88.0, "{want}");
+        let scope = element(rt, "ask-scope");
+        assert_eq!(scope.text.as_deref(), Some(want), "scope text");
+        assert!(inside(scope.rect, card.rect), "scope inside card");
+        assert!(scope.rect[1] + scope.rect[3] <= field[1] + 1.0);
+        assert!(
+            scope.rect[0] >= card.rect[0] + card.rect[2] / 2.0,
+            "scope on the right"
+        );
+        assert!(
+            card.rect[0] + card.rect[2] - scope.rect[0] - scope.rect[2] <= 20.0,
+            "scope at the right edge"
+        );
+        assert!(!scope.focusable && !scope.focused);
+    } else {
+        assert_eq!(card.rect[3], 66.0, "{want}");
+        assert!(rt.find("ask-scope").is_none(), "{want}");
+    }
+    assert_no_ask_hint(&rt.elements());
+}
+
+#[test]
+fn ask_card_scope_label_follows_the_page() {
+    if in_parent("ask_card_scope_label_follows_the_page") {
+        return;
+    }
+    let cells = [
+        ((1334.0, 900.0), false),
+        ((1334.0, 900.0), true),
+        ((390.0, 844.0), false),
+        ((390.0, 844.0), true),
+    ];
+    for (size, dark) in cells {
+        let mut rt = ask_page_fixture(size);
+        rt.set_system_dark(dark);
+        let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
+        rt.update(|s, _| s.go_home());
+        settle_ask_bar(&mut rt);
+        check_ask_scope_label(&mut rt, wide, "All meetings");
+        rt.update(|s, _| s.set_view(tasks::View::Tasks));
+        settle_ask_bar(&mut rt);
+        check_ask_scope_label(&mut rt, wide, "All meetings");
+        rt.update(|s, tx| {
+            s.go_home();
+            s.select(MEETING, tx);
+        });
+        settle_ask_bar(&mut rt);
+        check_ask_scope_label(&mut rt, wide, "This meeting");
+        rt.update(|s, _| {
+            s.go_home();
+            s.question = TextEdit::default();
+            scene_live(s, "", &[], false);
+            s.hex.status = Some(Ok(hex_engine_recording()));
+            use sidenote::hex_engine::{Feature, Support};
+            let caps = [(Feature::RecordStop, Support::Supported)].into();
+            s.hex_apply(hex::Msg::Caps("test".into(), Ok(caps)));
+        });
+        rt.frame(0.0);
+        assert!(rt.state.ask_current_live());
+        settle_ask_bar(&mut rt);
+        check_ask_scope_label(&mut rt, wide, "This meeting");
+        rt.update(|s, _| {
+            super::companies::scene(s, 0, false, false);
+        });
+        settle_ask_bar(&mut rt);
+        check_ask_scope_label(&mut rt, wide, "This company");
     }
 }
 
