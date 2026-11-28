@@ -2802,9 +2802,17 @@ fn ask_card_model_chip_opens_the_picker_above_the_card() {
             tap(&mut rt, "ask-model-picker-default");
             assert_ne!(rt.state.ask_model(), previous);
         }
-        rt.update(|s, _| s.ask_settings.connection.settings.enabled = true);
+        rt.update(|s, _| {
+            let connection = &mut s.ask_settings.connection.settings;
+            connection.enabled = true;
+            connection.model = "local-fixture-model".into();
+        });
         settle_ask_bar(&mut rt);
         focus_ask_card(&mut rt);
+        assert_eq!(
+            element(&rt, "ask-model").label.as_deref(),
+            Some("Model: local-fixture-model")
+        );
         tap(&mut rt, "ask-model");
         assert!(rt.state.on_hex());
         assert_eq!(
