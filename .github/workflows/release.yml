@@ -292,6 +292,7 @@ jobs:
     concurrency:
       group: ${{ github.event_name == 'workflow_run' && 'release-publish-latest' || 'release-publish' }}
       cancel-in-progress: false
+      queue: ${{ github.event_name == 'workflow_run' && 'max' || 'single' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
