@@ -856,8 +856,10 @@ if (!(Test-RestartSchedule $t)) {
     $t = Read-ListenerTask
     if (!(Test-RestartSchedule $t)) { throw 'Listener task restart schedule was not saved' }
 }
-if ($env:SIDENOTE_TASK_RUN -eq 'yes') {
+if ($env:SIDENOTE_TASK_RUN -in @('yes', 'start')) {
     Start-ScheduledTask -InputObject $t
+}
+if ($env:SIDENOTE_TASK_RUN -eq 'yes') {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $previous = $null
     while ($true) {
@@ -879,6 +881,7 @@ const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy)]
 enum ListenerTaskMode {
     Preflight,
+    Start,
     Recover { run: bool, register: bool },
 }
 
@@ -940,6 +943,7 @@ fn run_listener_task(
     }
     let (run, register) = match mode {
         ListenerTaskMode::Preflight => ("no", "inspect"),
+        ListenerTaskMode::Start => ("start", "yes"),
         ListenerTaskMode::Recover { run, register } => (
             if run { "yes" } else { "no" },
             if register { "yes" } else { "no" },
@@ -1584,7 +1588,16 @@ fn reconcile_installed(
         &guard,
         preflight,
         || pipeline(pipeline_deadline),
-        || listener(deadline),
+        || match budget {
+            ReconciliationBudget::FastUpdate => {
+                clear_listener_stop(directory)?;
+                task(ListenerTaskMode::Start, deadline).map_err(ListenerTaskError::message)?;
+                Ok(ListenerCompletion::Deferred)
+            }
+            ReconciliationBudget::InstallOrRecovery => {
+                listener(deadline).map(|()| ListenerCompletion::Ready)
+            }
+        },
         make_report,
     )
     .and_then(Reconciliation::hook_result)
@@ -1600,7 +1613,7 @@ fn reconcile_startup(guard: &InstallGuard<'_>, started: Instant) -> Result<(), S
                 .map_err(ListenerTaskError::message)
         },
         || install_pipeline_scripts(Some(pipeline_deadline)),
-        || recover_listener_until(deadline),
+        || recover_listener_until(deadline).map(|()| ListenerCompletion::Ready),
         report,
     )
     .and_then(|work| work.listener);
@@ -1612,15 +1625,7 @@ fn recover_listener() -> Result<(), String> {
     recover_listener_until(Instant::now() + TASK_COMMAND_TIMEOUT + Duration::from_secs(8))
 }
 fn recover_listener_until(deadline: Instant) -> Result<(), String> {
-    fs::remove_file(local("update-listener.stop"))
-        .or_else(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(error)
-            }
-        })
-        .map_err(|_| "Could not clear the listener stop marker.")?;
+    clear_listener_stop(&directory())?;
     checked_listener_task_until(
         ListenerTaskMode::Recover {
             run: true,
@@ -1634,6 +1639,23 @@ fn recover_listener_until(deadline: Instant) -> Result<(), String> {
         listener_lock,
         std::thread::sleep,
     )
+}
+
+fn clear_listener_stop(directory: &Path) -> Result<(), String> {
+    fs::remove_file(directory.join("update-listener.stop"))
+        .or_else(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
+        .map_err(|_| "Could not clear the listener stop marker.".into())
+}
+
+enum ListenerCompletion {
+    Ready,
+    Deferred,
 }
 struct Reconciliation {
     changed: bool,
@@ -1660,7 +1682,7 @@ fn reconcile_and_save(
     guard: &InstallGuard<'_>,
     preflight: impl FnOnce() -> Result<(), String>,
     pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
-    listener: impl FnOnce() -> Result<(), String>,
+    listener: impl FnOnce() -> Result<ListenerCompletion, String>,
     make_report: impl Fn(&Status) -> serde_json::Value,
 ) -> Result<Reconciliation, String> {
     let result =
@@ -1693,18 +1715,21 @@ fn reconcile_and_save(
 fn reconcile_install(
     guard: &InstallGuard<'_>,
     pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
-    listener: impl FnOnce() -> Result<(), String>,
+    listener: impl FnOnce() -> Result<ListenerCompletion, String>,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<Reconciliation, String> {
     let current = guard.begin_reconciliation()?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = complete_pipeline_install(guard, pipeline, make_report);
     let listener = listener();
-    guard.finish_reconciliation(listener.is_ok(), pipeline.is_ok())?;
+    guard.finish_reconciliation(
+        matches!(listener, Ok(ListenerCompletion::Ready)),
+        pipeline.is_ok(),
+    )?;
     Ok(Reconciliation {
         changed: !current,
         pipeline,
-        listener,
+        listener: listener.map(|_| ()),
     })
 }
 fn after_update_status(status: Status, directory: &Path) -> Status {
@@ -1995,9 +2020,12 @@ mod tests {
         preflight()?;
         let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
         preflight()?;
-        super::reconcile_install(&guard, pipeline, listener, |status| {
-            serde_json::json!(status)
-        })
+        super::reconcile_install(
+            &guard,
+            pipeline,
+            || listener().map(|()| ListenerCompletion::Ready),
+            |status| serde_json::json!(status),
+        )
         .and_then(Reconciliation::hook_result)
     }
 
@@ -2711,6 +2739,137 @@ $script:migrated = $false
     }
 
     #[test]
+    fn fast_update_hands_slow_listener_to_startup() {
+        for ready_at_startup in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path();
+            let lock_path = path.join("update-listener.lock");
+            let probe = || exclusive_at(&lock_path).map(Some);
+            let started = Instant::now();
+            let report = |status: &Status| serde_json::json!(status);
+            let result = reconcile_installed(
+                path,
+                started,
+                ReconciliationBudget::FastUpdate,
+                |mode, deadline| {
+                    assert!(deadline <= started + UPDATE_HOOK_WORK_LIMIT);
+                    mock_install_task(path, "no-process", mode)
+                },
+                |_| Ok(Complete),
+                |_| {
+                    wait_for_listener(Instant::now(), probe, |_| {
+                        panic!("the hook's readiness budget expired")
+                    })
+                },
+                report,
+            );
+            assert!(result.is_ok(), "slow listener failed the hook: {result:?}");
+            assert_eq!(
+                fs::read_to_string(path.join("task-operations")).unwrap(),
+                "start\n"
+            );
+            assert!(install_state::listener_pending(path));
+            assert!(install_state::completion_receipt_version(path).is_none());
+            assert!(read_saved_status(path).error.is_none());
+
+            let _held = ready_at_startup.then(|| probe().unwrap());
+            let startup = start_installed(
+                path,
+                Instant::now(),
+                |guard, _| {
+                    reconcile_and_save(
+                        guard,
+                        || Ok(()),
+                        || Ok(Complete),
+                        || {
+                            wait_for_listener(Instant::now(), probe, |_| unreachable!())
+                                .map(|()| ListenerCompletion::Ready)
+                        },
+                        report,
+                    )?
+                    .listener
+                },
+                |_| panic!("startup skipped pending listener recovery"),
+                || panic!("startup skipped pending listener recovery"),
+                || false,
+                report,
+            );
+            let error = if ready_at_startup {
+                assert!(!startup.unwrap());
+                assert_eq!(
+                    install_state::completion_receipt_version(path).as_deref(),
+                    Some(VERSION)
+                );
+                None
+            } else {
+                let error = startup.unwrap_err();
+                assert!(error.contains("The meeting listener did not start"));
+                assert!(install_state::completion_receipt_version(path).is_none());
+                Some(error)
+            };
+            assert_eq!(install_state::listener_pending(path), !ready_at_startup);
+            assert_eq!(read_saved_status(path).error, error);
+        }
+    }
+
+    #[test]
+    fn fast_update_still_fails_on_task_rejection_or_io() {
+        for (scenario, expected) in [
+            ("preflight", ListenerTaskError::OtherUser.message()),
+            ("start", ListenerTaskError::UnmanagedAction.message()),
+            ("start-timeout", ListenerTaskError::TimedOut.message()),
+            (
+                "stop-marker",
+                "Could not clear the listener stop marker.".into(),
+            ),
+            ("report", "Could not save installation status.".into()),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path();
+            match scenario {
+                "stop-marker" => fs::create_dir(path.join("update-listener.stop")).unwrap(),
+                "report" => fs::create_dir(path.join("update-report.json")).unwrap(),
+                _ => {}
+            }
+            let starts = std::cell::Cell::new(0);
+            let result = reconcile_installed(
+                path,
+                Instant::now(),
+                ReconciliationBudget::FastUpdate,
+                |mode, _| match mode {
+                    ListenerTaskMode::Preflight if scenario == "preflight" => {
+                        Err(ListenerTaskError::OtherUser)
+                    }
+                    ListenerTaskMode::Preflight => Ok(()),
+                    ListenerTaskMode::Start => {
+                        starts.set(starts.get() + 1);
+                        match scenario {
+                            "start" => Err(ListenerTaskError::UnmanagedAction),
+                            "start-timeout" => Err(ListenerTaskError::TimedOut),
+                            _ => Ok(()),
+                        }
+                    }
+                    ListenerTaskMode::Recover { .. } => unreachable!(),
+                },
+                |_| Ok(Complete),
+                |_| panic!("the fast hook must not wait for readiness"),
+                |status| serde_json::json!(status),
+            );
+            assert_eq!(result.unwrap_err(), expected, "{scenario}");
+            assert_eq!(
+                starts.get(),
+                usize::from(!matches!(scenario, "preflight" | "stop-marker")),
+                "{scenario}"
+            );
+            assert_eq!(
+                install_state::listener_pending(path),
+                scenario != "preflight"
+            );
+            assert!(install_state::completion_receipt_version(path).is_none());
+        }
+    }
+
+    #[test]
     fn install_preflight_refuses_unsafe_task_without_side_effects() {
         for (scenario, error) in [
             ("foreign-principal", ListenerTaskError::OtherUser),
@@ -2866,21 +3025,31 @@ $script:migrated = $false
             let now = clock.get();
             clock.set(now + maximum.min(deadline.saturating_duration_since(now)));
         };
+        let recover = |deadline| {
+            assert!(deadline - clock.get() >= Duration::from_secs(4));
+            spend(TASK_COMMAND_TIMEOUT + Duration::from_secs(8), deadline);
+        };
         let result = reconcile_installed(
             root.path(),
             started,
             budget,
-            |_, deadline| {
-                spend(TASK_COMMAND_TIMEOUT, deadline);
-                Ok(())
+            |mode, deadline| match mode {
+                ListenerTaskMode::Preflight => {
+                    spend(TASK_COMMAND_TIMEOUT, deadline);
+                    Ok(())
+                }
+                ListenerTaskMode::Start => {
+                    recover(deadline);
+                    Err(ListenerTaskError::TimedOut)
+                }
+                ListenerTaskMode::Recover { .. } => unreachable!(),
             },
             |deadline| {
                 spend(Duration::from_secs(7), deadline);
                 Err(PIPELINE_INSTALL_ERROR.into())
             },
             |deadline| {
-                assert!(deadline - clock.get() >= Duration::from_secs(4));
-                spend(TASK_COMMAND_TIMEOUT + Duration::from_secs(8), deadline);
+                recover(deadline);
                 Err(INSTALL_LISTENER_ERROR.into())
             },
             |status| serde_json::json!({"status":status}),
