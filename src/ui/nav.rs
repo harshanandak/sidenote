@@ -677,7 +677,8 @@ pub(super) fn actions(s: &State, p: Palette, narrow: bool) -> (Option<El>, Optio
         return (Some(recording_pill(s, p, narrow)), None);
     }
     let recording = s.hex_recording();
-    let pill = (recording && (s.on_live() || !meeting_shows_pause(s)))
+    let pending = s.pending_recording_start();
+    let pill = ((recording || pending) && (s.on_live() || !meeting_shows_pause(s)))
         .then(|| recording_pill(s, p, narrow));
     (pill, None)
 }
@@ -742,6 +743,9 @@ pub(super) fn recording_words(s: &State, narrow: bool) -> String {
         }
         .into();
     }
+    if s.pending_recording_start() {
+        return "Starting".into();
+    }
     let clock = s
         .live
         .as_ref()
@@ -772,11 +776,10 @@ fn owns_live_recording(s: &State, id: &str) -> bool {
         .is_some_and(|part| part.id == id)
 }
 
-fn unconfirmed_start(s: &State) -> bool {
-    s.live.as_ref().is_some_and(|live| {
-        live.phase == super::live::Phase::Starting
-            && matches!(live.session.as_ref(), Some(m) if m.pending_start_ms.is_some())
-    })
+fn starting_target(s: &State) -> bool {
+    !s.hex_status_unknown()
+        && matches!(&s.hex.status, Some(Ok(state)) if state.meeting_state == "starting"
+            && state.recording.is_some())
 }
 
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
@@ -800,10 +803,16 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         (RecordingStatus::Unknown, _) if narrow => "Unknown".into(),
         _ => words.clone(),
     };
-    let dot = match status {
-        RecordingStatus::Paused => None,
-        RecordingStatus::Recording => Some(live_recording_dot(8.0, p).key("recording-live-dot")),
-        RecordingStatus::Unknown => Some(dot(8.0, p.warn).key("recording-live-dot")),
+    let dot = if s.pending_recording_start() {
+        None
+    } else {
+        match status {
+            RecordingStatus::Paused => None,
+            RecordingStatus::Recording => {
+                Some(live_recording_dot(8.0, p).key("recording-live-dot"))
+            }
+            RecordingStatus::Unknown => Some(dot(8.0, p.warn).key("recording-live-dot")),
+        }
     };
     let open = super::widgets::button("", "recording-open", super::widgets::ButtonRole::Ghost, p)
         .h(26.0)
@@ -820,19 +829,18 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         .label(format!("{words}. Open the live meeting"))
         .help("Open the live meeting")
         .on_press(|s: &mut State| s.open_live());
-    if s.on_live()
-        || unconfirmed_start(s)
-        || s.live
-            .as_ref()
-            .and_then(|l| l.session.as_ref())
-            .is_some_and(|m| s.selected.as_ref() == Some(&m.id))
-    {
-        return open.fill(p.card).radius(13.0);
-    }
     let expected_id = hex::recording_id(s);
     let pause = expected_id
         .as_deref()
         .is_some_and(|id| owns_live_recording(s, id));
+    let current_session = s
+        .live
+        .as_ref()
+        .and_then(|l| l.session.as_ref())
+        .is_some_and(|m| s.selected.as_ref() == Some(&m.id));
+    if starting_target(s) || !s.hex_recording() || ((s.on_live() || current_session) && pause) {
+        return open.fill(p.card).radius(13.0);
+    }
     let (glyph, name, key, label) = if pause {
         (
             &icons::CIRCLE_PAUSE,

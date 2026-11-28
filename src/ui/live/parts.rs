@@ -91,6 +91,7 @@ impl State {
                 live.phase = Phase::Paused;
             }
         }
+        let start = start.or_else(|| live.session.as_ref().and_then(|m| m.pending_start_ms));
         if let (Some(id), Some(start)) = (hint, start) {
             if live.session.is_none()
                 && hex.join(&id).join("manifest.json").is_file()

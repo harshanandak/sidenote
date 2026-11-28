@@ -725,6 +725,11 @@ impl State {
         }
     }
     pub(super) fn new_meeting_continue(&mut self) {
+        if self.pending_recording_start() {
+            self.hex.connection.finish_action();
+            self.open_live();
+            return;
+        }
         if hex::start_blocked(self).is_some() {
             self.hex.connection.finish_action();
             return;
@@ -855,10 +860,28 @@ impl State {
         if live.close_failed {
             return;
         }
+        let pending_expired = running
+            && !busy
+            && matches!(&self.hex.status, Some(Ok(status)) if hex::stop::terminal(status))
+            && live
+                .session
+                .as_ref()
+                .and_then(|m| m.pending_start_ms)
+                .is_some_and(|started| {
+                    chrono::Utc::now().timestamp_millis() - started > START_WAIT.as_millis() as i64
+                });
+        if pending_expired {
+            self.parts_start_failed();
+            return;
+        }
         match live.phase {
             Phase::Starting if confirmed => live.phase = Phase::Recording,
             Phase::Starting
-                if running && !busy && !live.start_failed && live.began.elapsed() > START_WAIT =>
+                if running
+                    && !busy
+                    && !recording
+                    && !live.start_failed
+                    && live.began.elapsed() > START_WAIT =>
             {
                 self.parts_start_failed();
             }
