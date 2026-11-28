@@ -231,6 +231,14 @@ const RAIL_ITEM_W: f32 = 36.0;
 const SIGNAL_D: f32 = 6.0;
 const SIGNAL_INSET: f32 = 10.0;
 
+const IDENTITY_NAME: roles::Role = roles::Role {
+    size: 12.5,
+    weight: 600.0,
+    lh: 18.0,
+    tracking: 0.0,
+    features: "",
+};
+
 /// Signals for memory proposals to review and high findings in the Diary.
 fn signal(c: Color) -> El {
     dot(SIGNAL_D, c)
@@ -543,9 +551,9 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
         .fill(p.side)
         .px(PAD);
     if wide {
-        // A drawer opens below the page header, which already holds the toggle and search.
+        let controls = !s.narrow.get();
         pane = pane
-            .children((!s.narrow.get()).then(|| workspace_row(p)))
+            .child(workspace_row(p, controls).w(WIDE).mx(-PAD))
             .child(new_menu(s, p, page, layer));
     } else {
         pane = pane.pt(10.0);
@@ -561,19 +569,39 @@ pub fn sidebar(s: &State, p: Palette, page: Palette, wide: bool, layer: &mut Vec
     pane
 }
 
-/// The open sidebar's first row: the collapse and search buttons at the top left. While the
-/// sidebar is closed the page header draws the same two icons in the same place.
-fn workspace_row(p: Palette) -> El {
-    row()
+pub(crate) fn workspace_row(p: Palette, controls: bool) -> El {
+    let identity = row()
+        .grow(1.0)
+        .min_w(0.0)
+        .h(32.0)
+        .gap(8.0)
+        .px(6.0)
+        .radius(9.0)
+        .items_center()
+        .child(logo().key("nav-logo").a11y_hidden())
+        .child(IDENTITY_NAME.line("Sidenote", p.ink).key("nav-name"))
+        .child(
+            icons::draw(&icons::CHEVRON_DOWN, 12.0, p.faint)
+                .key("nav-caret")
+                .a11y_hidden(),
+        );
+    let mut out = row()
         .key("nav-workspace")
         .w_full()
         .h(48.0)
-        .pl(6.0)
+        .px(10.0)
         .gap(2.0)
         .items_center()
-        .window_drag()
-        .child(collapse(p))
-        .child(search(p))
+        .child(identity);
+    out = if controls { out.window_drag() } else { out };
+    if controls {
+        out = out.child(collapse(p)).child(search(p));
+    }
+    out
+}
+
+pub(crate) fn compact_mark() -> El {
+    logo().key("nav-logo").label("Sidenote").help("Sidenote")
 }
 
 /// The sidebar's collapse button. It lives in the workspace row and folds the sidebar.
@@ -788,7 +816,12 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let status = recording_status(s);
     // The pill never reaches the caption buttons: its title takes what the header leaves.
     let (lead, trail, _) = s.chrome.get();
-    let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - 130.0).max(0.0);
+    let reserve = if !s.sidebar_docked() && !s.sidebar_is_open() {
+        150.0
+    } else {
+        130.0
+    };
+    let room = (s.app_w.get() - 13.0_f32.max(lead) - 8.0_f32.max(trail) - reserve).max(0.0);
     let title = s
         .hex
         .status
@@ -1131,6 +1164,7 @@ fn profile_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rune::{Env, Runtime, text::TextSystem};
 
     fn new_meeting_runtime(width: f32, listener_preparing: bool) -> rune::Runtime<State> {
         use crate::ui::theme;
@@ -1433,7 +1467,7 @@ mod tests {
         let title = match name {
             "home" => "home-greeting",
             "tasks" => "tasks-header",
-            "hex" => "nav-logo",
+            "hex" => "settings-title",
             _ => "meetings-title-row",
         };
         rt.update(|s, _| match name {
@@ -1627,12 +1661,17 @@ mod tests {
     fn hex_page_logo_uses_the_new_mark() {
         // S1a replaced the layered 20-unit mark with the crisp 18 px mark: a #1e1e1c square,
         // a white curve and an #e3aa55 tip, and no #bcb9b0 frame.
-        let elements = chrome_page("hex").0.elements();
-        let logo = elements
-            .iter()
-            .find(|e| e.key.as_deref() == Some("nav-logo"))
-            .expect("Hex page logo");
+        let rt = chrome_page("hex").0;
+        let logo = el(&rt, "nav-logo");
         assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
+        let workspace = el(&rt, "nav-workspace");
+        let sidebar = el(&rt, "settings-sidebar");
+        let header = el(&rt, "page-header");
+        assert!(logo.path.starts_with(&format!("{}/", workspace.path)));
+        assert!(workspace.path.starts_with(&format!("{}/", sidebar.path)));
+        assert!(!logo.path.starts_with(&format!("{}/", header.path)));
+        assert_eq!(workspace.rect[3], 48.0);
+        let elements = rt.elements();
         let prefix = format!("{}/", logo.path);
         let tints: Vec<_> = elements
             .iter()
@@ -1648,6 +1687,307 @@ mod tests {
             !tints.contains(&rune::color::hex("#bcb9b0").expect("old frame")),
             "the old frame is gone"
         );
+    }
+
+    const INVENTED_MEETING_ID: &str = "1800000000000-9";
+    fn invented_meeting() -> sidenote::core::Meeting {
+        let title = "Invented identity standup";
+        sidenote::core::Meeting {
+            folder: std::path::PathBuf::from(format!("synthetic/{INVENTED_MEETING_ID}")),
+            device: None,
+            id: INVENTED_MEETING_ID.into(),
+            title: title.into(),
+            diary_title: String::new(),
+            summary: sidenote::core::Summary {
+                title: title.into(),
+                ..Default::default()
+            },
+            summary_raw: String::new(),
+            draft_raw: String::new(),
+            transcript_raw: String::new(),
+            routed: None,
+            routed_revision: String::new(),
+            summary_language: None,
+            notes: String::new(),
+            lines: Vec::new(),
+            started: None,
+            minutes: None,
+            export_path: None,
+            search: title.to_lowercase(),
+        }
+    }
+    fn identity_rt(width: f32, height: f32, dark: bool) -> rune::Runtime<State> {
+        crate::test_paths::isolate();
+        let mut state = State::new();
+        crate::ui::updates::settings_fixture(&mut state);
+        let probed = sidenote::updates::ListenerStatus {
+            ready: true,
+            ..Default::default()
+        };
+        state.listener_probed(Some(probed), None);
+        let mut rt = Runtime::with_text(
+            state,
+            crate::ui::view,
+            (width, height),
+            Env::default(),
+            TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter")),
+        );
+        rt.on_key = Some(crate::ui::on_key);
+        rt.set_system_dark(dark);
+        settle(&mut rt);
+        rt
+    }
+    fn key_backslash(rt: &mut rune::Runtime<State>) {
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Command('\\'),
+            mods: rune::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        settle(rt);
+    }
+    fn assert_full_identity(rt: &rune::Runtime<State>, width: f32) {
+        let mut ts = TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter"));
+        let want = ts.measure("Sidenote", IDENTITY_NAME.style(), 1.0).0;
+        assert_eq!(count(rt, "nav-workspace"), 1);
+        let workspace = el(rt, "nav-workspace");
+        assert_eq!(workspace.rect[3], 48.0);
+        assert_eq!(count(rt, "nav-logo"), 1);
+        let logo = el(rt, "nav-logo");
+        assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
+        assert!(logo.path.starts_with(&format!("{}/", workspace.path)));
+        assert_eq!(count(rt, "nav-caret"), 1);
+        let caret = el(rt, "nav-caret");
+        assert_eq!(&caret.rect[2..], &[12.0, 12.0]);
+        assert!(caret.path.starts_with(&format!("{}/", workspace.path)));
+        assert_eq!(count(rt, "nav-name"), 1);
+        let name = el(rt, "nav-name");
+        assert_eq!(name.text.as_deref(), Some("Sidenote"));
+        assert!(name.path.starts_with(&format!("{}/", workspace.path)));
+        assert!(name.rect[2] + 0.5 >= want);
+        assert!((caret.rect[0] - (name.rect[0] + name.rect[2]) - 8.0).abs() <= 0.5);
+        let right = name.rect[0] + name.rect[2];
+        assert!(name.rect[0] >= workspace.rect[0] - 0.5);
+        assert!(right <= workspace.rect[0] + workspace.rect[2] + 0.5);
+        let header = el(rt, "page-header");
+        assert!(!logo.path.starts_with(&format!("{}/", header.path)));
+        let [ax, ay, aw, ah] = workspace.rect;
+        let [bx, by, bw, bh] = header.rect;
+        assert!(
+            ax + aw <= bx + 0.5
+                || bx + bw <= ax + 0.5
+                || ay + ah <= by + 0.5
+                || by + bh <= ay + 0.5
+        );
+        if width >= 600.0 {
+            let collapse = el(rt, "nav-collapse");
+            let search = el(rt, "nav-search");
+            assert!(right <= caret.rect[0] + 0.5 && right <= collapse.rect[0] + 0.5);
+            assert!(right <= search.rect[0] + 0.5);
+        }
+    }
+    fn assert_compact_identity(rt: &rune::Runtime<State>) {
+        assert_eq!(count(rt, "nav-workspace"), 0);
+        assert_eq!(count(rt, "nav-logo"), 1);
+        let logo = el(rt, "nav-logo");
+        assert_eq!(&logo.rect[2..], &[18.0, 18.0]);
+        let header = el(rt, "page-header");
+        assert!(logo.path.starts_with(&format!("{}/", header.path)));
+        assert_eq!(logo.label.as_deref(), Some("Sidenote"));
+        assert_eq!(count(rt, "nav-caret"), 0);
+    }
+    fn ensure_open(rt: &mut rune::Runtime<State>) {
+        if !rt.state.sidebar_is_open() {
+            tap(rt, "sidebar-toggle");
+        }
+        assert!(rt.state.sidebar_is_open());
+    }
+    fn visit(rt: &mut rune::Runtime<State>, width: f32, key: &str, page: Page) {
+        ensure_open(rt);
+        tap(rt, key);
+        assert!(rt.state.page() == page);
+        ensure_open(rt);
+        assert_full_identity(rt, width);
+    }
+    #[test]
+    fn workspace_identity_is_in_the_sidebar_on_every_page() {
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                rt.update(|s, _| {
+                    s.config.features.tasks = true;
+                    s.config.features.people = true;
+                    s.config.features.memory = true;
+                    s.config.features.daily_check = true;
+                    s.config.features.annotations = true;
+                    // Other fixtures can leave scanned rows above the invented meeting.
+                    s.meetings = vec![invented_meeting()];
+                    s.refresh_list();
+                    s.rebuild_nav();
+                });
+                visit(&mut rt, width, "nav-home", Page::Home);
+                ensure_open(&mut rt);
+                tap(&mut rt, "nav-meetings");
+                assert!(rt.state.page() == Page::Meetings);
+                assert!(rt.state.selected.is_none());
+                // Navigation closes the phone drawer, exposing the meeting row to clicks.
+                assert!(!rt.state.narrow.get() || !rt.state.sidebar_is_open());
+                settle(&mut rt);
+                tap(&mut rt, &format!("meeting-{INVENTED_MEETING_ID}"));
+                assert_eq!(rt.state.selected.as_deref(), Some(INVENTED_MEETING_ID));
+                assert!(rt.state.page() == Page::Meetings);
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                visit(&mut rt, width, "nav-meetings", Page::Meetings);
+                assert!(rt.state.selected.is_none());
+                visit(&mut rt, width, "view-tasks", Page::Tasks);
+                visit(&mut rt, width, "nav-people", Page::People);
+                visit(&mut rt, width, "view-memory", Page::Memory);
+                visit(&mut rt, width, "nav-annotations", Page::Annotations);
+                visit(&mut rt, width, "view-check", Page::Check);
+                ensure_open(&mut rt);
+                tap(&mut rt, "profile-button");
+                tap(&mut rt, "profile-menu-item4");
+                assert!(rt.state.page() == Page::Hex);
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                assert_eq!(count(&rt, "nav-collapse"), usize::from(width >= 600.0));
+                assert_eq!(count(&rt, "sidebar-toggle"), usize::from(width < 600.0));
+                assert_eq!(count(&rt, "nav-search"), 1);
+            }
+        }
+    }
+    #[test]
+    fn workspace_identity_compacts_and_restores_through_toggle() {
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                own_prefs(&mut rt);
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                let open_toggle = if width >= 600.0 {
+                    "nav-collapse"
+                } else {
+                    "sidebar-toggle"
+                };
+                rt.update(|_, tx| tx.focus(open_toggle, true));
+                settle(&mut rt);
+                key_backslash(&mut rt);
+                assert!(!rt.state.sidebar_is_open());
+                assert_compact_identity(&rt);
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+                assert!(el(&rt, "sidebar-toggle").focus_visible);
+                key_backslash(&mut rt);
+                assert!(rt.state.sidebar_is_open());
+                assert_full_identity(&rt, width);
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some(open_toggle)));
+                assert!(el(&rt, open_toggle).focus_visible);
+                rt.update(|s, _| {
+                    s.hex.status = Some(Ok(sidenote::hex_engine::EngineState {
+                        running: true,
+                        version: "test".into(),
+                        protocol: 1,
+                        recording: Some(sidenote::hex_engine::Recording {
+                            id: None,
+                            title: None,
+                            since: None,
+                            elapsed_seconds: Some(60),
+                        }),
+                        meeting_state: "recording".into(),
+                        dictating: Some(false),
+                        capture_state: "idle".into(),
+                        model: sidenote::hex_engine::ModelState {
+                            id: None,
+                            name: None,
+                            language: None,
+                            installed: None,
+                            preparing: None,
+                            downloaded_bytes: None,
+                        },
+                        labs: Box::default(),
+                    }));
+                });
+                ensure_open(&mut rt);
+                assert_full_identity(&rt, width);
+                tap(&mut rt, open_toggle);
+                assert_compact_identity(&rt);
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
+                assert_eq!(count(&rt, "rail-recording"), 1);
+                assert_eq!(el(&rt, "nav").rect[2], RAIL);
+                tap(&mut rt, "sidebar-toggle");
+                assert_full_identity(&rt, width);
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some(open_toggle)));
+                assert_eq!(count(&rt, "rail-recording"), 0);
+            }
+        }
+    }
+    #[test]
+    fn workspace_hover_does_not_take_editor_focus() {
+        fn type_text(rt: &mut rune::Runtime<State>, text: &str) {
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Text(text.into()),
+                mods: rune::Mods::default(),
+            });
+            rt.frame(0.0);
+        }
+        fn hover(rt: &mut rune::Runtime<State>, key: &str) {
+            let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
+            rt.pointer_move(x, y);
+            rt.frame(0.0);
+        }
+        for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
+            for dark in [false, true] {
+                let mut rt = identity_rt(width, height, dark);
+                tap(&mut rt, "ask-input");
+                type_text(&mut rt, "invented ask probe 7Q");
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q");
+                assert!(rt.state.question.focused);
+                if !rt.state.sidebar_is_open() {
+                    key_backslash(&mut rt);
+                }
+                assert!(rt.state.sidebar_is_open());
+                hover(&mut rt, "nav-logo");
+                hover(&mut rt, "nav-caret");
+                hover(&mut rt, "nav-name");
+                assert!(rt.state.question.focused);
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q");
+                type_text(&mut rt, "-again");
+                assert_eq!(rt.state.question.text, "invented ask probe 7Q-again");
+                rt.update(|s, _| s.open_hex());
+                settle(&mut rt);
+                ensure_open(&mut rt);
+                tap(&mut rt, "hex-filter");
+                type_text(&mut rt, "invented settings probe 7Q");
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q")
+                );
+                assert!(rt.state.hex.filter.focused);
+                hover(&mut rt, "nav-logo");
+                hover(&mut rt, "nav-caret");
+                hover(&mut rt, "nav-name");
+                assert!(rt.state.hex.filter.focused);
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q")
+                );
+                type_text(&mut rt, "-again");
+                assert!(
+                    rt.state
+                        .hex
+                        .filter
+                        .text
+                        .contains("invented settings probe 7Q-again")
+                );
+            }
+        }
     }
 
     #[test]

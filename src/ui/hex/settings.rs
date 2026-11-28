@@ -1637,16 +1637,7 @@ fn settings_list(s: &State, k: &Kit, p: Palette, width: f32, docked: bool) -> El
         .w(width)
         .min_h(0.0)
         .fill(p.side)
-        .children(docked.then(|| {
-            row()
-                .h(48.0)
-                .pl(14.0)
-                .gap(2.0)
-                .items_center()
-                .window_drag()
-                .child(nav::collapse(p))
-                .child(nav::search(p))
-        }))
+        .child(nav::workspace_row(p, docked))
         .child(scroll(list, "settings-list-scroll"))
 }
 fn path(page: Page, tab: usize) -> String {
