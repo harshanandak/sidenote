@@ -197,7 +197,9 @@ jobs:
       group: >-
         ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 && 'release-latest-exact-proof' ||
             format('release-exact-proof-{0}-{1}', github.run_id, github.run_attempt) }}
-      cancel-in-progress: ${{ github.event_name == 'workflow_run' && github.run_attempt == 1 }}
+      # A running proof takes about 35 minutes; cancelling it on every main build would let none finish.
+      # With false, the newest pending proof still replaces an older pending one.
+      cancel-in-progress: false
     runs-on: windows-latest
     timeout-minutes: 60
     outputs:
