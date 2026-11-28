@@ -66,14 +66,18 @@ run_write() {
 }
 
 version_cmp() {
-    local left=$1 right=$2 count=$3 regex=$4 i
+    local left=$1 right=$2 count=$3 regex=$4 i left_part right_part LC_ALL=C
     [[ $left =~ $regex ]] || return 1
     local -a left_parts=("${BASH_REMATCH[@]:1:$count}")
     [[ $right =~ $regex ]] || return 1
     local -a right_parts=("${BASH_REMATCH[@]:1:$count}")
     for ((i = 0; i < count; i++)); do
-        if (( left_parts[i] < right_parts[i] )); then printf '%s\n' -1; return 0; fi
-        if (( left_parts[i] > right_parts[i] )); then printf '%s\n' 1; return 0; fi
+        # Compare canonical decimal components without converting them to fixed-width integers.
+        left_part=${left_parts[i]} right_part=${right_parts[i]}
+        if (( ${#left_part} < ${#right_part} )); then printf '%s\n' -1; return 0; fi
+        if (( ${#left_part} > ${#right_part} )); then printf '%s\n' 1; return 0; fi
+        if [[ $left_part < $right_part ]]; then printf '%s\n' -1; return 0; fi
+        if [[ $left_part > $right_part ]]; then printf '%s\n' 1; return 0; fi
     done
     printf '%s\n' 0
 }
@@ -119,12 +123,46 @@ compare_status() {
         gh api "repos/$repo/compare/$base...$head?per_page=1" --jq .status
 }
 
+latest_inventory() {
+    read_or_fail 'Failed to list Latest assets.' gh release view latest-main --repo "$repo" --json assets |
+        jq -ers '
+            def valid_asset:
+                type == "object" and
+                (.name | type == "string" and length > 0 and (test("[[:cntrl:]]") | not)) and
+                (.digest | type == "string" and length == 71 and test("^sha256:[0-9a-f]{64}$"));
+            def valid_inventory:
+                type == "object" and (.assets |
+                    type == "array" and all(.[]; valid_asset) and
+                    (map(.name) | length == (unique | length)));
+            if length == 1 and (.[0] | valid_inventory) then
+                .[0].assets | map(.name + "\t" + .digest) | join("\n")
+            else error("Malformed Latest asset inventory") end'
+}
+
+retained_latest_version() {
+    local pattern=$1 highest= name version
+    shift
+    for name; do
+        if [[ $name == *-full.nupkg && $name =~ $pattern ]]; then
+            version=${BASH_REMATCH[1]}
+            if [[ -z $highest ]] || [[ $(version_cmp "v$version" "v$highest" 5 "$latest") == 1 ]]; then
+                highest=$version
+            fi
+        fi
+    done
+    [[ -n $highest ]] || { echo 'No usable retained Latest full package.' >&2; return 1; }
+    printf '%s\n' "$highest"
+}
+
 published_latest_version() {
     read_or_fail 'Failed to download the published Latest feed.' gh release download latest-main \
         --repo "$repo" --pattern releases.latest.json --output - |
         jq -er '[.Assets | arrays[] | select(.Type == "Full")] | select(length == 1) | .[0] |
             select(.PackageId == "sidenote" and (.Version | type) == "string") |
-            select(.FileName == ("sidenote-" + .Version + "-latest-full.nupkg")) | .Version'
+            select(.FileName == ("sidenote-" + .Version + "-latest-full.nupkg")) | .Version' || {
+        echo 'Could not identify the published Latest package version.' >&2
+        return 1
+    }
 }
 
 latest_asset_matches() {
@@ -145,36 +183,51 @@ finish_latest_release() {
 
 refresh_latest_release() {
     local asset name digest inventory version previous= count=0 published_version published_cmp= published_notes
+    local feed_missing=false repair_feed=false feed="$asset_dir/releases.latest.json"
     local -A existing=()
     local -a obsolete=()
     local package_pattern="^sidenote-(${latest:2:-1})-latest-(full|delta)\.nupkg$"
-    if [[ $rolling_state == exists && $rolling_draft == false && $latest_status != identical ]]; then
-        if ! published_version=$(published_latest_version) ||
-            ! published_cmp=$(version_cmp "$tag" "v$published_version" 5 "$latest"); then
-            echo 'Could not identify the published Latest package version.' >&2
-            exit 1
-        fi
-        if [[ $published_cmp == -1 ]]; then
-            echo "Package $tag is older than published Latest v$published_version; skipping Latest publish."
-            return 0
-        fi
-    fi
     if [[ $rolling_state == exists ]]; then
-        inventory=$(read_or_fail 'Failed to list Latest assets.' gh release view latest-main --repo "$repo" \
-            --json assets --jq '.assets[] | [.name, (.digest // "")] | @tsv') || exit 1
+        inventory=$(latest_inventory) || exit 1
         while IFS=$'\t' read -r name digest; do
             if [[ -n $name ]]; then existing[$name]=$digest; fi
         done <<< "$inventory"
+        if [[ $rolling_draft == false ]]; then
+            if [[ -n ${existing[releases.latest.json]+x} ]]; then
+                published_version=$(published_latest_version) || exit 1
+            else
+                feed_missing=true
+                published_version=$(retained_latest_version "$package_pattern" "${!existing[@]}") || exit 1
+            fi
+            if ! published_cmp=$(version_cmp "$tag" "v$published_version" 5 "$latest"); then
+                echo 'Could not identify the published Latest package version.' >&2
+                exit 1
+            fi
+            if [[ $published_cmp == -1 && ( $latest_status != identical || $feed_missing == true ) ]]; then
+                echo "Package $tag is older than published Latest v$published_version; skipping Latest publish."
+                return 0
+            fi
+            if [[ $feed_missing == true && $published_cmp == 0 ]]; then
+                [[ -f $feed && -f "$asset_dir/sidenote-${tag#v}-latest-full.nupkg" ]] || {
+                    echo 'The proved feed or its Latest full package is missing.' >&2
+                    exit 1
+                }
+                repair_feed=true
+            fi
+        fi
     fi
     if [[ $latest_status == identical || $published_cmp == 0 ]]; then
-        # A retry can finish the tag or release edit once every proved asset is already present.
+        # The feed is uploaded last, so a same-version repair must find the other proved files intact.
         for asset in "${assets[@]}"; do
+            if [[ $repair_feed == true && $asset == "$feed" ]]; then continue; fi
             if ! latest_asset_matches "$asset"; then
                 echo "Latest asset ${asset##*/} is missing or differs from the proved package; refusing to resume." >&2
                 exit 1
             fi
         done
-        if [[ $latest_status == identical && $rolling_draft == false && $rolling_name == "Sidenote latest $tag" ]]; then
+        if [[ $repair_feed == true ]]; then
+            run_write gh release upload latest-main "$feed" --repo "$repo"
+        elif [[ $latest_status == identical && $rolling_draft == false && $rolling_name == "Sidenote latest $tag" ]]; then
             published_notes=$(read_or_fail 'Failed to read Latest release notes.' gh release view latest-main \
                 --repo "$repo" --json isPrerelease,body --jq 'select(.isPrerelease == true) | .body') || exit 1
             if [[ $published_notes == "$(<"$notes_file")" ]]; then
@@ -218,7 +271,7 @@ refresh_latest_release() {
     )
 
     run_write gh release upload latest-main "$asset_dir/sidenote-latest-Setup.exe" "$asset_dir/SHA256SUMS" --repo "$repo" --clobber
-    run_write gh release upload latest-main "$asset_dir/releases.latest.json" --repo "$repo" --clobber
+    run_write gh release upload latest-main "$feed" --repo "$repo" --clobber
     for name in "${!existing[@]}"; do
         if [[ $name == *.pending || $name == *.previous-* ]]; then obsolete+=("$name"); fi
     done
