@@ -63,7 +63,7 @@ pub const STRIP: f32 = 44.0;
 pub const GAP: f32 = 36.0;
 pub const TASKS: f32 = 290.0;
 const GRID: f32 = COLUMN + GAP + TASKS;
-const WIDE_PAGE: f32 = 1040.0;
+const GRID_W: f32 = GRID + WIDE_SIDE;
 const WIDE_SIDE: f32 = 32.0;
 /// Page gutter below the wide grid.
 pub const SIDE: f32 = 24.0;
