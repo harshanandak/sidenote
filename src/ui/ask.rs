@@ -13,9 +13,7 @@ use super::{
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
-use rune::{
-    Align, Color, El, Key, KeyEvent, Shadow, Side, Spring, SpringPair, Transition, Tx, col, row,
-};
+use rune::{Align, El, Key, KeyEvent, Shadow, Side, Spring, SpringPair, Transition, Tx, col, row};
 use rune_kit::{Kit, Markdown, MarkdownStyle, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
@@ -618,7 +616,7 @@ fn mount_ask_menu(
     p: Palette,
     layer: &mut Vec<El>,
     menu: AskMenu,
-    (key, label, gutter): (&str, &str, f32),
+    (key, label, anchor, gutter): (&str, &str, &str, f32),
     close: fn(&mut State),
 ) {
     let motion = if s.ask_settings.reduced_motion.get() {
@@ -654,10 +652,14 @@ fn mount_ask_menu(
             color: p.line,
             ..Shadow::default()
         })
-        .anchored_fit(OPTIONS_KEY, Side::Top, Align::End, gutter)
+        .anchored_fit(anchor, Side::Top, Align::End, gutter)
         .transition(motion)
         .token_motion(k.motion.overlay)
-        .focus_return(OPTIONS_KEY)
+        .focus_return(if key == PICKER_KEY && model_chip_visible(s) {
+            "ask-model"
+        } else {
+            OPTIONS_KEY
+        })
         .modal(true, close);
     layer.push(rune_kit::scrim(format!("{key}-scrim"), close));
     layer.push(surface);
@@ -669,7 +671,6 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     } else {
         6.0
     };
-    let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let trigger = pressable(
         row()
             .center()
@@ -681,13 +682,7 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     .size(DOCK_BUTTON, DOCK_BUTTON)
     .radius(DOCK_BUTTON / 2.0)
     .hover(p.button_hover)
-    .preserve_focus_on_press(true)
-    .hover_group_shared("help-hint-model")
-    .child(
-        hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .dim(0.0)
-            .inert(),
-    );
+    .preserve_focus_on_press(true);
     let picker = s.runner_open && !s.ask_settings.connection.settings.enabled;
     let open = s.ask_settings.scope_open;
     let trigger = super::widgets::menu_trigger(trigger, picker || open, p, |s| {
@@ -705,21 +700,19 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
             p,
             layer,
             runner_choice(s, p),
-            (PICKER_KEY, "Ask model", gutter),
+            (PICKER_KEY, "Ask model", "ask-pill", 8.0),
             |s| {
                 s.runner_open = false;
             },
         );
-        return trigger.label(format!("Model: {}", picker_label(s)));
-    }
-    if open {
+    } else if open {
         mount_ask_menu(
             s,
             k,
             p,
             layer,
             scope_choices(s, p, chip),
-            (OPTIONS_KEY, "Ask options", gutter),
+            (OPTIONS_KEY, "Ask options", OPTIONS_KEY, gutter),
             |s| {
                 s.ask_settings.scope_open = false;
             },
@@ -796,15 +789,84 @@ fn scope_choices(s: &State, p: Palette, chip: bool) -> AskMenu {
         menu.item(
             ask_menu_row("Model", p, Some(&picker_label(s)))
                 .key("ask-options-model")
-                .on_press_tx(|s: &mut State, tx| {
-                    s.ask_settings.scope_open = false;
-                    s.runner_open = true;
-                    s.reload_runners();
-                    tx.focus_when_shown(PICKER_DEFAULT_KEY, tx.by_keys());
-                }),
+                .on_press_tx(open_model_picker),
         );
     }
     menu
+}
+
+fn open_model_picker(s: &mut State, tx: &mut Tx) {
+    s.ask_settings.scope_open = false;
+    s.runner_open = true;
+    s.reload_runners();
+    tx.focus_when_shown(PICKER_DEFAULT_KEY, tx.by_keys());
+}
+
+fn model_chip_visible(s: &State) -> bool {
+    card_open(s) && s.runner_error.is_none()
+}
+
+fn model_chip(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    pending: bool,
+    width: f32,
+    layer: &mut Vec<El>,
+) -> El {
+    let connection = s.ask_settings.connection.settings.enabled;
+    let hint = super::widgets::HelpHint::Model.build(k, p, layer);
+    let label = roles::MEETING_CONTROL.medium().line(short_model(s), p.soft);
+    pressable(
+        row()
+            .items_center()
+            .gap(2.0)
+            .child(label.shrink())
+            .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)),
+    )
+    .key("ask-model")
+    .label(format!("Model: {}", picker_label(s)))
+    .h(26.0)
+    .max_w(width)
+    .shrink()
+    .pl(if width < 30.0 { 0.0 } else { 10.0 })
+    .pr(if width < 30.0 { 0.0 } else { 6.0 })
+    .radius(13.0)
+    .hover(p.button_hover)
+    .focus_ring(1.0, 1.0, p.faint)
+    .preserve_focus_on_press(true)
+    .hover_group_shared("help-hint-model")
+    .child(
+        hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .inert()
+            .dim(0.0),
+    )
+    .on_press_tx(move |s: &mut State, tx| {
+        if connection {
+            s.open_connection_settings();
+        } else {
+            open_model_picker(s, tx);
+        }
+    })
+    .button_disabled(connection && pending)
+}
+
+fn short_model(s: &State) -> String {
+    let connection = &s.ask_settings.connection.settings;
+    if connection.enabled {
+        let model = connection.model.trim();
+        return if model.is_empty() {
+            "Set up a model"
+        } else {
+            model
+        }
+        .into();
+    }
+    let name = s.ask_runner_name().unwrap_or("Choose a model");
+    s.runners.iter().find(|r| r.name == name).map_or_else(
+        || short_runner(name).to_owned(),
+        |r| model_label(r, s.ask_model().as_deref()),
+    )
 }
 
 /// "Claude Sonnet (answer only)" reads as "Sonnet": the picker stays small. What the
@@ -830,6 +892,9 @@ fn model_label(runner: &core::Runner, model: Option<&str>) -> String {
 /// runs and the choice has changed since it started, it says "Next answer: ...", so the
 /// answer on screen is never mistaken for the new choice.
 pub(super) fn picker_label(s: &State) -> String {
+    if s.ask_settings.connection.settings.enabled {
+        return short_model(s);
+    }
     let current = choice_label(s, s.ask_runner_name(), s.ask_model().as_deref());
     match s.asks.get(&s.ask_key()) {
         Some(run)
@@ -942,14 +1007,12 @@ const PILL_HEIGHT: f32 = 48.0;
 const PROMPT_HEIGHT: f32 = 28.0;
 const PROMPT_GAP: f32 = 4.0;
 
-fn pill_edge(open: bool, error: bool, p: Palette) -> (Color, f32, f32) {
-    if error {
-        (p.warn, 4.0, 18.0)
-    } else if open {
-        (p.faint, 8.0, 28.0)
-    } else {
-        (p.line, 4.0, 18.0)
-    }
+const CARD_RADIUS: f32 = 18.0;
+const FIELD_RADIUS: f32 = 14.0;
+const CARD_PAD: (f32, f32, f32) = (10.0, 8.0, 8.0);
+
+fn card_open(s: &State) -> bool {
+    s.ask_open || !s.question.text.trim().is_empty()
 }
 
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
@@ -1068,7 +1131,8 @@ fn overlay_at(
 ) -> El {
     let id = s.ask_key();
     let pending = s.asks.contains_key(&id);
-    let compact = s.app_w.get() - super::nav::width(s) < 600.0;
+    let pane_width = s.app_w.get() - super::nav::width(s);
+    let compact = pane_width < 600.0;
     let gutter = if s.companies.open {
         0.0
     } else if s.selected.is_some() && !s.meeting_ui.tabs {
@@ -1137,17 +1201,48 @@ fn overlay_at(
                 .border(1.0, p.line),
         );
     }
-    let pill = row()
+    let no_agent = !s.has_agent() && !pending && s.runner_error.is_none();
+    let open = !no_agent && card_open(s);
+    let compact_lead = open && compact && lead.is_some();
+    let (left, right, gap) = if compact_lead {
+        (8.0, 6.0, 1.0)
+    } else if open {
+        (14.0, 8.0, 2.0)
+    } else if compact {
+        (8.0, 6.0, 2.0)
+    } else {
+        (22.0, 10.0, 4.0)
+    };
+    let (editor_min, model_max) = if compact_lead {
+        // The paused live dock adds Generate to the two recording controls.
+        let paused_live = s.on_live()
+            && s.live
+                .as_ref()
+                .is_some_and(|l| l.phase == super::live::Phase::Paused);
+        let lead_width = if paused_live { 120.0 } else { 80.0 };
+        let field_overhead = left + right + 4.0 * gap + 2.0 * DOCK_BUTTON;
+        let room = pane_width - 2.0 * (gutter + CARD_PAD.1) - lead_width - field_overhead;
+        let editor = (room - 30.0).clamp(40.0, 90.0);
+        (editor, (room - editor).clamp(12.0, 140.0))
+    } else {
+        (0.0, 140.0)
+    };
+    let field = row()
+        .key("ask-field")
+        .min_h(PILL_HEIGHT)
+        .items_center()
+        .gap(gap)
+        .pl(left)
+        .pr(right);
+    let radius = if open { CARD_RADIUS } else { PILL_HEIGHT / 2.0 };
+    let pill = col()
         .key("ask-pill")
         .w_full()
         .max_w(COLUMN)
-        .h(PILL_HEIGHT)
-        .min_h(PILL_HEIGHT)
-        .gap(if compact { 2.0 } else { 4.0 })
-        .items_center()
-        .pl(if compact { 8.0 } else { 22.0 })
-        .pr(if compact { 6.0 } else { 10.0 })
-        .radius(PILL_HEIGHT / 2.0);
+        .radius(radius)
+        .instant_changes()
+        .motion(Spring::NONE)
+        .child(col().key("ask-top-slot"));
     let dock = col().key("ask-controls").w_full().gap(PROMPT_GAP);
     let (dock, bottom_inset) = if let Some(placement) = reading {
         // Center alignment divides the difference between the two side margins in half.
@@ -1162,10 +1257,10 @@ fn overlay_at(
     } else {
         (dock, 8.0)
     };
-    if !s.has_agent() && !pending && s.runner_error.is_none() {
-        let pill = pill.children(lead);
-        let pill = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
-            pill.child(
+    if no_agent {
+        let field = field.children(lead);
+        let field = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
+            field.child(
                 super::widgets::action("Ask anything", p)
                     .key("ask-open")
                     .h(DOCK_BUTTON)
@@ -1177,7 +1272,7 @@ fn overlay_at(
             } else {
                 "No AI tool found"
             };
-            pill.child(roles::CONTROL.line(status, p.ink).grow(1.0))
+            field.child(roles::CONTROL.line(status, p.ink).grow(1.0))
                 .child(
                     super::widgets::action("Check again", p)
                         .key("ask-recheck")
@@ -1187,7 +1282,8 @@ fn overlay_at(
                         .on_press(|s: &mut State| s.refresh_ai_notes()),
                 )
         };
-        return place(s, stack.child(dock.child(raised(pill, p))), bottom_inset);
+        let pill = raised(pill.child(field), p);
+        return place(s, stack.child(dock.child(pill)), bottom_inset);
     }
     let empty = s.question.text.trim().is_empty();
     let input = TextInput::new(&s.question)
@@ -1218,7 +1314,16 @@ fn overlay_at(
         })
         .on_key(|s: &mut State, e: &KeyEvent, tx: &mut Tx| {
             if e.key == Key::Tab && e.mods == rune::Mods::default() {
-                tx.focus("ask-options", true);
+                if model_chip_visible(s)
+                    && !(s.ask_settings.connection.settings.enabled
+                        && s.asks.contains_key(&s.ask_key()))
+                {
+                    tx.focus("ask-model", true);
+                } else if !s.question.text.trim().is_empty() && !s.asks.contains_key(&s.ask_key()) {
+                    tx.focus("ask-send", true);
+                } else {
+                    return false;
+                }
                 return true;
             }
             if e.key != Key::Escape {
@@ -1244,7 +1349,7 @@ fn overlay_at(
         .build(k)
         .key("ask-input")
         .grow(1.0)
-        .min_w(0.0);
+        .min_w(editor_min);
     let stack = stack.children(s.runner_error.as_ref().map(|error| {
         roles::META
             .wrap(format!("Could not load Ask models. {error}"), p.warn)
@@ -1262,17 +1367,37 @@ fn overlay_at(
             .self_start()
             .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
     }));
-    let (ring, shadow_y, shadow_blur) = pill_edge(s.ask_open, s.ask_errors.contains_key(&id), p);
+    let error = s.ask_errors.contains_key(&id);
+    let (fill, y, blur) = if open {
+        (p.raised, 12.0, 32.0)
+    } else {
+        (p.card, 4.0, 18.0)
+    };
     let pill = pill
-        .fill(p.card)
-        .hover(if s.ask_open { p.card } else { p.chip })
-        .border(1.0, ring)
-        .shadow(shadow_y, shadow_blur, p.shadow)
-        .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
+        .fill(fill)
+        .hover(if open { fill } else { p.chip })
+        .shadow(y, blur, p.shadow);
+    let (pill, field) = if open {
+        let (top, sides, bottom) = CARD_PAD;
+        let card = pill.pt(top).px(sides).pb(bottom).box_shadow(Shadow {
+            spread: 4.0,
+            color: p.faint.alpha(if error { 0.0 } else { 0.16 }),
+            ..Shadow::default()
+        });
+        (card, field.radius(FIELD_RADIUS).fill(p.bg))
+    } else {
+        (pill, field)
+    };
+    let field = field
         .children(lead)
         .child(input)
+        .children(model_chip_visible(s).then(|| model_chip(s, k, p, pending, model_max, layer)))
         .child(ask_options(s, k, p, show_prompt, layer))
         .child(action(s, p, pending, empty));
+    let pill = pill
+        .border(1.0, if error { p.warn } else { p.line })
+        .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
+        .child(field);
     place(s, stack.child(dock.child(pill)), bottom_inset)
 }
 

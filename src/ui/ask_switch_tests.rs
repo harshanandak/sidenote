@@ -55,9 +55,7 @@ fn home_ask(size: (f32, f32), dark: bool) -> Runtime<State> {
 #[test]
 fn ask_option_menu_opens_with_enter_from_the_trigger() {
     let mut rt = home_ask(DEFAULT_SIZE, false);
-    rt.update(|_, tx| tx.focus("ask-input", true));
-    rt.frame(0.0);
-    rt.key(Key::Tab.into());
+    rt.update(|_, tx| tx.focus("ask-options", true));
     rt.frame(0.0);
     assert!(element(&rt, "ask-options").focused);
     rt.key(Key::Enter.into());
@@ -715,7 +713,7 @@ fn meeting_model_hint_reveals_on_hover_and_keyboard_focus() {
         s.ask_open = true;
     });
     rt.frame(0.0);
-    let hint = "ask-options";
+    let hint = "ask-model";
     let tip = "help-hint-model-tip";
     assert_eq!(rt.presented(tip).unwrap().1, 0.0);
     let (x, y) = rt.find(hint).unwrap();
@@ -1711,6 +1709,7 @@ fn the_model_picker_shows_on_a_meeting_the_live_screen_and_a_new_chat() {
         rt.settle_all();
         rt.frame(0.0);
         assert!(rt.find("ask-options-menu").is_none(), "{context}");
+        focus_ask_card(&mut rt);
         tap(&mut rt, "ask-options");
         rt.settle_all();
         rt.frame(0.0);
@@ -1979,15 +1978,15 @@ fn tab_from_the_ask_editor_focuses_the_model_picker() {
     rt.update_if(|s, tx| poll(s, 0.0, tx));
     rt.frame(0.0);
     rt.update_if(|s, tx| {
-        assert_eq!(tx.focused(), Some("ask-options"));
+        assert_eq!(tx.focused(), Some("ask-model"));
         assert!(s.ask_open);
         false
     });
 }
 
 #[test]
-fn reduced_motion_opens_the_ask_panel_without_moving_the_pill() {
-    if in_parent("reduced_motion_opens_the_ask_panel_without_moving_the_pill") {
+fn reduced_motion_opens_the_ask_panel_without_moving_the_bottom_edge() {
+    if in_parent("reduced_motion_opens_the_ask_panel_without_moving_the_bottom_edge") {
         return;
     }
     let mut state = State::new();
@@ -2005,15 +2004,14 @@ fn reduced_motion_opens_the_ask_panel_without_moving_the_pill() {
     rt.frame(0.0);
     rt.settle_all();
     rt.frame(0.0);
-    let closed = rect_of(&rt, "ask-options");
     let pill = rect_of(&rt, "ask-pill");
     rt.update(|_, tx| tx.focus("ask-input", true));
     rt.frame(0.0);
     rt.update(|s, tx| s.ask_open = ask::focus_open(s, tx));
     rt.frame(0.016);
-    let opened = rect_of(&rt, "ask-options");
-    assert_eq!((opened[1], opened[3]), (closed[1], closed[3]));
-    assert_eq!(rect_of(&rt, "ask-pill"), pill);
+    let opened = rt.presented("ask-pill").unwrap().0;
+    assert_eq!(bottom(opened), bottom(pill));
+    assert_eq!(opened[3], 66.0);
 }
 
 #[cfg(debug_assertions)]
@@ -2366,10 +2364,7 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
         return;
     }
     let mut rt = page_at(size);
-    rt.update(|s, _| {
-        scene_agents(s, ALL_AGENTS);
-        s.ask_open = true;
-    });
+    rt.update(|s, _| scene_agents(s, ALL_AGENTS));
     rt.frame(0.0);
     rt.settle_all();
     rt.frame(0.0);
@@ -2407,6 +2402,17 @@ fn the_bar_is_centered(name: &str, size: (f32, f32)) {
     assert!((24.0..=28.0).contains(&chip[3]));
     assert!((0.0..=6.0).contains(&(pill[1] - chip[1] - chip[3])));
     assert!(pill[1] + pill[3] - chip[1] <= 84.0);
+
+    focus_ask_card(&mut rt);
+    let card = rect_of(&rt, "ask-pill");
+    let field = rect_of(&rt, "ask-field");
+    let input = rect_of(&rt, "ask-input");
+    assert_eq!(
+        (card[0], card[2], bottom(card)),
+        (pill[0], pill[2], bottom(pill))
+    );
+    assert_eq!(card[3], 66.0);
+    assert_eq!(input[1] + input[3] / 2.0, field[1] + field[3] / 2.0);
 
     rt.update(|s, _| s.runner_found.clear());
     rt.settle_all();
@@ -2487,11 +2493,12 @@ fn on_ask_bar_pages(name: &str, check: impl Fn(&mut Runtime<State>, theme::Palet
 
 fn ask_bar_paint<'a>(rt: &'a Runtime<State>, key: &str) -> &'a rune::render::Instance {
     let ([x, y, w, h], _) = rt.presented(key).unwrap();
+    let radius = element(rt, key).radius;
     rt.instances
         .iter()
         .find(|paint| {
             paint.fill[3] > 0.0
-                && (paint.radii[0] - h / 2.0).abs() < 1.0
+                && (paint.radii[0] - radius).abs() < 1.0
                 && paint
                     .rect
                     .into_iter()
@@ -2511,9 +2518,23 @@ fn assert_ask_bar_edge(
     assert_eq!(paint.params[0], 1.0);
     assert_eq!(paint.border, ring.premul(1.0));
     let pose = rt.presented_pose("ask-pill").unwrap();
-    let [layer] = pose.shadows() else {
-        panic!("expected one pill shadow, got {:?}", pose.shadows());
+    let [layer, extra @ ..] = pose.shadows() else {
+        panic!("missing pill shadow");
     };
+    if shadow == (12.0, 32.0) {
+        assert_eq!(paint.radii[0], 18.0);
+        let [halo] = extra else {
+            panic!("missing card halo")
+        };
+        assert_eq!(halo.spread, 4.0);
+        assert_eq!(
+            halo.color,
+            p.faint.alpha(if ring == p.warn { 0.0 } else { 0.16 })
+        );
+    } else {
+        assert_eq!(paint.radii[0], 24.0);
+        assert!(extra.is_empty());
+    }
     assert_eq!(
         (layer.y, layer.blur, layer.color),
         (shadow.0, shadow.1, p.shadow)
@@ -2587,7 +2608,7 @@ fn ask_bar_hover_fills_the_pill_with_chip() {
         poll_ask_bar(rt);
         rt.pointer_move(x, y);
         settle_ask_bar(rt);
-        assert_eq!(ask_bar_paint(rt, "ask-pill").fill, p.card.premul(1.0));
+        assert_eq!(ask_bar_paint(rt, "ask-pill").fill, p.raised.premul(1.0));
     });
 }
 
@@ -2632,35 +2653,66 @@ fn ask_bar_live_transcript_focus_suppresses_hover() {
     rt.frame(0.0);
     poll_ask_bar(&mut rt);
     assert!(element(&rt, "meeting-transcript").focused);
-    assert_eq!(ask_bar_paint(&rt, "ask-pill").fill, p.card.premul(1.0));
+    assert_eq!(ask_bar_paint(&rt, "ask-pill").fill, p.raised.premul(1.0));
+}
+
+fn ask_card_pages() -> impl Iterator<Item = (Runtime<State>, theme::Palette)> {
+    let cells = [
+        ((1334.0, 900.0), false),
+        ((1334.0, 900.0), true),
+        ((390.0, 844.0), false),
+        ((390.0, 844.0), true),
+    ];
+    cells
+        .into_iter()
+        .flat_map(|(size, dark)| [State::go_home, ASK_PAGES[0].0].map(|open| (size, dark, open)))
+        .map(|(size, dark, open)| {
+            let mut rt = ask_page_fixture(size);
+            rt.set_system_dark(dark);
+            rt.update(|s, _| open(s));
+            settle_ask_bar(&mut rt);
+            (rt, theme::palette(dark))
+        })
+}
+
+fn focus_ask_card(rt: &mut Runtime<State>) {
+    tap(rt, "ask-input");
+    poll_ask_bar(rt);
+    assert!(rt.state.question.focused);
+}
+
+fn bottom([_, y, _, h]: [f32; 4]) -> f32 {
+    y + h
+}
+
+fn inside(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] >= b[0] && a[1] >= b[1] && a[0] + a[2] <= b[0] + b[2] && bottom(a) <= bottom(b)
+}
+
+fn assert_no_ask_hint(elements: &[rune::ElementInfo]) {
+    for label in elements.iter().flat_map(|e| e.label.iter().chain(&e.text)) {
+        assert!(!label.contains("Enter to send") && !label.contains("Shift+Enter"));
+    }
 }
 
 #[test]
-fn ask_bar_focus_rings_the_pill_without_moving_it() {
-    if in_parent("ask_bar_focus_rings_the_pill_without_moving_it") {
+fn ask_card_focus_opens_one_surface_with_a_model_chip() {
+    if in_parent("ask_card_focus_opens_one_surface_with_a_model_chip") {
         return;
     }
-    let p = theme::palette(Env::default().system_dark);
-    for size in [DEFAULT_SIZE, (390.0, 844.0)] {
-        let mut rt = ask_page_fixture(size);
-        for open in std::iter::once(State::go_home as fn(&mut State))
-            .chain(ASK_PAGES.map(|(open, _, _)| open))
-        {
-            rt.update(|s, tx| {
-                tx.blur();
-                open(s);
-            });
-            settle_ask_bar(&mut rt);
-            poll_ask_bar(&mut rt);
-            let rest = rect_of(&rt, "ask-pill");
-            rt.update(|_, tx| tx.focus("ask-input", true));
-            rt.frame(0.0);
-            poll_ask_bar(&mut rt);
-            assert!(rt.state.question.focused);
-            assert_ask_bar_edge(&rt, p.faint, (8.0, 28.0), p);
-            assert_eq!(rect_of(&rt, "ask-pill"), rest);
-            assert_eq!(rt.presented("ask-pill").unwrap().0, rest);
+    for (mut rt, p) in ask_card_pages() {
+        let rest = rect_of(&rt, "ask-pill");
+        focus_ask_card(&mut rt);
+        let card = rt.presented("ask-pill").unwrap().0;
+        assert_eq!(
+            (card[2], bottom(card), card[3]),
+            (rest[2], bottom(rest), 66.0)
+        );
+        assert_ask_bar_edge(&rt, p.line, (12.0, 32.0), p);
+        for key in ["ask-input", "ask-model", "ask-send"] {
+            assert!(inside(rect_of(&rt, key), card), "{key}");
         }
+        assert_no_ask_hint(&rt.elements());
     }
 }
 
@@ -2747,7 +2799,7 @@ fn ask_bar_error_rings_the_pill_in_warn() {
         );
         assert!(rt.state.ask_open);
         assert_rendered(rt, &format!("Could not answer. {message}"), true);
-        assert_ask_bar_edge(rt, p.warn, (4.0, 18.0), p);
+        assert_ask_bar_edge(rt, p.warn, (12.0, 32.0), p);
     });
 }
 

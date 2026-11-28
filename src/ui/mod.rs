@@ -4588,6 +4588,25 @@ pub fn spec() -> AppSpec<State> {
             }),
             // The Ask bar: at rest, with the box focused, with a question typed, with the
             // Suggestions button pressed, and with the model menu open.
+            ("home-ask-focused", |s| {
+                s.go_home();
+                scene_agents(s, ALL_AGENTS);
+                s.question.focused = true;
+                s.ask_open = true;
+            }),
+            ("home-ask-typed", |s| {
+                s.go_home();
+                scene_agents(s, ALL_AGENTS);
+                s.question = TextEdit::new("What is still open with the hiring plan?");
+                s.question.focused = true;
+                s.ask_open = true;
+            }),
+            ("tasks-ask-focused", |s| {
+                scene_tasks(s);
+                scene_agents(s, ALL_AGENTS);
+                s.question.focused = true;
+                s.ask_open = true;
+            }),
             ("ask-idle", |s| {
                 hex::scene(s, false);
                 scene_agents(s, ALL_AGENTS);
@@ -4616,6 +4635,7 @@ pub fn spec() -> AppSpec<State> {
             ("ask-model", |s| {
                 hex::scene(s, false);
                 scene_agents(s, ALL_AGENTS);
+                s.question = TextEdit::new("What did we decide?");
                 s.runner_open = true;
             }),
             // Only Claude Code installed: the other agents say so and cannot be picked.

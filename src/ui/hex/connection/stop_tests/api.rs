@@ -13,6 +13,7 @@ use std::{
 pub(super) struct Data {
     pub id: Option<&'static str>,
     pub omit_id: bool,
+    pub omit_elapsed: bool,
     pub meeting_state: Option<&'static str>,
     pub status_timeout: bool,
     pub stop_changed: bool,
@@ -57,6 +58,7 @@ impl Fixture {
         let data = Arc::new(Mutex::new(Data {
             id,
             omit_id: false,
+            omit_elapsed: false,
             meeting_state: None,
             status_timeout: false,
             stop_changed: true,
@@ -127,6 +129,7 @@ impl Fixture {
                             "features":{"meetings":true},
                             "meeting":{"state":data.meeting_state.unwrap_or(if data.id.is_some() {"recording"} else {"idle"}),"id":data.id,"elapsed_seconds":1}});
                         if data.omit_id { reply["meeting"].as_object_mut().unwrap().remove("id"); }
+                        if data.omit_elapsed { reply["meeting"].as_object_mut().unwrap().remove("elapsed_seconds"); }
                         reply
                     }
                     "meeting-record" => {
