@@ -307,6 +307,18 @@ fn assert_editor_notes(rt: &Runtime<State>, text: &str) {
     assert!(rt.find("ask-pill").is_some());
 }
 
+fn expire_recording_status(rt: &mut Runtime<State>) {
+    let last_good = rt.state.hex.status.clone().unwrap().unwrap();
+    let now = Instant::now();
+    rt.update(|s, _| {
+        s.hex_status_at(Ok(last_good), now - Duration::from_secs(11));
+        s.hex_status_at(Err(HexError::Timeout), now);
+    });
+    rt.frame(0.2);
+    assert!(matches!(rt.state.hex.status, Some(Err(HexError::Timeout))));
+    assert!(rt.state.hex_status_unknown());
+}
+
 fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str>, omit: bool) {
     start_fixture(api, "idle", None);
     begin_idle(rt);
@@ -328,11 +340,7 @@ fn no_id_variant(api: &Fixture, rt: &mut Runtime<State>, id: Option<&'static str
     deliver_status(rt);
     assert!(session(rt).pending_start_ms.is_some());
     assert!(element(rt, "hex-stop").focusable);
-    let expired = rt.state.hex.status.clone().unwrap().unwrap();
-    rt.update(|s, _| {
-        s.hex_status_at(Ok(expired), Instant::now() - Duration::from_secs(11));
-    });
-    rt.frame(0.2);
+    expire_recording_status(rt);
     assert!(session(rt).pending_start_ms.is_some());
     assert!(element(rt, "hex-stop").focusable);
     meetings_pointer(rt);
@@ -615,14 +623,7 @@ fn failed_start_retry_keeps_controls(api: &Fixture, rt: &mut Runtime<State>) {
     assert_eq!(attached.pending_start_ms, None);
     assert_eq!(attached.parts[0].id, "300-3");
     assert!(rt.find("meeting-pause").is_some());
-    let last_good = rt.state.hex.status.clone().unwrap();
-    let now = Instant::now();
-    rt.update(|s, _| {
-        s.hex_status_at(last_good, now - Duration::from_secs(11));
-        s.hex_status_at(Err(HexError::Timeout), now);
-    });
-    rt.frame(0.2);
-    assert!(rt.state.hex_status_unknown());
+    expire_recording_status(rt);
     assert!(rt.find("meeting-pause").is_some());
     meetings_pointer(rt);
     assert!(rt.find("hex-pause").is_some());
