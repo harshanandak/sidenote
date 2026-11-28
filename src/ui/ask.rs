@@ -10,7 +10,7 @@ use super::{
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
-use rune::{El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
+use rune::{Color, El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
 use rune_kit::{Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
@@ -186,10 +186,14 @@ fn submit(s: &mut State, question: &str, tx: &mut Tx) {
 pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
     let open = s.question.focused
         || tx.focused().is_some_and(|key| {
+            // The meeting page also uses this key for a tab outside the pill.
+            let live_transcript = key == "meeting-transcript" && s.on_live();
             matches!(
                 key,
                 "ask-model" | "ask-endpoint-settings" | "ask-options" | "ask-send" | "ask-stop"
-            ) || key.starts_with("ask-options-")
+            ) || matches!(key, "meeting-pause" | "meeting-resume" | "meeting-generate")
+                || live_transcript
+                || key.starts_with("ask-options-")
         });
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
@@ -820,6 +824,16 @@ const PILL_HEIGHT: f32 = 48.0;
 const PROMPT_HEIGHT: f32 = 28.0;
 const PROMPT_GAP: f32 = 4.0;
 
+fn pill_edge(open: bool, error: bool, p: Palette) -> (Color, f32, f32) {
+    if error {
+        (p.warn, 4.0, 18.0)
+    } else if open {
+        (p.faint, 8.0, 28.0)
+    } else {
+        (p.line, 4.0, 18.0)
+    }
+}
+
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
 fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
@@ -828,6 +842,13 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
         .size(DOCK_BUTTON, DOCK_BUTTON)
         .shrink();
     let replace = Transition::blur_replace().springs(pair::SNAP);
+    let quiet = Palette {
+        button_fill: p.chip,
+        button_ink: p.ink,
+        button_primary_hover: p.button_hover,
+        button_primary_pressed: p.button_pressed,
+        ..p
+    };
     if pending {
         let run = s.asks.get(&s.ask_key());
         let stopping = run.is_some_and(|r| r.cancel.stopped());
@@ -837,8 +858,8 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
                 &super::icons::STOP,
                 "Stop",
                 "ask-stop",
-                super::widgets::ButtonRole::Secondary,
-                p,
+                super::widgets::ButtonRole::Primary,
+                quiet,
             )
             .help(format!("Stop {who}"))
             .size(DOCK_BUTTON, DOCK_BUTTON)
@@ -854,25 +875,33 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
             }),
         );
     }
-    slot.child(
-        super::widgets::icon_button(
-            &super::icons::ARROW_UP,
-            "Ask (Enter)",
-            "ask-send",
-            super::widgets::ButtonRole::Primary,
-            p,
-        )
-        .size(DOCK_BUTTON, DOCK_BUTTON)
-        .radius(DOCK_BUTTON / 2.0)
-        .focus_ring(1.0, 1.0, p.faint)
-        .preserve_focus_on_press(true)
-        .transition(replace)
-        .button_disabled(empty)
-        .on_press_tx(|s: &mut State, tx| {
-            let q = s.question.text.clone();
-            submit(s, &q, tx);
-        }),
+    let send = super::widgets::icon_button(
+        &super::icons::ARROW_UP,
+        "Ask (Enter)",
+        "ask-send",
+        super::widgets::ButtonRole::Primary,
+        if empty {
+            Palette {
+                button_ink: p.faint,
+                ..quiet
+            }
+        } else {
+            p
+        },
     )
+    .size(DOCK_BUTTON, DOCK_BUTTON)
+    .radius(DOCK_BUTTON / 2.0)
+    .focus_ring(1.0, 1.0, p.faint)
+    .preserve_focus_on_press(true)
+    .transition(replace)
+    // Keep the fill and arrow in sync with availability on the first frame.
+    .motion(Spring::NONE)
+    .disabled(empty)
+    .on_press_tx(|s: &mut State, tx| {
+        let q = s.question.text.clone();
+        submit(s, &q, tx);
+    });
+    slot.child(if empty { send.inert() } else { send })
 }
 
 /// Pinned to the bottom of the meeting pane or the home page, over what is behind it.
@@ -1074,9 +1103,12 @@ pub fn overlay_with(
             .self_start()
             .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
     }));
+    let (ring, shadow_y, shadow_blur) = pill_edge(s.ask_open, s.ask_errors.contains_key(&id), p);
     let pill = pill
         .fill(p.card)
-        .focus_within_flat()
+        .hover(if s.ask_open { p.card } else { p.chip })
+        .border(1.0, ring)
+        .shadow(shadow_y, shadow_blur, p.shadow)
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
         .children(lead)
         .child(input)
