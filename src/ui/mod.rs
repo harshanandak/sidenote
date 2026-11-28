@@ -2508,6 +2508,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return widgets::button_sheet(p).fill(p.bg).w_full().h_full();
     }
     let k = theme::kit(&p);
+    let sidebar = theme::sidebar_palette(cx.system_dark(), p);
+    let sidebar_k = theme::kit(&sidebar);
     s.ask_settings.reduced_motion.set(cx.is_reduced_motion());
     cx.caption_color(p.ink);
     let insets = cx.chrome_insets();
@@ -2609,7 +2611,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else if on_memory {
         memory::pane(s, &k, p, narrow, &mut layer)
     } else if on_hex {
-        hex::pane(s, &k, p, narrow, &mut layer)
+        hex::pane(s, &k, p, narrow, &sidebar_k, sidebar, &mut layer)
     } else if on_live {
         live::pane(s, &k, p, narrow, &mut layer)
     } else if on_home {
@@ -2717,7 +2719,6 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             s.hex_visibility(focused || hex::window_shown());
         });
     let open = s.sidebar_is_open();
-    let sidebar = theme::sidebar_palette(cx.system_dark(), p);
     // A hidden sidebar has no width and so no edge; the recording rail keeps its own.
     let edge = if on_hex {
         hex::nav_docked(s)
@@ -2730,7 +2731,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .grow(1.0)
         .min_h(0.0)
         .child(if on_hex {
-            hex::settings_sidebar(s, &k, p)
+            hex::settings_sidebar(s, &sidebar_k, sidebar)
         } else if window_narrow && open {
             rune::el()
                 .w(if s.hex_recording() { nav::RAIL } else { 0.0 })

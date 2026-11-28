@@ -11,7 +11,6 @@ mod engine;
 mod host;
 
 pub(in crate::ui) const DRAWER_AT: f32 = 600.0;
-const LIST_WIDE: f32 = 240.0;
 const LIST_ROW_H: f32 = 32.0;
 const TAB_H: f32 = 28.0;
 const PAGE_COLUMN: f32 = 640.0;
@@ -1460,12 +1459,7 @@ pub fn sidebar(s: &State, k: &Kit, p: Palette) -> El {
     if !nav_docked(s) {
         return col().key("settings-sidebar").w(0.0).h_full();
     }
-    let width = if s.app_w.get() < 700.0 {
-        200.0
-    } else {
-        LIST_WIDE
-    };
-    settings_list(s, k, p, width, true).h_full()
+    settings_list(s, k, p, nav::WIDE, true).h_full()
 }
 
 fn drawer_open(s: &State) -> bool {
@@ -3158,7 +3152,15 @@ fn named_folder(s: &State, k: &Kit, p: Palette) -> El {
     }
     out
 }
-pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) -> El {
+pub fn pane(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    _narrow: bool,
+    sidebar_k: &Kit,
+    sidebar_p: Palette,
+    layer: &mut Vec<El>,
+) -> El {
     let (page, tab) = active(s);
     let narrow = s.app_w.get() < DRAWER_AT;
     let gutter = if narrow { 16.0 } else { 40.0 };
@@ -3240,7 +3242,7 @@ pub fn pane(s: &State, k: &Kit, p: Palette, _narrow: bool, layer: &mut Vec<El>) 
                 .on_press(close_drawer),
         );
         layer.push(
-            settings_list(s, k, p, LIST_WIDE, false)
+            settings_list(s, sidebar_k, sidebar_p, nav::WIDE, false)
                 .key("settings-drawer")
                 .role("dialog")
                 .label("Settings pages")

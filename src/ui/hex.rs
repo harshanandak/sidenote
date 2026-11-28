@@ -2228,8 +2228,17 @@ fn setting_row(
         .fill(settings::highlight(s, &format!("hs-{}", st.key), p))
 }
 
-pub fn pane(s: &State, k: &Kit, p: Palette, narrow: bool, layer: &mut Vec<El>) -> El {
-    settings::pane(s, k, p, narrow, layer).child(super::ask::overlay(s, k, p, narrow, layer))
+pub fn pane(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    narrow: bool,
+    sidebar_k: &Kit,
+    sidebar_p: Palette,
+    layer: &mut Vec<El>,
+) -> El {
+    settings::pane(s, k, p, narrow, sidebar_k, sidebar_p, layer)
+        .child(super::ask::overlay(s, k, p, narrow, layer))
 }
 
 pub fn on_key(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
