@@ -1700,14 +1700,7 @@ fn reconcile_install(
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = complete_pipeline_install(guard, pipeline, make_report);
     let listener = listener();
-    if listener.is_ok() {
-        if pipeline.is_ok() {
-            guard.publish_completion_receipt()?;
-        }
-        guard
-            .clear_listener_pending()
-            .map_err(|_| "Could not clear listener restart state.")?;
-    }
+    guard.finish_reconciliation(listener.is_ok(), pipeline.is_ok())?;
     Ok(Reconciliation {
         changed: !current,
         pipeline,
@@ -1812,6 +1805,19 @@ fn apply_installed(
         let _ = guard.save(&status, make_report);
     })
 }
+fn wait_for_listener_stop() -> Result<Option<File>, &'static str> {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if let Ok(lock) = listener_lock() {
+            break Ok(lock);
+        }
+        if Instant::now() >= deadline {
+            break Err("The listener is still busy. Try again later.");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn apply_ready(
     guard: &InstallGuard<'_>,
     restart_args: Vec<String>,
@@ -1829,16 +1835,7 @@ fn apply_ready(
         .map_err(|_| "Could not save listener restart state.")?;
     publish(Phase::StoppingListener);
     write_stop(std::process::id()).map_err(|_| "Could not stop the listener.")?;
-    let deadline = Instant::now() + Duration::from_secs(8);
-    let stopped = loop {
-        if let Ok(lock) = listener_lock() {
-            break Ok(lock);
-        }
-        if Instant::now() >= deadline {
-            break Err("The listener is still busy. Try again later.");
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
+    let stopped = wait_for_listener_stop();
     let result = stopped.and_then(|_listener| {
         recording_idle().map_err(|_| "Recording started. Try again when it is finished.")?;
         mgr.wait_exit_then_apply_updates(&asset, true, true, restart_args)
@@ -2195,6 +2192,7 @@ mod tests {
             PipelineCompletion::NotConfigured
         );
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
         let guard = InstallGuard::acquire(root.path()).unwrap();
@@ -2217,6 +2215,7 @@ mod tests {
             PIPELINE_INSTALL_ERROR
         );
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
         let guard = InstallGuard::acquire(root.path()).unwrap();
@@ -2329,6 +2328,7 @@ mod tests {
     #[test]
     fn pending_pipeline_survives_after_update_reset_and_restart() {
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         let status_path = root.path().join("updates.json");
         fs::write(&marker, VERSION).unwrap();
@@ -2404,6 +2404,7 @@ mod tests {
     #[test]
     fn pipeline_retry_survives_failure_between_status_save_and_marker_removal() {
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         let path = root.path().join("updates.json");
         fs::write(&marker, VERSION).unwrap();

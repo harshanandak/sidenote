@@ -123,6 +123,21 @@ impl InstallGuard<'_> {
         Ok(current)
     }
 
+    pub(super) fn finish_reconciliation(
+        &self,
+        listener_recovered: bool,
+        pipeline_complete: bool,
+    ) -> Result<(), String> {
+        if listener_recovered {
+            if pipeline_complete {
+                self.publish_completion_receipt()?;
+            }
+            self.clear_listener_pending()
+                .map_err(|_| "Could not clear listener restart state.")?;
+        }
+        Ok(())
+    }
+
     pub(super) fn publish_completion_receipt(&self) -> Result<(), String> {
         fs::write(self.directory.join(RECEIPT), VERSION)
             .map_err(|_| "Could not save install hook completion.".into())
