@@ -373,9 +373,9 @@ fn timing_matrix(api: &Fixture, rt: &mut Runtime<State>) {
     meetings_pointer(rt);
     assert!(element(rt, "hex-pause").focusable);
     tap(rt, "hex-pause");
+    tap(rt, "recording-open");
     finish_busy(rt);
     api.assert_stops(1);
-    tap(rt, "recording-open");
     assert_eq!(rt.state.live.as_ref().unwrap().phase, Phase::Paused);
     assert_editor_notes(rt, "matrix timing notes");
     assert!(element(rt, "meeting-resume").focusable);
@@ -615,11 +615,11 @@ fn failed_start_retry_keeps_controls(api: &Fixture, rt: &mut Runtime<State>) {
     assert_eq!(attached.pending_start_ms, None);
     assert_eq!(attached.parts[0].id, "300-3");
     assert!(rt.find("meeting-pause").is_some());
+    let last_good = rt.state.hex.status.clone().unwrap();
+    let now = Instant::now();
     rt.update(|s, _| {
-        s.hex_status_at(
-            Err(HexError::Timeout),
-            Instant::now() - Duration::from_secs(11),
-        );
+        s.hex_status_at(last_good, now - Duration::from_secs(11));
+        s.hex_status_at(Err(HexError::Timeout), now);
     });
     rt.frame(0.2);
     assert!(rt.state.hex_status_unknown());
