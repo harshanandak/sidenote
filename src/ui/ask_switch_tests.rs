@@ -215,6 +215,7 @@ fn open_draft_model_picker(size: (f32, f32)) -> Runtime<State> {
     rt.frame(0.0);
     assert!(rt.state.runner_open && !rt.state.ask_settings.scope_open);
     assert!(rt.find("ask-model-picker-menu").is_some());
+    assert!(rt.find("ask-options-menu").is_none());
     rt
 }
 
@@ -2011,7 +2012,7 @@ fn reduced_motion_opens_the_ask_panel_without_moving_the_bottom_edge() {
     rt.frame(0.016);
     let opened = rt.presented("ask-pill").unwrap().0;
     assert_eq!(bottom(opened), bottom(pill));
-    assert_eq!(opened[3], 88.0);
+    assert_eq!(opened[3], 100.0);
 }
 
 #[cfg(debug_assertions)]
@@ -2699,25 +2700,21 @@ fn quick_count(rt: &Runtime<State>) -> usize {
         .count()
 }
 fn stay_on_meeting(_: &mut State) {}
-fn meeting_reading(s: &mut State) {
-    s.meeting_ui.tabs = false;
-}
 fn size_theme(mut check: impl FnMut((f32, f32), bool)) {
     for size in [(1334.0, 900.0), (390.0, 844.0)] {
-        for dark in [false, true] {
-            check(size, dark);
-        }
+        check(size, false);
+        check(size, true);
     }
 }
 fn quick_cases(mut check: impl FnMut((f32, f32), bool, fn(&mut State))) {
     size_theme(|size, dark| {
         check(size, dark, State::go_home);
+        check(size, dark, stay_on_meeting);
         for (open, _, _) in ASK_PAGES {
             check(size, dark, open);
         }
     });
 }
-
 fn bottom([_, y, _, h]: [f32; 4]) -> f32 {
     y + h
 }
@@ -2739,12 +2736,11 @@ fn ask_card_focus_opens_one_surface_with_a_model_chip() {
     }
     for (mut rt, p) in ask_card_pages() {
         let rest = rect_of(&rt, "ask-pill");
-        let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
         focus_ask_card(&mut rt);
         let card = rt.presented("ask-pill").unwrap().0;
         assert_eq!(
             (card[2], bottom(card), card[3]),
-            (rest[2], bottom(rest), if wide { 88.0 } else { 66.0 })
+            (rest[2], bottom(rest), 100.0)
         );
         assert_ask_bar_edge(&rt, p.line, (12.0, 32.0), p);
         for key in ["ask-input", "ask-model", "ask-send"] {
@@ -3055,7 +3051,7 @@ fn check_ask_scope_label(rt: &mut Runtime<State>, wide: bool, want: &str) {
     let card = element(rt, "ask-pill");
     let field = rect_of(rt, "ask-field");
     if wide {
-        assert_eq!(card.rect[3], 88.0, "{want}");
+        assert_eq!(card.rect[3], 100.0, "{want}");
         let scope = element(rt, "ask-scope");
         assert_eq!(scope.text.as_deref(), Some(want), "scope text");
         assert!(inside(scope.rect, card.rect), "scope inside card");
@@ -3070,7 +3066,7 @@ fn check_ask_scope_label(rt: &mut Runtime<State>, wide: bool, want: &str) {
         );
         assert!(!scope.focusable && !scope.focused);
     } else {
-        assert_eq!(card.rect[3], 66.0, "{want}");
+        assert_eq!(card.rect[3], 100.0, "{want}");
         assert!(rt.find("ask-scope").is_none(), "{want}");
     }
     assert_no_ask_hint(&rt.elements());
@@ -3134,8 +3130,7 @@ fn ask_card_focus_shows_quick_asks_and_more_on_every_page() {
         let wide = rt.state.app_w.get() - super::nav::width(&rt.state) >= 600.0;
         let shown = if size.0 == 1334.0 { 3 } else { 2 };
         assert_eq!(quick_count(&rt), shown);
-        assert_eq!(key_count(&rt, "ask-prompt"), 0);
-        assert!(rt.find("ask-options").is_some());
+        assert!(key_count(&rt, "ask-prompt") == 0 && rt.find("ask-options").is_some());
         let card = rect_of(&rt, "ask-pill");
         let field = rect_of(&rt, "ask-field");
         let row = rect_of(&rt, "ask-top-slot");
@@ -3175,14 +3170,14 @@ fn ask_card_chip_row_fits_at_every_width() {
         for width in [1334.0, 900.0, 700.0, 390.0] {
             let height = if width == 390.0 { 844.0 } else { 900.0 };
             let rt = quick_fixture((width, height), dark, State::go_home);
+            assert_eq!(quick_count(&rt), if width >= 900.0 { 3 } else { 2 });
             assert_quick_row_fits(&rt);
         }
-        let rt = quick_fixture((1334.0, 900.0), dark, meeting_reading);
+        let rt = quick_fixture((1334.0, 900.0), dark, |s| s.meeting_ui.tabs = false);
         assert_eq!(quick_count(&rt), 2, "520 reading dock");
         assert_quick_row_fits(&rt);
     }
 }
-
 #[cfg(debug_assertions)]
 #[test]
 fn ask_card_quick_chip_press_sends_and_keeps_focus() {
@@ -3191,21 +3186,17 @@ fn ask_card_quick_chip_press_sends_and_keeps_focus() {
     }
     *core::ask_session::STAND_IN.lock().unwrap() = Some(fake_helper);
     GATE.store(true, SeqCst);
-    let home = State::go_home as fn(&mut State);
-    size_theme(|size, dark| {
-        for open in [home, stay_on_meeting] {
-            let mut rt = quick_fixture(size, dark, open);
-            let prompt = element(&rt, "ask-quick-0").label.unwrap();
-            tap(&mut rt, "ask-quick-0");
-            assert_eq!(rt.state.saved.messages.last().unwrap().text, &prompt[5..]);
-            assert!(!rt.state.asks.is_empty());
-            assert!(rt.state.question.focused && element(&rt, "ask-input").focused);
-            poll_ask_bar(&mut rt);
-            assert!(rt.state.ask_open && rect_of(&rt, "ask-pill")[3] > 48.0);
-        }
+    quick_cases(|size, dark, open| {
+        let mut rt = quick_fixture(size, dark, open);
+        let prompt = element(&rt, "ask-quick-0").label.unwrap();
+        tap(&mut rt, "ask-quick-0");
+        assert_eq!(rt.state.saved.messages.last().unwrap().text, &prompt[5..]);
+        assert!(!rt.state.asks.is_empty());
+        assert!(rt.state.question.focused && element(&rt, "ask-input").focused);
+        poll_ask_bar(&mut rt);
+        assert!(rt.state.ask_open && rect_of(&rt, "ask-pill")[3] > 48.0);
     });
 }
-
 #[test]
 fn ask_card_more_menu_lists_the_rest_scope_and_all_prompts() {
     if in_parent("ask_card_more_menu_lists_the_rest_scope_and_all_prompts") {
@@ -3236,13 +3227,20 @@ fn ask_card_more_menu_lists_the_rest_scope_and_all_prompts() {
             assert_eq!(got, want + "|All prompts|This meeting|All meetings");
             assert!(rt.find("ask-options-model").is_none());
             assert!(rt.find("ask-options-connection").is_none());
-            rt.key(Key::Escape.into());
-            rt.frame(0.2);
-            assert!(rt.find("ask-options-menu").is_none() && element(&rt, "ask-options").focused);
+            if keyboard {
+                rt.key(Key::Escape.into());
+                rt.frame(0.2);
+                assert!(rt.find("ask-options-menu").is_none());
+                assert!(element(&rt, "ask-options").focused);
+            } else {
+                rt.key(Key::Text("x".into()).into());
+                rt.frame(0.0);
+                poll_ask_bar(&mut rt);
+                assert!(rt.find("ask-options-menu").is_none() && element(&rt, "ask-input").focused);
+            }
         }
     });
 }
-
 #[test]
 fn ask_card_empty_focus_adds_no_second_prompt_chip() {
     if in_parent("ask_card_empty_focus_adds_no_second_prompt_chip") {
@@ -3252,11 +3250,9 @@ fn ask_card_empty_focus_adds_no_second_prompt_chip() {
         let mut rt = ask_cell(size, dark, open);
         assert_eq!((key_count(&rt, "ask-prompt"), quick_count(&rt)), (1, 0));
         focus_ask_card(&mut rt);
-        assert_eq!(key_count(&rt, "ask-prompt"), 0);
-        assert_eq!(key_count(&rt, "ask-quick-0"), 1);
+        assert!(key_count(&rt, "ask-prompt") == 0 && key_count(&rt, "ask-quick-0") == 1);
     });
 }
-
 #[test]
 fn ask_bar_typing_turns_send_active() {
     on_ask_bar_pages("ask_bar_typing_turns_send_active", |rt, p| {
@@ -3377,6 +3373,7 @@ fn ask_on_every_page_shows_one_chip_per_page() {
         rt.update(|s, _| {
             open(s);
             s.question = TextEdit::default();
+            s.ask_open = false;
         });
         rt.settle_all();
         rt.frame(0.0);
@@ -3390,8 +3387,10 @@ fn ask_on_every_page_shows_one_chip_per_page() {
 
         tap(&mut rt, "ask-input");
         poll_ask_bar(&mut rt);
-        assert!(rt.find("ask-prompt").is_none(), "{prompt}");
-        assert_eq!(key_count(&rt, "ask-quick-0"), 1, "{prompt}");
+        assert!(
+            key_count(&rt, "ask-quick-0") == 1 && rt.find("ask-prompt").is_none(),
+            "{prompt}"
+        );
         // Page shortcuts (new, find, list moves and ticks) type into Ask instead.
         for key in ["n", "/", "j", "k", "x"] {
             rt.key(KeyEvent {

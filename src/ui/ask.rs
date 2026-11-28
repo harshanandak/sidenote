@@ -178,7 +178,7 @@ fn slide(rise: f32, springs: SpringPair) -> Transition {
 
 fn keep_question_focus(s: &mut State, tx: &mut Tx) {
     s.question.focused = true;
-    tx.focus("ask-input", tx.focus_visible());
+    tx.focus_when_shown("ask-input", tx.focus_visible());
 }
 
 fn submit(s: &mut State, question: &str, tx: &mut Tx) {
@@ -186,7 +186,7 @@ fn submit(s: &mut State, question: &str, tx: &mut Tx) {
     keep_question_focus(s, tx);
 }
 
-pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
+pub(super) fn focus_open(s: &mut State, tx: &mut Tx) -> bool {
     let open = s.question.focused
         || tx.focused().is_some_and(|key| {
             // The meeting page also uses this key for a tab outside the pill.
@@ -200,6 +200,11 @@ pub(super) fn focus_open(s: &State, tx: &mut Tx) -> bool {
                 || key.starts_with("ask-quick-")
                 || key.starts_with("ask-model-picker-")
         });
+    let anchored = open && s.question.text.trim().is_empty() && !s.asks.contains_key(&s.ask_key());
+    if s.ask_settings.scope_open && !anchored {
+        s.ask_settings.scope_open = false;
+        keep_question_focus(s, tx);
+    }
     if open != s.ask_open {
         // Focus is reported by a later poll, after the input event that caused it.
         tx.animated();
@@ -679,7 +684,7 @@ fn mount_ask_menus(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, shown: u
                 s.runner_open = false;
             },
         );
-    } else if s.ask_settings.scope_open {
+    } else if s.ask_settings.scope_open && shown > 0 {
         mount_ask_menu(
             s,
             k,
@@ -694,27 +699,6 @@ fn mount_ask_menus(s: &State, k: &Kit, p: Palette, layer: &mut Vec<El>, shown: u
     }
 }
 
-fn more_chip(s: &State, p: Palette) -> El {
-    let trigger = pressable(
-        row()
-            .items_center()
-            .gap(2.0)
-            .child(roles::MEETING_CONTROL.line("More", p.soft))
-            .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)),
-    )
-    .key(OPTIONS_KEY)
-    .label("Ask options")
-    .description("Choose the question scope or a suggested prompt.")
-    .h(24.0)
-    .px(10.0)
-    .radius(12.0)
-    .hover(p.button_hover)
-    .preserve_focus_on_press(true);
-    super::widgets::menu_trigger(trigger, s.ask_settings.scope_open, p, |s| {
-        s.ask_settings.scope_open = !s.ask_settings.scope_open;
-    })
-    .focus_ring(1.0, 1.0, p.faint)
-}
 fn prompt_list(s: &State) -> Vec<&'static str> {
     let (prompt, more) = prompts(s);
     std::iter::once(prompt)
@@ -725,11 +709,11 @@ fn quick_chip_count(s: &State, reading: bool) -> usize {
     3 - usize::from(reading || s.app_w.get() - super::nav::width(s) < 652.0)
 }
 fn shown_quick_chips(s: &State, pending: bool, reading: bool) -> usize {
-    if card_open(s) && s.question.text.trim().is_empty() && !pending {
-        quick_chip_count(s, reading).min(prompt_list(s).len())
-    } else {
-        0
+    let empty = s.question.text.trim().is_empty();
+    if !card_open(s) || !empty || pending {
+        return 0;
     }
+    quick_chip_count(s, reading).min(prompt_list(s).len())
 }
 fn scope_choices(s: &State, p: Palette, shown: usize) -> AskMenu {
     let mut menu = AskMenu::default();
@@ -1006,49 +990,46 @@ fn scope_text(s: &State) -> &'static str {
 fn card_open(s: &State) -> bool {
     s.ask_open || !s.question.text.trim().is_empty()
 }
-fn quick_chip(prompt: &'static str, index: usize, p: Palette) -> El {
-    pressable(
-        row()
-            .items_center()
-            .child(roles::MEETING_CONTROL.line(prompt, p.ink)),
-    )
-    .key(format!("ask-quick-{index}"))
-    .label(format!("Ask: {prompt}"))
-    .h(24.0)
-    .min_w(0.0)
-    .px(10.0)
-    .radius(12.0)
-    .fill(p.chip)
-    .hover(p.button_hover)
-    .preserve_focus_on_press(true)
-    .shrink()
-    .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
-}
+#[rustfmt::skip]
 fn quick_chips(s: &State, p: Palette, compact: bool, reading: bool) -> El {
-    let chips = row()
-        .w_full()
-        .h(QUICK_ROW)
-        .px(6.0)
-        .pb(8.0)
-        .items_center()
-        .gap(6.0)
-        .children(
-            prompt_list(s)
-                .into_iter()
-                .take(quick_chip_count(s, reading))
-                .enumerate()
-                .map(|(index, prompt)| quick_chip(prompt, index, p)),
-        )
-        .child(more_chip(s, p));
-    chips
+    let control = roles::MEETING_CONTROL;
+    let chip = |e: El| {
+        pressable(e)
+            .h(24.0).px(10.0).radius(12.0)
+            .hover(p.button_hover).preserve_focus_on_press(true)
+    };
+    let more = chip(
+        row().items_center().gap(2.0)
+            .child(control.line("More", p.soft))
+            .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)),
+    )
+    .key(OPTIONS_KEY)
+    .label("Ask options")
+    .description("Choose the question scope or a suggested prompt.");
+    let more = super::widgets::menu_trigger(more, s.ask_settings.scope_open, p, |s| {
+        s.ask_settings.scope_open = !s.ask_settings.scope_open;
+    })
+    .focus_ring(1.0, 1.0, p.faint);
+    let chips = prompt_list(s)
+        .into_iter()
+        .take(quick_chip_count(s, reading))
+        .enumerate()
+        .map(|(index, prompt)| {
+            chip(row().items_center().child(control.line(prompt, p.ink)))
+                .key(format!("ask-quick-{index}"))
+                .label(format!("Ask: {prompt}"))
+                .min_w(0.0).fill(p.chip).shrink()
+                .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
+        });
+    row().w_full().h(QUICK_ROW).px(6.0).pb(8.0)
+        .items_center().gap(6.0)
+        .children(chips)
+        .child(more)
         .child(rune::el().grow(1.0))
         .children((!compact).then(|| {
-            roles::MEETING_META
-                .line(scope_text(s), p.faint)
-                .key("ask-scope")
+            roles::MEETING_META.line(scope_text(s), p.faint).key("ask-scope")
         }))
 }
-
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
 fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
@@ -1311,6 +1292,7 @@ fn overlay_at(
     } else {
         (dock, 8.0)
     };
+    mount_ask_menus(s, k, p, layer, shown_quick_chips(s, pending, reading_dock));
     if no_agent {
         let field = field.children(lead);
         let field = if super::ai_notes::setup_visible(s) && !s.ai_notes.ask_setup_open {
@@ -1441,7 +1423,6 @@ fn overlay_at(
     } else {
         (pill, field)
     };
-    mount_ask_menus(s, k, p, layer, shown_quick_chips(s, pending, reading_dock));
     let field = field
         .children(lead)
         .child(input)
