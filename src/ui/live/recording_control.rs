@@ -76,7 +76,8 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
         widgets::{ButtonRole, icon_button},
     };
     let m = session(s);
-    let recording = is_recording(s, &m);
+    let pending_start = m.as_ref().is_some_and(|m| m.pending_start_ms.is_some());
+    let recording = is_recording(s, &m) && !pending_start;
     let live = s.on_live();
     let icons_only = recording || m.as_ref().is_some_and(|m| m.phase == SavedPhase::Paused);
     let compact = s.app_w.get() - crate::ui::nav::width(s) < 600.0;
@@ -140,9 +141,9 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
                 .button_disabled(s.hex_record_busy())
                 .on_press(|s: &mut State| s.meeting_pause())
         });
-    } else if m
-        .as_ref()
-        .is_some_and(|m| m.phase != SavedPhase::Ended || !m.parts.is_empty())
+    } else if !pending_start
+        && m.as_ref()
+            .is_some_and(|m| m.phase != SavedPhase::Ended || !m.parts.is_empty())
     {
         control = control.child(
             button("Resume", "meeting-resume", &icons::PLAY)
@@ -156,6 +157,7 @@ pub(in crate::ui) fn parts_control(s: &State, p: Palette) -> Option<El> {
         && m.phase != SavedPhase::Ended
         && !m.parts.is_empty()
         && !recording
+        && !pending_start
     {
         control = control.child(
             button(

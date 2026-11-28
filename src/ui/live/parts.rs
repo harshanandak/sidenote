@@ -63,6 +63,7 @@ impl State {
         let elapsed = hex::part_elapsed_ms(self);
         let active_id = hint.clone();
         let status_known = !self.hex_status_unknown() && matches!(&self.hex.status, Some(Ok(_)));
+        let confirmed = self.hex_confirmed_recording();
         let start = hex::recording_start(self).map(|(at, _)| at.timestamp_millis());
         let adopting = self.live.as_ref().is_some_and(|live| {
             live.session.is_none() && matches!(live.phase, Phase::Starting | Phase::Recording)
@@ -107,7 +108,8 @@ impl State {
                             Some("Could not save meeting parts. Pause is unavailable.");
                     }
                 }
-            } else if let Some(m) = &mut live.session
+            } else if confirmed
+                && let Some(m) = &mut live.session
                 && m.pending_start_ms.is_some()
                 && !m.parts.iter().any(|p| p.id == id)
                 && m.resume(&root, &id, start).is_ok()

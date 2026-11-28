@@ -772,6 +772,13 @@ fn owns_live_recording(s: &State, id: &str) -> bool {
         .is_some_and(|part| part.id == id)
 }
 
+fn unconfirmed_start(s: &State) -> bool {
+    s.live.as_ref().is_some_and(|live| {
+        live.phase == super::live::Phase::Starting
+            && matches!(live.session.as_ref(), Some(m) if m.pending_start_ms.is_some())
+    })
+}
+
 fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
     let words = recording_words(s, narrow);
     use super::live::RecordingStatus;
@@ -814,6 +821,7 @@ fn recording_pill(s: &State, p: Palette, narrow: bool) -> El {
         .help("Open the live meeting")
         .on_press(|s: &mut State| s.open_live());
     if s.on_live()
+        || unconfirmed_start(s)
         || s.live
             .as_ref()
             .and_then(|l| l.session.as_ref())

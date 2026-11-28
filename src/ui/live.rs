@@ -830,6 +830,7 @@ impl State {
             return;
         }
         let recording = self.hex_recording();
+        let confirmed = self.hex_confirmed_recording();
         let running = self.hex_running();
         let busy = self.hex_record_busy();
         // A recording begun in Hex itself gets the same page and the same notes afterwards.
@@ -855,7 +856,7 @@ impl State {
             return;
         }
         match live.phase {
-            Phase::Starting if recording => live.phase = Phase::Recording,
+            Phase::Starting if confirmed => live.phase = Phase::Recording,
             Phase::Starting
                 if running && !busy && !live.start_failed && live.began.elapsed() > START_WAIT =>
             {

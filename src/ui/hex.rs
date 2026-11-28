@@ -1052,6 +1052,13 @@ impl State {
         self.hex.recording().is_some()
     }
 
+    /// A fresh status confirms that Hex is recording and gives the part Sidenote can own.
+    pub(super) fn hex_confirmed_recording(&self) -> bool {
+        !self.hex_status_unknown()
+            && matches!(&self.hex.status, Some(Ok(state)) if state.meeting_state == "recording"
+                && state.recording.as_ref().and_then(|r| r.id.as_deref()).is_some_and(|id| !id.is_empty()))
+    }
+
     pub(super) fn hex_stop_confirmed(&self) -> bool {
         !self.hex_status_unknown() && matches!(&self.hex.status, Some(Ok(s)) if stop::terminal(s))
     }
