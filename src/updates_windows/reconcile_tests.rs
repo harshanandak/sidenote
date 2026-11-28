@@ -598,3 +598,61 @@ fn status_preserves_legacy_debt_without_migrating() {
         fs::remove_file(marker).unwrap();
     }
 }
+
+fn save_ready_status(directory: &Path) {
+    write_json(
+        &directory.join("updates.json"),
+        &Status {
+            phase: Phase::Ready,
+            channel: Some(channel_name(Channel::DEFAULT_UPDATE).into()),
+            ..Status::default()
+        },
+    )
+    .unwrap();
+}
+
+fn assert_canonical_cli_recovery(version: &str, listener: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    save_ready_status(path);
+    assert_eq!(read_saved_status(path).phase, Phase::Ready);
+    write_json(
+        &path.join(install_record::FILE),
+        &serde_json::json!({
+            "schema_version": 1, "app_version": version,
+            "listener_work": listener, "pipeline_work": "Pending",
+        }),
+    )
+    .unwrap();
+    let exit = status_cli(path, |status| serde_json::json!(status));
+    assert_eq!(exit, 1, "version={version}, listener={listener}");
+    let report: Status =
+        serde_json::from_slice(&fs::read(path.join("update-report.json")).unwrap()).unwrap();
+    assert_eq!(report.phase, Phase::Error);
+    assert_eq!(report.error.as_deref(), Some(INSTALL_LISTENER_ERROR));
+}
+
+#[test]
+fn status_cli_listener_debt_takes_priority_over_pipeline_debt() {
+    assert_canonical_cli_recovery(VERSION, "Pending");
+}
+
+#[test]
+fn status_cli_version_mismatch_takes_priority_over_pipeline_debt() {
+    assert_canonical_cli_recovery("0.0.1", "Complete");
+}
+
+#[test]
+fn status_cli_preserves_legacy_pipeline_priority() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    save_ready_status(path);
+    for marker in ["pipeline-install.pending", "update-listener.resume"] {
+        fs::write(path.join(marker), VERSION).unwrap();
+    }
+    assert_eq!(status_cli(path, |status| serde_json::json!(status)), 0);
+    let report: Status =
+        serde_json::from_slice(&fs::read(path.join("update-report.json")).unwrap()).unwrap();
+    assert_eq!(report.phase, Phase::Ready);
+    assert_eq!(report.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
+}

@@ -70,8 +70,13 @@ pub(super) fn owns_error(directory: &Path, error: &str) -> bool {
         || listener_error(error, &saved_status(directory))
 }
 
-pub(super) fn status_record(directory: &Path) -> Result<Record, String> {
-    read(directory).map(|record| record.unwrap_or_else(|| Record::from_legacy(directory)))
+pub(super) fn status_record(directory: &Path) -> Result<(Record, bool), String> {
+    let record = read(directory)?;
+    let canonical = record.is_some();
+    Ok((
+        record.unwrap_or_else(|| Record::from_legacy(directory)),
+        canonical,
+    ))
 }
 
 // Display and feed status can sample the legacy files without install admission.

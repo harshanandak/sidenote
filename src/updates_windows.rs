@@ -372,12 +372,16 @@ pub fn load() -> Status {
 fn read_status(directory: &Path) -> Status {
     let status = read_saved_status(directory);
     match install_state::status_record(directory) {
-        Ok(record) if record.pipeline_pending() => with_pipeline_debt(status),
-        Ok(record) if record.needs_listener_recovery() => Status {
-            phase: Phase::Error,
-            error: Some(INSTALL_LISTENER_ERROR.into()),
-            ..status
-        },
+        Ok((record, canonical))
+            if record.needs_listener_recovery() && (canonical || !record.pipeline_pending()) =>
+        {
+            Status {
+                phase: Phase::Error,
+                error: Some(INSTALL_LISTENER_ERROR.into()),
+                ..status
+            }
+        }
+        Ok((record, _)) if record.pipeline_pending() => with_pipeline_debt(status),
         Err(error) => Status {
             phase: Phase::Error,
             error: Some(error),
@@ -1860,6 +1864,20 @@ fn write_report(status: &Status) -> io::Result<serde_json::Value> {
     }
     Ok(report)
 }
+fn status_cli(directory: &Path, make_report: impl Fn(&Status) -> serde_json::Value) -> i32 {
+    let guard = InstallGuard::acquire(directory);
+    let status = read_status(directory);
+    if let Ok(_guard) = guard {
+        let _ = write_json(&directory.join("update-report.json"), &make_report(&status));
+    }
+    finish_cli(&status, make_report)
+}
+
+fn finish_cli(status: &Status, make_report: impl FnOnce(&Status) -> serde_json::Value) -> i32 {
+    println!("{}", make_report(status));
+    i32::from(status.phase == Phase::Error)
+}
+
 pub fn cli(args: &[std::ffi::OsString]) -> i32 {
     let result = if args.iter().any(|a| a == "--update-window-start") {
         window_start(|_| {}).map(|_| load())
@@ -1876,17 +1894,10 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
         .map(|_| load())
     } else if args.iter().any(|a| a == "--update-check") {
         check(|_| {})
+    } else if installed() {
+        return status_cli(&directory(), report);
     } else {
-        let directory = directory();
-        if installed()
-            && let Ok(_guard) = InstallGuard::acquire(&directory)
-        {
-            let status = read_status(&directory);
-            let _ = write_report(&status);
-            Ok(status)
-        } else {
-            Ok(load())
-        }
+        Ok(load())
     };
     let status = match result {
         Ok(s) => s,
@@ -1896,8 +1907,7 @@ pub fn cli(args: &[std::ffi::OsString]) -> i32 {
             ..load()
         },
     };
-    println!("{}", report(&status));
-    i32::from(status.phase == Phase::Error)
+    finish_cli(&status, report)
 }
 
 #[cfg(test)]
