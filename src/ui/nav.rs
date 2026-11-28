@@ -1805,7 +1805,8 @@ mod tests {
                     s.config.features.memory = true;
                     s.config.features.daily_check = true;
                     s.config.features.annotations = true;
-                    s.meetings.push(invented_meeting());
+                    // Other fixtures can leave scanned rows above the invented meeting.
+                    s.meetings = vec![invented_meeting()];
                     s.refresh_list();
                     s.rebuild_nav();
                 });
