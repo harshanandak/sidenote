@@ -304,29 +304,6 @@ impl<'a> Store<'a> {
         })
     }
 
-    pub fn revert_to_original(&self, expected: &[(Field, Line)]) -> io::Result<()> {
-        self.update(|records, summary| {
-            for (field, line) in expected {
-                let key = Self::key(self.meeting, *field);
-                if Self::line(summary, *field, records.edits.get(&key))? != *line {
-                    return Err(stale());
-                }
-            }
-            for (field, _) in expected {
-                let key = Self::key(self.meeting, *field);
-                if let Some(edit) = records.edits.get_mut(&key)
-                    && edit.text != edit.base
-                    && edit.field.read(summary).as_ref() == Some(&edit.base)
-                {
-                    let original = edit.base.clone();
-                    edit.text.clone_from(&original);
-                    edit.history.push(SnapshotEdit::by_you(&original));
-                }
-            }
-            Ok(())
-        })
-    }
-
     pub fn restore(&self, field: Field, expected: &Line, version: &str) -> io::Result<()> {
         self.record(field, expected, |edit| {
             let version = edit
@@ -463,17 +440,6 @@ mod tests {
             expected,
             text: text.into(),
         }
-    }
-
-    fn reviewed(store: &Store, fields: &[Field]) -> Vec<(Field, Line)> {
-        fields
-            .iter()
-            .map(|f| (*f, store.current(*f).unwrap()))
-            .collect()
-    }
-
-    fn edits_json(store: &Store) -> String {
-        serde_json::to_string(&store.edits().unwrap()).unwrap()
     }
 
     #[test]
@@ -713,41 +679,6 @@ mod tests {
     }
 
     #[test]
-    fn revert_to_original_restores_all_fields_and_keeps_history() {
-        let (_dir, root, folder) = fixture();
-        let generated = json!({"title": "Original title", "context": ["Original context"]});
-        let bytes = write_summary(&folder, generated.clone());
-        let path = folder.join("english-summary.json");
-        let store = Store::new(&root, &folder, "100-200");
-        let title = store.current(Field::Title).unwrap();
-        let context = store.current(Field::Context).unwrap();
-        store
-            .save_many(&[
-                draft(Field::Title, title, "Batch title"),
-                draft(Field::Context, context, "Batch context"),
-            ])
-            .unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        assert_eq!(
-            store.effective(&generated).unwrap().version,
-            SummaryVersion::UserEdited
-        );
-        let view = reviewed(&store, &[Field::Title, Field::Context]);
-        store.revert_to_original(&view).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        let effective = store.effective(&generated).unwrap();
-        assert_eq!(effective.value, generated);
-        assert_eq!(effective.version, SummaryVersion::AiOriginal);
-        let edits = store.edits().unwrap();
-        assert_eq!(edits.len(), 2);
-        for edit in edits {
-            assert_eq!(edit.text, edit.base);
-            assert_eq!(edit.history.len(), 3);
-            assert_eq!(edit.history[2].text, edit.base);
-        }
-    }
-
-    #[test]
     fn equal_to_base_edit_is_ai_original() {
         let (_dir, root, folder) = fixture();
         let generated = json!({"title": "Original title"});
@@ -777,49 +708,6 @@ mod tests {
         assert_eq!(effective.value["title"], "Regenerated title");
         assert_eq!(effective.version, SummaryVersion::AiOriginal);
         assert!(!effective.warning);
-    }
-
-    #[test]
-    fn newer_device_edit_rejects_stale_revert_then_fresh_revert_succeeds() {
-        let (dir, _, folder) = fixture();
-        write_summary(&folder, json!({"title": "Original title"}));
-        let a_root = dir.path().join("device-a");
-        let b_root = dir.path().join("device-b");
-        let a = Store::new(&a_root, &folder, "100-200");
-        let b = Store::new(&b_root, &folder, "100-200");
-        let before = a.current(Field::Title).unwrap();
-        a.save(Field::Title, &before, "My title").unwrap();
-        let stale_view = reviewed(&a, &[Field::Title]);
-        copy_journal(&a_root, &b_root);
-        let b_before = b.current(Field::Title).unwrap();
-        b.save(Field::Title, &b_before, "Reviewed title").unwrap();
-        copy_journal(&b_root, &a_root);
-        assert_eq!(a.current(Field::Title).unwrap().text, "Reviewed title");
-        let merged = edits_json(&a);
-        assert!(a.revert_to_original(&stale_view).is_err());
-        assert_eq!(edits_json(&a), merged);
-        let fresh_view = reviewed(&a, &[Field::Title]);
-        a.revert_to_original(&fresh_view).unwrap();
-        let after = a.edits().unwrap();
-        assert_eq!(after.len(), 1);
-        assert_eq!(after[0].text, "Original title");
-        assert_eq!(after[0].history.len(), 4);
-        let texts: Vec<_> = after[0].history.iter().map(|s| s.text.as_str()).collect();
-        assert!(texts.contains(&"My title") && texts.contains(&"Reviewed title"));
-    }
-
-    #[test]
-    fn revert_leaves_a_detached_record_untouched() {
-        let (_dir, root, folder) = fixture();
-        write_summary(&folder, json!({"title": "Original title"}));
-        let store = Store::new(&root, &folder, "100-200");
-        let before = store.current(Field::Title).unwrap();
-        store.save(Field::Title, &before, "My title").unwrap();
-        write_summary(&folder, json!({"title": "Regenerated title"}));
-        let detached = edits_json(&store);
-        let view = reviewed(&store, &[Field::Title]);
-        store.revert_to_original(&view).unwrap();
-        assert_eq!(edits_json(&store), detached);
     }
 
     #[test]
