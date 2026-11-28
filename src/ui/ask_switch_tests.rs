@@ -2717,6 +2717,261 @@ fn ask_card_focus_opens_one_surface_with_a_model_chip() {
 }
 
 #[test]
+fn ask_card_has_no_element_below_the_input_row() {
+    if in_parent("ask_card_has_no_element_below_the_input_row") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        focus_ask_card(&mut rt);
+        for step in 0..4 {
+            match step {
+                1 => rt.key(Key::Text("A draft".into()).into()),
+                2 => begin_ask_bar_run(&mut rt),
+                3 => progress_ask_bar(
+                    &mut rt,
+                    AskProgress::Failed {
+                        message: "Synthetic failure".into(),
+                    },
+                ),
+                _ => (),
+            }
+            settle_ask_bar(&mut rt);
+            let card = element(&rt, "ask-pill");
+            let end = bottom(rect_of(&rt, "ask-field"));
+            let elements = rt.elements();
+            assert_eq!(bottom(card.rect) - end, 8.0);
+            for e in &elements {
+                if e.path.starts_with(&card.path)
+                    && e.key.as_deref().is_some_and(|k| k.starts_with("ask-"))
+                {
+                    assert!(e.rect[1] < end, "{:?}", e.key);
+                }
+            }
+            assert_no_ask_hint(&elements);
+        }
+    }
+}
+
+#[test]
+fn ask_card_model_chip_opens_the_picker_above_the_card() {
+    if in_parent("ask_card_model_chip_opens_the_picker_above_the_card") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        let mut runner = core::list_runners()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.name == "Codex")
+            .unwrap();
+        let exe = core::state_dir().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        if !exe.exists() {
+            std::fs::create_dir_all(core::state_dir()).unwrap();
+            std::fs::hard_link(std::env::current_exe().unwrap(), &exe).unwrap();
+        }
+        runner.program = exe.to_str().unwrap().into();
+        std::fs::write(
+            core::state_dir().join("runners.json"),
+            serde_json::to_vec(&[runner]).unwrap(),
+        )
+        .unwrap();
+        for page in 0..3 {
+            rt.update(|s, tx| {
+                match page {
+                    1 => s.select(MEETING, tx),
+                    2 => {
+                        s.go_home();
+                        scene_live_dock(s, "recording", false, false);
+                    }
+                    _ => (),
+                }
+                s.choose_ask_pick("Codex".into(), Some("gpt-fixture".into()));
+            });
+            settle_ask_bar(&mut rt);
+            focus_ask_card(&mut rt);
+            assert!(
+                element(&rt, "ask-model")
+                    .label
+                    .unwrap()
+                    .starts_with("Model: ")
+            );
+            tap(&mut rt, "ask-model");
+            settle_ask_bar(&mut rt);
+            assert!(rt.state.runner_open);
+            assert!(bottom(rect_of(&rt, "ask-model-picker-menu")) <= rect_of(&rt, "ask-pill")[1]);
+            let previous = rt.state.ask_model();
+            tap(&mut rt, "ask-model-picker-default");
+            assert_ne!(rt.state.ask_model(), previous);
+        }
+        rt.update(|s, _| {
+            let connection = &mut s.ask_settings.connection.settings;
+            connection.enabled = true;
+            connection.model = "local-fixture-model".into();
+        });
+        settle_ask_bar(&mut rt);
+        focus_ask_card(&mut rt);
+        assert_eq!(
+            element(&rt, "ask-model").label.as_deref(),
+            Some("Model: local-fixture-model")
+        );
+        tap(&mut rt, "ask-model");
+        assert!(rt.state.on_hex());
+        assert_eq!(
+            rt.state
+                .pending_scroll
+                .as_ref()
+                .map(|scroll| scroll.key.as_str()),
+            Some("ask-connection")
+        );
+        assert!(rt.find("ask-connection").is_some());
+        rt.update(|s, _| {
+            s.ask_open = true;
+            s.runner_error = Some("Synthetic model error".into());
+        });
+        settle_ask_bar(&mut rt);
+        assert!(rt.find("ask-model").is_none());
+    }
+}
+
+#[test]
+fn ask_card_blur_and_escape_collapse_but_a_draft_stays_open() {
+    if in_parent("ask_card_blur_and_escape_collapse_but_a_draft_stays_open") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        let rest = rect_of(&rt, "ask-pill");
+        for escape in [false, true] {
+            focus_ask_card(&mut rt);
+            if escape {
+                rt.key(Key::Escape.into());
+            } else {
+                rt.update(|_, tx| tx.blur());
+            }
+            rt.frame(0.0);
+            assert!(!rt.state.question.focused);
+            poll_ask_bar(&mut rt);
+            assert_eq!(rect_of(&rt, "ask-pill"), rest);
+        }
+        focus_ask_card(&mut rt);
+        rt.key(Key::Text("A draft".into()).into());
+        settle_ask_bar(&mut rt);
+        let card = rect_of(&rt, "ask-pill");
+        rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
+        poll_ask_bar(&mut rt);
+        assert_eq!(rect_of(&rt, "ask-pill"), card);
+    }
+}
+
+#[test]
+fn ask_card_keeps_recording_controls_and_the_live_transcript_rule() {
+    if in_parent("ask_card_keeps_recording_controls_and_the_live_transcript_rule") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        for (phase, key) in [("recording", "meeting-pause"), ("paused", "meeting-resume")] {
+            rt.update(|s, _| {
+                s.go_home();
+                scene_live_dock(s, phase, false, false);
+                s.hex.status = (phase == "recording").then(|| Ok(hex_engine_recording()));
+            });
+            settle_ask_bar(&mut rt);
+            for key in [key, "meeting-transcript"] {
+                rt.update(|_, tx| tx.focus(key, true));
+                rt.frame(0.0);
+                assert!(element(&rt, key).focused, "{phase}: {key}");
+                poll_ask_bar(&mut rt);
+                assert!(rt.state.ask_open);
+                let lead = rect_of(&rt, key);
+                let field = rect_of(&rt, "ask-field");
+                assert!(inside(lead, field));
+                assert!(inside(rect_of(&rt, "ask-send"), field));
+                let input = rect_of(&rt, "ask-input");
+                assert!(lead[0] + lead[2] <= input[0]);
+                assert!(input[2] >= 40.0);
+                if phase == "recording" {
+                    assert!(input[2] >= 90.0);
+                }
+            }
+        }
+        rt.update(|s, tx| {
+            s.select(MEETING, tx);
+            // Reading exposes the same transcript key as the live dock.
+            s.meeting_ui.tabs = false;
+        });
+        settle_ask_bar(&mut rt);
+        assert!(!rt.state.on_live());
+        rt.update(|_, tx| tx.focus("meeting-transcript", true));
+        rt.frame(0.0);
+        poll_ask_bar(&mut rt);
+        assert!(element(&rt, "meeting-transcript").focused);
+        assert!(!rt.state.ask_open);
+    }
+}
+
+#[test]
+fn ask_card_hover_does_not_take_keyboard_focus() {
+    if in_parent("ask_card_hover_does_not_take_keyboard_focus") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        focus_ask_card(&mut rt);
+        rt.key(Key::Text("A".into()).into());
+        rt.frame(0.0);
+        for key in ["ask-model", "ask-pill", "ask-send"] {
+            let (x, y) = rt.find(key).unwrap();
+            rt.pointer_move(x, y);
+            settle_ask_bar(&mut rt);
+            assert!(rt.state.question.focused, "hovering {key}");
+            rt.key(Key::Text("x".into()).into());
+            rt.frame(0.0);
+        }
+        assert_eq!(rt.state.question.text, "Axxx");
+    }
+}
+
+#[test]
+fn ask_card_keeps_the_input_mounted_across_open_and_close() {
+    if in_parent("ask_card_keeps_the_input_mounted_across_open_and_close") {
+        return;
+    }
+    for (mut rt, _) in ask_card_pages() {
+        let path = element(&rt, "ask-input").path;
+        let rest = rect_of(&rt, "ask-pill");
+        let caret = |rt: &Runtime<State>| (rt.state.question.anchor, rt.state.question.focus);
+        rt.update(|_, tx| tx.focus("ask-input", true));
+        settle_ask_bar(&mut rt);
+        let before = caret(&rt);
+        poll_ask_bar(&mut rt);
+        assert_eq!(element(&rt, "ask-input").path, path);
+        assert_eq!(caret(&rt), before);
+        let draft = "A draft";
+        rt.key(Key::Text(draft.into()).into());
+        rt.frame(0.0);
+        let typed = caret(&rt);
+        assert_ne!(typed, before);
+        rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
+        poll_ask_bar(&mut rt);
+        assert_eq!(element(&rt, "ask-input").path, path);
+        assert_eq!(caret(&rt), typed);
+        rt.update(|_, tx| tx.focus("ask-input", true));
+        rt.frame(0.0);
+        rt.key(Key::End.into());
+        for _ in draft.chars() {
+            rt.key(Key::Backspace.into());
+        }
+        rt.frame(0.0);
+        assert!(rt.state.question.text.is_empty());
+        rt.update(|_, tx| tx.blur());
+        rt.frame(0.0);
+        poll_ask_bar(&mut rt);
+        assert_eq!(rect_of(&rt, "ask-pill"), rest);
+        assert_eq!(element(&rt, "ask-input").path, path);
+        assert_eq!(caret(&rt), before);
+    }
+}
+
+#[test]
 fn ask_bar_typing_turns_send_active() {
     on_ask_bar_pages("ask_bar_typing_turns_send_active", |rt, p| {
         rt.update(|s, _| s.question = TextEdit::new("x"));
