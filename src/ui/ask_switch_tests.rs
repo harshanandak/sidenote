@@ -547,15 +547,15 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
     }
     let rt = page_with_every_kind();
     let row = |i: usize| rect_of(&rt, &format!("meeting-point-pt-0-{i}"));
-    // Bullets sit 27 px apart: a 23 px line plus 2 px of padding above and below.
-    let mut ys: Vec<f32> = (0..5).map(|i| row(i)[1]).collect();
-    ys.sort_by(f32::total_cmp);
-    for i in 1..5 {
-        assert_eq!(ys[i] - ys[i - 1], 27.0, "row {i}");
-        assert_eq!(row(i)[3], 27.0, "row {i}");
+    let mut rows: Vec<_> = (0..5).map(row).collect();
+    rows.sort_by(|a, b| a[1].total_cmp(&b[1]));
+    assert_eq!(row(3)[3], 24.0, "reply row");
+    for i in [0, 1, 2, 4] {
+        assert_eq!(row(i)[3], 26.0, "point row {i}");
     }
-    // Every heading is one role: the same height, 8 px above its first row, 28 px below the
-    // last row of the section before.
+    for pair in rows.windows(2) {
+        assert_eq!(pair[1][1], pair[0][1] + pair[0][3], "adjacent points");
+    }
     let context = rect_of(&rt, "sec-context");
     let launch = rect_of(&rt, "topic-1");
     let survey = rect_of(&rt, "topic-2");
@@ -565,12 +565,13 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
             .iter()
             .all(|h| *h == context[3])
     );
-    assert_eq!(ys[0] - (launch[1] + launch[3]), 8.0);
+    assert_eq!(context[3], 20.0);
+    assert_eq!(rows[0][1] - (launch[1] + launch[3]), 6.0);
     assert_eq!(
         launch[1] - (rect_of(&rt, "ctx-0")[1] + rect_of(&rt, "ctx-0")[3]),
-        28.0
+        20.0
     );
-    assert_eq!(survey[1] - (ys[4] + 27.0), 28.0);
+    assert_eq!(survey[1] - (rows[4][1] + rows[4][3]), 20.0);
     // Context is one paragraph: both lines are in ctx-0, and no second block exists.
     assert!(rt.find("ctx-1").is_none());
     let context = rt
@@ -582,8 +583,6 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
         context.as_deref(),
         Some(&*format!("{CONTEXT} Two questions stayed open."))
     );
-    // Bullets are 5 px, 11 px in from the row edge; the text starts 26 px in (46 for a reply).
-    // A decision has an ink dot, an open point a ring (no fill), the rest a grey dot.
     let elements = rt.elements();
     let by_key = |key: &str| {
         elements
@@ -591,24 +590,28 @@ fn meeting_notes_body_follows_the_spacing_and_bullet_rules() {
             .find(|e| e.key.as_deref() == Some(key))
             .unwrap_or_else(|| panic!("missing {key}"))
     };
-    for (i, text_x) in [(0, 26.0), (1, 26.0), (2, 26.0), (3, 46.0), (4, 26.0)] {
+    for (i, text_x) in [(0, 25.0), (1, 25.0), (2, 25.0), (3, 50.0), (4, 25.0)] {
         let (row, dot) = (row(i), by_key(&format!("meeting-bullet-pt-0-{i}")));
         let text = rect_of(&rt, &format!("meeting-point-text-pt-0-{i}"));
         assert_eq!((dot.rect[2], dot.rect[3]), (5.0, 5.0), "dot {i}");
-        let dx = if i == 3 { 20.0 } else { 0.0 };
-        assert_eq!(dot.rect[0] - row[0], 11.0 + dx, "dot x {i}");
+        let dx = if i == 3 { 25.0 } else { 0.0 };
+        assert_eq!(dot.rect[0] - row[0], 5.5 + dx, "dot x {i}");
         assert_eq!(text[0] - row[0], text_x, "text x {i}");
         assert_eq!(
             dot.fill.a == 0.0,
-            i == 1,
-            "only the open point is a ring: {i}"
+            matches!(i, 1 | 3),
+            "open points and replies use rings: {i}"
         );
-        // First line is 23 px tall, so its centre is 2 + 11.5 below the row top.
-        assert_eq!(dot.rect[1] + 2.5 - row[1], 13.5, "dot y {i}");
+        let center = if i == 3 { 12.0 } else { 13.0 };
+        assert_eq!(dot.rect[1] + 2.5 - row[1], center, "dot y {i}");
     }
     let fill = |i: usize| by_key(&format!("meeting-bullet-pt-0-{i}")).fill;
     assert_eq!(fill(2), fill(4), "decision dots share one colour");
-    assert_eq!(fill(0), fill(3), "fact and reply dots share one colour");
+    assert_eq!(
+        fill(0),
+        fill(2).alpha(0.55),
+        "fact dot uses translucent ink"
+    );
     assert_ne!(fill(0), fill(2), "a decision dot differs from a fact dot");
 }
 
@@ -656,7 +659,6 @@ fn meeting_notes_lead_each_topic_with_its_decisions() {
     // (summary rows 2 and 4) with the reply (3) kept under the first, then the fact (0), then
     // the open point (1).
     assert_eq!(shown_order(&rt, 5), [2, 3, 4, 0, 1]);
-    // The bold lead block is the decisions only.
     let elements = rt.elements();
     let ink = |i: usize| {
         let key = format!("meeting-point-text-pt-0-{i}");
@@ -666,14 +668,14 @@ fn meeting_notes_lead_each_topic_with_its_decisions() {
             .unwrap()
             .text_color
     };
-    assert_eq!(ink(2), ink(4));
-    for plain in [0, 1, 3] {
-        assert_ne!(
-            ink(plain),
-            ink(2),
-            "only decisions use the ink colour: {plain}"
-        );
+    for point in [0, 1, 4] {
+        assert_eq!(ink(point), ink(2), "top-level ink for point {point}");
     }
+    assert_eq!(
+        ink(3),
+        element(&rt, "ctx-0").text_color,
+        "reply uses body ink"
+    );
     // A topic with no decisions keeps the summary's order.
     assert!(rect_of(&rt, "meeting-point-pt-1-0")[1] > rect_of(&rt, "topic-2")[1]);
 }
@@ -818,9 +820,9 @@ fn meeting_meta_facts_and_popover_work_by_keyboard() {
     press(&mut rt, Key::Tab, true);
     for (index, (key, name, height)) in [
         (more.as_str(), "More actions", 28.0),
-        ("meeting-facts", facts.as_str(), 28.0),
-        ("meeting-people", "People: Sam, Ravi", 28.0),
-        (&project, "Suggested project: Atlas 2. Change it", 28.0),
+        ("meeting-facts", facts.as_str(), 16.0),
+        ("meeting-people", "People: Sam, Ravi", 16.0),
+        (&project, "Suggested project: Atlas 2. Change it", 20.0),
         ("segment0", "Summary", 24.0),
         ("meeting-status", "Transcript status: English only", 0.0),
     ]
@@ -3237,7 +3239,7 @@ fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
         rect(&rt, "meeting-main"),
         rect(&rt, "meeting-tasks-column"),
     );
-    assert_eq!(strip[2], 44.0, "strip");
+    assert_eq!(strip[2], 32.0, "strip");
     // S4 geometry change: notes/tasks were 640/300, now 620/290.
     assert_eq!(main[2], 620.0, "notes column");
     assert_eq!(tasks[2], 290.0, "tasks column");
@@ -3248,14 +3250,12 @@ fn meeting_grid_is_a_44_strip_620_notes_36_gap_and_290_tasks() {
     );
     // S4 geometry change: the rail gap was 40, now 36.
     assert_eq!(tasks[0] - (main[0] + main[2]), 36.0, "gap");
-    // Centred with 16 kept at the right, and nothing past the window.
-    let left = grid[0] - nav::width(&rt.state);
-    let right = 1334.0 - (grid[0] + grid[2]);
-    // S4 geometry change: the grid was 1024, now 990.
-    assert_eq!((grid[2], right - left), (990.0, 16.0), "grid {grid:?}");
-    // The header's title and controls are in the notes column.
+    let pane = rect(&rt, "meeting-pane");
+    let left = pane[0] + (pane[2] - 1040.0) / 2.0;
+    assert_eq!((grid[0], grid[2]), (left, 978.0), "grid {grid:?}");
     let head = rect(&rt, "meeting-header");
-    assert_eq!((head[0], head[2]), (main[0], 620.0), "header");
+    assert_eq!((head[0], head[2]), (left + 32.0, 976.0), "header");
+    assert_eq!(head[0], main[0], "title and notes align");
     assert_eq!(rect(&rt, "ask-pill")[2], 620.0, "Ask bar");
     assert!(rt.find("meeting-scroll-fade").is_none());
     rt.update(|_, tx| tx.scroll_to_bottom_instant("meeting-rail-scroll"));
@@ -3436,8 +3436,8 @@ fn page_with_meta(
 }
 
 #[test]
-fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between() {
-    if in_parent("the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between") {
+fn the_meta_facts_show_date_and_duration_as_separate_items() {
+    if in_parent("the_meta_facts_show_date_and_duration_as_separate_items") {
         return;
     }
     let start = 1_793_955_600_000_i64;
@@ -3451,19 +3451,24 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
     let date_only = serde_json::json!({"status":"complete","created_at_ms":start});
     let duration_only = serde_json::json!({"status":"complete","duration_ms":1320000});
     let cases = [
-        (both, format!("Date: {date}. Duration: 22 min"), true),
-        (date_only, format!("Date: {date}"), false),
-        (duration_only, "Duration: 22 min".to_string(), false),
+        (both, format!("Date: {date}. Duration: 22 min"), true, true),
+        (date_only, format!("Date: {date}"), true, false),
+        (duration_only, "Duration: 22 min".to_string(), false, true),
     ];
-    for (manifest, label, dot) in cases {
+    for (manifest, label, has_date, has_duration) in cases {
         let rt = page_with(DEFAULT_SIZE, || {
             let path = core::meetings_dir().join(MEETING).join("manifest.json");
             std::fs::write(path, manifest.to_string()).unwrap();
         });
         let facts = element(&rt, "meeting-facts");
         assert_eq!(facts.label.as_deref(), Some(label.as_str()));
-        // The dot sits between a date and a duration, and only then.
-        assert_eq!(rt.find("meeting-fact-separator").is_some(), dot, "{label}");
+        assert_eq!(rt.find("meeting-date").is_some(), has_date, "{label}");
+        assert_eq!(
+            rt.find("meeting-duration").is_some(),
+            has_duration,
+            "{label}"
+        );
+        assert!(rt.find("meeting-fact-separator").is_none());
         let shown: Vec<_> = rt
             .elements()
             .into_iter()
@@ -3487,12 +3492,11 @@ fn the_meta_facts_show_a_date_alone_a_duration_alone_or_both_with_a_dot_between(
 }
 
 #[test]
-fn a_desktop_meeting_title_is_26_on_a_33_line() {
-    if in_parent("a_desktop_meeting_title_is_26_on_a_33_line") {
+fn a_desktop_meeting_title_is_26_on_a_32_line() {
+    if in_parent("a_desktop_meeting_title_is_26_on_a_32_line") {
         return;
     }
-    // S4 title-size change: the header now passes 26 explicitly; display() rounds its line height to 33.
-    assert_eq!(rect_of(&page(), "meeting-title")[3], 33.0);
+    assert_eq!(rect_of(&page(), "meeting-title")[3], 32.0);
 }
 
 #[test]
@@ -3535,7 +3539,8 @@ fn a_phone_page_has_a_24_title_then_facts_then_the_view_switch() {
     for (before, after) in [(facts, people), (people, chip)] {
         assert!(
             after[1] >= before[1] + before[3]
-                || (after[1] >= before[1] && after[0] >= before[0] + before[2]),
+                || (after[0] >= before[0] + before[2]
+                    && after[1] + after[3] / 2.0 == before[1] + before[3] / 2.0),
             "{after:?} follows {before:?}"
         );
     }
@@ -3575,13 +3580,13 @@ fn the_hidden_time_pill_leaves_the_whole_row_to_the_text_on_a_phone() {
     if in_parent("the_hidden_time_pill_leaves_the_whole_row_to_the_text_on_a_phone") {
         return;
     }
-    // Bullet column 20, row padding 6 each side.
+    // The 16 pt marker and its 9 pt gap take 25 pt from the row.
     let space = |rt: &Runtime<State>| {
         let row = rect_of(rt, "meeting-point-pt-0-0");
         (
             row,
             rect_of(rt, "meeting-point-text-pt-0-0")[2],
-            row[2] - 32.0,
+            row[2] - 25.0,
         )
     };
     let rt = page_with_cited_point_at((390.0, 900.0));
@@ -4938,4 +4943,57 @@ fn live_transcript_stays_above_the_dock_at_short_heights() {
     rt.frame(0.0);
     let [_, y, _, height] = rect_of(&rt, "hex-stop");
     assert!(height > 0.0 && y >= 0.0 && y + height <= 600.0);
+}
+
+#[test]
+fn meeting_header_matches_design_spacing() {
+    if in_parent("meeting_header_matches_design_spacing") {
+        return;
+    }
+    let rt = page_with_every_meta_item(DEFAULT_SIZE);
+    let rect = |key: &str| rect_of(&rt, key);
+    let date = rect("meeting-date");
+    let duration = rect("meeting-duration");
+    let people = rect("meeting-people");
+    assert_eq!(date[3], 16.0);
+    assert_eq!(duration[0] - (date[0] + date[2]), 14.0);
+    assert_eq!(people[0] - (duration[0] + duration[2]), 14.0);
+    let view = element(&rt, "meeting-view");
+    let facts = rect("meeting-facts-row");
+    assert_eq!(view.rect[1] - (facts[1] + facts[3]), 16.0);
+    assert_eq!((view.rect[3], view.radius), (28.0, 9.0));
+    for (i, key) in ["segment0", "segment1", "meeting-transcript"]
+        .into_iter()
+        .enumerate()
+    {
+        let label = rect(&format!("meeting-view-label-{i}"));
+        assert!((rect(key)[2] - label[2] - 24.0).abs() < 0.01, "{key}");
+    }
+    let more = format!("more-meeting-{MEETING}-button");
+    assert_eq!(rect(&more)[1] - rect("meeting-title")[1], 2.0);
+    let controls = rect("meeting-controls");
+    let header = rect("meeting-header");
+    assert_eq!(header[1] + header[3] - (controls[1] + controls[3]), 20.0);
+    assert_eq!(rect("sec-context")[1], rect("meeting-actions")[1]);
+}
+
+#[test]
+fn meeting_summary_keeps_scroll_across_the_rail_breakpoint() {
+    if in_parent("meeting_summary_keeps_scroll_across_the_rail_breakpoint") {
+        return;
+    }
+    let mut rt = page_at((1250.0, 500.0));
+    rt.update(|s, _| s.meetings[0].summary.verify = vec![POINT.into(); 40]);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("meeting-tasks-column").is_some());
+    rt.update(|_, tx| tx.scroll_to_instant("meeting-scroll", 0.0, 96.0));
+    rt.settle_all();
+    rt.frame(0.0);
+    assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
+    rt.set_viewport((1200.0, 500.0), 1.0);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("meeting-tasks-column").is_none());
+    assert_eq!(element(&rt, "sec-context").scrolled[1], 96.0);
 }
