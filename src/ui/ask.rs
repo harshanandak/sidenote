@@ -806,7 +806,14 @@ fn model_chip_visible(s: &State) -> bool {
     card_open(s) && s.runner_error.is_none()
 }
 
-fn model_chip(s: &State, k: &Kit, p: Palette, pending: bool, layer: &mut Vec<El>) -> El {
+fn model_chip(
+    s: &State,
+    k: &Kit,
+    p: Palette,
+    pending: bool,
+    width: f32,
+    layer: &mut Vec<El>,
+) -> El {
     let connection = s.ask_settings.connection.settings.enabled;
     let hint = super::widgets::HelpHint::Model.build(k, p, layer);
     let label = roles::MEETING_CONTROL.medium().line(short_model(s), p.soft);
@@ -820,11 +827,10 @@ fn model_chip(s: &State, k: &Kit, p: Palette, pending: bool, layer: &mut Vec<El>
     .key("ask-model")
     .label(format!("Model: {}", picker_label(s)))
     .h(26.0)
-    .max_w(140.0)
+    .max_w(width)
     .shrink()
-    .min_w(30.0)
-    .pl(10.0)
-    .pr(6.0)
+    .pl(if width < 30.0 { 0.0 } else { 10.0 })
+    .pr(if width < 30.0 { 0.0 } else { 6.0 })
     .radius(13.0)
     .hover(p.button_hover)
     .focus_ring(1.0, 1.0, p.faint)
@@ -1204,6 +1210,20 @@ fn overlay_at(
     } else {
         (22.0, 10.0, 4.0)
     };
+    let (editor_min, model_max) = if compact_lead {
+        // The paused live dock adds Generate to the two recording controls.
+        let paused_live = s.on_live()
+            && s.live
+                .as_ref()
+                .is_some_and(|l| l.phase == super::live::Phase::Paused);
+        let lead_width = if paused_live { 120.0 } else { 80.0 };
+        let field_overhead = left + right + 4.0 * gap + 2.0 * DOCK_BUTTON;
+        let room = pane_width - 2.0 * (gutter + CARD_PAD.1) - lead_width - field_overhead;
+        let editor = (room - 30.0).clamp(40.0, 90.0);
+        (editor, (room - editor).clamp(12.0, 140.0))
+    } else {
+        (0.0, 140.0)
+    };
     let field = row()
         .key("ask-field")
         .min_h(PILL_HEIGHT)
@@ -1326,21 +1346,7 @@ fn overlay_at(
         .build(k)
         .key("ask-input")
         .grow(1.0)
-        .min_w(if compact_lead {
-            // A paused live dock also has Generate in the recording controls.
-            let paused_live = s.on_live()
-                && s.live
-                    .as_ref()
-                    .is_some_and(|l| l.phase == super::live::Phase::Paused);
-            let room_for_editor = if paused_live { 340.0 } else { 300.0 };
-            if pane_width - 2.0 * gutter >= room_for_editor {
-                90.0
-            } else {
-                40.0
-            }
-        } else {
-            0.0
-        });
+        .min_w(editor_min);
     let stack = stack.children(s.runner_error.as_ref().map(|error| {
         roles::META
             .wrap(format!("Could not load Ask models. {error}"), p.warn)
@@ -1382,7 +1388,7 @@ fn overlay_at(
     let field = field
         .children(lead)
         .child(input)
-        .children(model_chip_visible(s).then(|| model_chip(s, k, p, pending, layer)))
+        .children(model_chip_visible(s).then(|| model_chip(s, k, p, pending, model_max, layer)))
         .child(ask_options(s, k, p, show_prompt, layer))
         .child(action(s, p, pending, empty));
     let pill = pill
