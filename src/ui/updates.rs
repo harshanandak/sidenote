@@ -714,12 +714,12 @@ pub(super) fn acknowledge_drawn_confirmation(rt: &rune::Runtime<State>) -> bool 
 
 impl State {
     fn mark_update_seen(&self, version: &str) -> bool {
-        match std::fs::create_dir_all(self.store.root.join("local"))
-            .and_then(|()| std::fs::File::create_new(self.update_seen_marker(version)))
-        {
-            Ok(_) => true,
-            Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
-        }
+        // Only the marker may already exist: a file in place of the folder is also AlreadyExists.
+        std::fs::create_dir_all(self.store.root.join("local")).is_ok()
+            && match std::fs::File::create_new(self.update_seen_marker(version)) {
+                Ok(_) => true,
+                Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+            }
     }
     fn dismiss_update_confirmation(&mut self) {
         // Dismissing ends the frame retries, so it makes one last attempt to save the marker.
