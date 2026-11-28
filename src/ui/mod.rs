@@ -157,6 +157,7 @@ pub enum Event {
     Update(sidenote::updates::Status),
     UpdateFinished(Result<sidenote::updates::Status, String>),
     ListenerFinished(Result<(), String>),
+    SummaryWorkerProbed(bool),
     ListenerStartupStatus(sidenote::updates::ListenerStatus),
     ListenerProbed(
         Option<sidenote::updates::ListenerStatus>,
@@ -352,6 +353,7 @@ pub struct State {
     /// What the user types during the meeting. Saved to the meeting folder's `notes.md`.
     pub live_notes: TextEdit,
     live_writer: Option<live::NoteWriter>,
+    live_notes_requests: Vec<std::sync::Weak<()>>,
     /// A finished meeting to open the next time the UI can scroll.
     live_ready: Option<String>,
     /// The home list's keyboard cursor is showing (arrow keys were used).
@@ -604,6 +606,7 @@ impl State {
             live_open: false,
             live_notes: TextEdit::new(""),
             live_writer: None,
+            live_notes_requests: Vec::new(),
             live_ready: None,
             keyboard: false,
             project_menu: None,
@@ -1576,6 +1579,7 @@ impl State {
         self.ask_settings.connection.slow.remove(&id);
         core::ask_session::reset(&id);
         if let Some(run) = self.asks.remove(&id) {
+            run.cancel.stop();
             response_time::superseded(run.response_time);
         }
         self.ask_errors.remove(&id);
@@ -1727,6 +1731,7 @@ impl State {
             Event::Update(status) => self.update_status(status),
             Event::UpdateFinished(result) => self.update_finished(result),
             Event::ListenerFinished(result) => self.listener_finished(result),
+            Event::SummaryWorkerProbed(running) => self.updates.summary_running = running,
             Event::ListenerStartupStatus(status) => self.listener_startup_status(status),
             Event::ListenerProbed(status, gap) => self.listener_probed(status, gap),
             Event::Hex(msg) => self.hex_apply(msg),

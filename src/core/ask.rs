@@ -355,20 +355,16 @@ pub(super) fn spawn_job(
 ) -> std::sync::mpsc::Receiver<Result<String, String>> {
     let (sender, receiver) = std::sync::mpsc::channel();
     spawn_cancellable(cancel, move || {
-        let _update_activity = match crate::updates::activity() {
-            Ok(guard) => guard,
-            Err(_) => {
-                let _ = sender.send(Err(
-                    "An update is being installed. Try again after restart.".into(),
-                ));
-                return;
-            }
-        };
-        let result = job(&|event| {
-            if !matches!(event, AskProgress::Finished | AskProgress::Failed { .. }) {
-                progress(event);
-            }
-        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _update_activity = crate::updates::activity()
+                .map_err(|_| "An update is being installed. Try again after restart.".to_owned())?;
+            job(&|event| {
+                if !matches!(event, AskProgress::Finished | AskProgress::Failed { .. }) {
+                    progress(event);
+                }
+            })
+        }))
+        .unwrap_or_else(|_| Err("Ask stopped unexpectedly. Try again.".into()));
         let final_event = match &result {
             Ok(_) => AskProgress::Finished,
             Err(message) => AskProgress::Failed {
