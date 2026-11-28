@@ -685,22 +685,24 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     .size(DOCK_BUTTON, DOCK_BUTTON)
     .radius(DOCK_BUTTON / 2.0)
     .hover(p.button_hover)
-    .focus_ring(1.0, 1.0, p.faint)
     .preserve_focus_on_press(true)
     .hover_group_shared("help-hint-model")
     .child(
         hint.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
             .dim(0.0)
             .inert(),
-    )
-    .on_press(|s: &mut State| {
+    );
+    let picker = s.runner_open && !s.ask_settings.connection.settings.enabled;
+    let open = s.ask_settings.scope_open;
+    let trigger = super::widgets::menu_trigger(trigger, picker || open, p, |s| {
         if s.runner_open {
             s.runner_open = false;
         } else {
             s.ask_settings.scope_open = !s.ask_settings.scope_open;
         }
-    });
-    if s.runner_open && !s.ask_settings.connection.settings.enabled {
+    })
+    .focus_ring(1.0, 1.0, p.faint);
+    if picker {
         return runner_choice(
             s,
             k,
@@ -710,7 +712,6 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
             layer,
         );
     }
-    let open = s.ask_settings.scope_open;
     if open {
         mount_ask_menu(
             s,
@@ -726,7 +727,7 @@ fn ask_options(s: &State, k: &Kit, p: Palette, chip: bool, layer: &mut Vec<El>) 
     }
     row()
         .key("ask-model-picker-trigger")
-        .child(trigger.expanded(open))
+        .child(trigger)
         .min_w(0.0)
         .shrink()
 }

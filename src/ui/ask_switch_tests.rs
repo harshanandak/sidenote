@@ -53,6 +53,20 @@ fn home_ask(size: (f32, f32), dark: bool) -> Runtime<State> {
 }
 
 #[test]
+fn ask_option_menu_opens_with_enter_from_the_trigger() {
+    let mut rt = home_ask(DEFAULT_SIZE, false);
+    rt.update(|_, tx| tx.focus("ask-input", true));
+    rt.frame(0.0);
+    rt.key(Key::Tab.into());
+    rt.frame(0.0);
+    assert!(element(&rt, "ask-options").focused);
+    rt.key(Key::Enter.into());
+    rt.frame(0.2);
+    assert!(rt.state.ask_settings.scope_open);
+    assert!(rt.find("ask-options-menu").is_some());
+}
+
+#[test]
 fn ask_option_menu_keyboard_selects_and_escape_closes() {
     if in_parent("ask_option_menu_keyboard_selects_and_escape_closes") {
         return;
