@@ -709,9 +709,13 @@ pub(super) fn acknowledge_drawn_confirmation(rt: &rune::Runtime<State>) -> bool 
         return false;
     }
     let marker = rt.state.update_seen_marker(version);
-    let _ = std::fs::create_dir_all(rt.state.store.root.join("local"))
-        .and_then(|()| std::fs::File::create_new(marker));
-    true
+    // A failed write is retried on the next frame, so a later launch does not repeat the notice.
+    match std::fs::create_dir_all(rt.state.store.root.join("local"))
+        .and_then(|()| std::fs::File::create_new(marker))
+    {
+        Ok(_) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::AlreadyExists,
+    }
 }
 
 pub fn notice(s: &State, p: Palette) -> Option<El> {
@@ -990,6 +994,26 @@ mod listener_tests {
             &mut launch_after_update(root.path(), "2.0.1"),
             Some("Updated to 2.0.1"),
         );
+    }
+
+    #[test]
+    fn failed_seen_marker_write_is_retried() {
+        let root = tempfile::tempdir().unwrap();
+        write_confirmation_target(root.path(), "2.0.0");
+        std::fs::write(root.path().join("local"), b"").unwrap();
+        let mut window = launch_after_update(root.path(), "2.0.0");
+        assert_update_confirmation(&mut window, Some("Updated to 2.0.0"));
+        assert!(!acknowledge_drawn_confirmation(&window));
+
+        std::fs::remove_file(root.path().join("local")).unwrap();
+        assert!(acknowledge_drawn_confirmation(&window));
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
+    }
+
+    #[test]
+    fn missing_confirmation_target_shows_no_notice() {
+        let root = tempfile::tempdir().unwrap();
+        assert_update_confirmation(&mut launch_after_update(root.path(), "2.0.0"), None);
     }
 
     fn write_confirmation_target(root: &std::path::Path, version: &str) {
