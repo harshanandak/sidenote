@@ -395,13 +395,21 @@ fn home_row(
             .child(row().w(44.0).justify_end().child(time))
             .child(more);
     }
+    let hovered = s.hovered_meeting.as_deref() == Some(m.id.as_str());
+    let hover_id = m.id.clone();
     let mut r = col()
         .w_full()
         .gap(8.0)
         .px(10.0)
         .py(9.0)
         .radius(10.0)
-        .hover(p.chip)
+        .on_hover_change(move |s: &mut State, inside, _| {
+            if inside {
+                s.hovered_meeting = Some(hover_id.clone());
+            } else if s.hovered_meeting.as_deref() == Some(hover_id.as_str()) {
+                s.hovered_meeting = None;
+            }
+        })
         .child(top);
     if let Some(button) = below {
         r = r.child(row().w_full().child(button));
@@ -409,6 +417,8 @@ fn home_row(
     let keyboard = (s.keyboard || !s.search.text.trim().is_empty()) && s.cursor == position;
     if keyboard {
         r = r.fill(p.chip);
+    } else if hovered {
+        r = r.fill(p.card).shadow(1.0, 2.0, p.shadow);
     }
     let mut out = col().w_full().child(r);
     if let Some(form) = project::form(s, k, &m.id, p) {
@@ -1834,6 +1844,29 @@ mod tests {
         let top = row.path.rsplit_once('/').unwrap().0;
         let card = top.rsplit_once('/').unwrap().0;
         assert!(elements.iter().find(|e| e.path == card).unwrap().fill != rune::Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn hovered_meeting_row_uses_the_approved_card_treatment() {
+        let mut rt = render_home(home_state(solo_meeting()), 1334.0);
+        let key = "meeting-1793955600000-1";
+        let (x, y) = rt.find(key).expect("meeting row");
+        rt.pointer_move(x, y);
+        rt.frame(0.2);
+        rt.settle_all();
+        rt.frame(0.0);
+        assert_eq!(rt.state.hovered_meeting.as_deref(), Some("1793955600000-1"));
+        let p = super::super::theme::palette(true);
+        let elements = rt.elements();
+        let row = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .expect("meeting row element");
+        let top = row.path.rsplit_once('/').unwrap().0;
+        let card = top.rsplit_once('/').unwrap().0;
+        let card = elements.iter().find(|e| e.path == card).expect("row card");
+        assert_eq!(card.fill, p.card);
+        assert!(include_str!("list.rs").contains(".shadow(1.0, 2.0, p.shadow)"));
     }
 
     #[test]

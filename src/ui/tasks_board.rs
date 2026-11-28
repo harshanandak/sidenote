@@ -751,7 +751,6 @@ fn empty_column(drag: bool, p: Palette) -> El {
         .px(10.0)
         .py(14.0)
         .radius(10.0)
-        .border(1.0, p.line)
         .child(roles::META.wrap(
             if drag {
                 "Nothing here. Drag a card here, or use Move on a card."

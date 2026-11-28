@@ -2349,7 +2349,11 @@ fn task_row(s: &State, t: &TaskItem, lay: RowLayout, p: Palette) -> El {
         });
     if selected {
         line = line
-            .fill(p.sel)
+            .px(6.0)
+            .fill(p.card)
+            .radius(8.0)
+            .border(1.0, p.line)
+            .shadow(1.0, 2.0, p.shadow)
             .child(el().w(2.0).h(18.0).radius(1.0).fill(p.ink).pin(
                 Some(0.0),
                 Some(10.0),
@@ -2362,6 +2366,11 @@ fn task_row(s: &State, t: &TaskItem, lay: RowLayout, p: Palette) -> El {
         line = line.fill(p.chip);
     }
     let feedback = task_tick_feedback(s, t, "ttick", p);
+    let line = if selected {
+        col().w_full().px(8.0).child(line)
+    } else {
+        line
+    };
     let mut out = col().w_full().child(line).children(feedback.map(|line| {
         line.key(format!("ttick-save-{id}-{index}"))
             .ml(38.0)
@@ -2546,6 +2555,11 @@ fn group_header(s: &State, k: &Kit, g: &TaskGroup, n: usize, p: Palette) -> El {
     head
 }
 
+fn task_row_selected(s: &State, row_index: usize) -> bool {
+    let t = &s.tasks.items[row_index];
+    matches!(&s.tasks.panel, Some(Panel::Task((id, index))) if *id == t.meeting_id && *index == t.index)
+}
+
 fn group_card(s: &State, k: &Kit, g: &TaskGroup, n: usize, lay: RowLayout, p: Palette) -> El {
     let mut card = cards::panel(p)
         .key(format!("tgroup-{n}"))
@@ -2556,10 +2570,13 @@ fn group_card(s: &State, k: &Kit, g: &TaskGroup, n: usize, lay: RowLayout, p: Pa
     if s.tasks.collapsed.contains(&g.key) {
         return card;
     }
-    for &row_index in &g.rows {
-        card = card
-            .child(hairline(p))
-            .child(task_row(s, &s.tasks.items[row_index], lay, p));
+    for (pos, &row_index) in g.rows.iter().enumerate() {
+        let selected = task_row_selected(s, row_index);
+        let previous_selected = pos > 0 && task_row_selected(s, g.rows[pos - 1]);
+        if !selected && !previous_selected {
+            card = card.child(hairline(p));
+        }
+        card = card.child(task_row(s, &s.tasks.items[row_index], lay, p));
     }
     card
 }
@@ -3530,8 +3547,8 @@ fn source_link(s: &State, t: &TaskItem, p: Palette) -> El {
         return roles::META.wrap("The meeting is no longer on this computer.", p.soft);
     };
     let id = m.id.clone();
-    // The link sits on a card-coloured footer, so it keeps the outline the soft card drops.
-    cards::panel(p).border(1.0, p.line).child(
+    // The shared panel supplies the card-coloured footer and its outline.
+    cards::panel(p).child(
         pressable(
             cards::row_shell()
                 .padding(8.0)
@@ -4792,6 +4809,29 @@ mod tests {
         drain_task_updates(&mut rt, hang_guard);
         assert!(!rt.state.tasks.store.load_overrides().unwrap().manual[0].done);
         assert!(rt.find("ttick-retry-manual/handmade-0").is_none());
+    }
+
+    #[test]
+    fn selected_task_row_uses_the_approved_card_treatment() {
+        let mut rt = tasks_page();
+        rt.update(|s, _| {
+            seed_manual_tasks(&mut s.tasks, &[("handmade", false)]);
+            s.rebuild_tasks();
+            assert!(s.open_task(MANUAL_ROW, 0));
+        });
+        rt.frame(0.0);
+        let p = super::super::theme::palette(true);
+        let row = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("trow-manual/handmade-0"))
+            .expect("selected task row");
+        assert_eq!(row.fill, p.card);
+        let src = include_str!("tasks.rs");
+        let start = src.find("    if selected {").expect("selected branch");
+        let branch = &src[start..start + 700];
+        assert!(branch.contains(".border(1.0, p.line)"));
+        assert!(branch.contains(".shadow(1.0, 2.0, p.shadow)"));
     }
 
     #[test]
