@@ -1750,7 +1750,16 @@ fn after_update_status(status: Status, directory: &Path) -> Status {
     pipeline_status(status, directory)
 }
 pub fn restarted() {
+    RESTARTED.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = after_update();
+}
+
+static RESTARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn restarted_version() -> Option<&'static str> {
+    RESTARTED
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .then_some(VERSION)
 }
 fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(), String>) {
     if guard.listener_pending() {
@@ -1788,7 +1797,7 @@ pub fn apply(
         from_window,
         listener_stopping,
         report,
-        |guard| apply_ready(guard, restart_args, publish),
+        |guard| apply_ready(guard, from_window, restart_args, publish),
     )
 }
 
@@ -1845,6 +1854,7 @@ fn wait_for_listener_stop() -> Result<Option<File>, &'static str> {
 
 fn apply_ready(
     guard: &InstallGuard<'_>,
+    from_window: bool,
     restart_args: Vec<String>,
     mut publish: impl FnMut(Phase),
 ) -> Result<(), String> {
@@ -1877,6 +1887,11 @@ fn apply_ready(
     if let Err(error) = result {
         restart_listener(guard, recover_listener);
         return Err(error.into());
+    }
+    if from_window {
+        publish(Phase::Restarting);
+        // Give the window time to paint before Update.exe takes over.
+        std::thread::sleep(Duration::from_millis(750));
     }
     std::process::exit(0)
 }

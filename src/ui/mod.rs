@@ -2773,6 +2773,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         });
     }
     meeting_delete::overlay(s, p, &mut layer);
+    layer.extend(updates::notice(s, p));
     rune_kit::root(app, layer)
 }
 
