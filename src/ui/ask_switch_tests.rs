@@ -2895,9 +2895,11 @@ fn ask_card_keeps_recording_controls_and_the_live_transcript_rule() {
         }
         rt.update(|s, tx| {
             s.select(MEETING, tx);
-            s.meeting_ui.tabs = true;
+            // Reading exposes the same transcript key as the live dock.
+            s.meeting_ui.tabs = false;
         });
         settle_ask_bar(&mut rt);
+        assert!(!rt.state.on_live());
         rt.update(|_, tx| tx.focus("meeting-transcript", true));
         rt.frame(0.0);
         poll_ask_bar(&mut rt);
