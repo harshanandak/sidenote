@@ -203,7 +203,7 @@ function Assert-Fixture($Fixture, [string]$Version) {
     foreach ($entry in $Fixture.Sentinels.GetEnumerator()) {
         if ((Get-FileHash -LiteralPath $entry.Key).Hash -ne $entry.Value) { throw 'Synthetic fixture content changed.' }
     }
-    Assert-RecoveryState $Fixture.Updates $Version
+    Assert-RecoveryState $Fixture.Updates $Version -Canonical
     $pointer = Read-Json (Join-Path $Fixture.Scripts '.pipeline-current.json')
     $manifestPath = Join-Path $Fixture.Scripts ".pipeline-generations/$($pointer.current.generation)/.generation.json"
     if ((Get-FileHash -LiteralPath $manifestPath).Hash -ine $pointer.current.manifest_sha256 -or

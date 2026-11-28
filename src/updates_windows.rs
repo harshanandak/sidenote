@@ -370,7 +370,14 @@ pub fn load() -> Status {
     read_status(&directory())
 }
 fn read_status(directory: &Path) -> Status {
-    let mut status = pipeline_status(read_saved_status(directory), directory);
+    let mut status = read_saved_status(directory);
+    if status.error.as_deref() == Some(install_state::CONTENTION) {
+        status.error = None;
+        if status.phase == Phase::Error {
+            status.phase = Phase::Idle;
+        }
+    }
+    let mut status = pipeline_status(status, directory);
     if install_state::listener_pending(directory) && !install_state::pipeline_pending(directory) {
         status.phase = Phase::Error;
         status.error = Some(INSTALL_LISTENER_ERROR.into());
@@ -1256,7 +1263,9 @@ fn start_installed(
 ) -> Result<bool, String> {
     let guard = InstallGuard::for_startup(directory, started).map_err(InstallAdmission::message)?;
     let _check = LISTENER_CHECK.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.listener_pending() {
+    let state = guard.state()?;
+    if state.app_version != VERSION || state.listener_work == install_record::ListenerWork::Pending
+    {
         reconcile(&guard, started)?;
         return Ok(pending_update());
     }
@@ -1304,7 +1313,7 @@ fn complete_pipeline_install(
     make_report: impl FnOnce(&Status) -> serde_json::Value,
 ) -> Result<(), String> {
     let directory = guard.directory;
-    let completed = install_pending_pipeline(guard, install, || {
+    install_pending_pipeline(guard, install, || {
         let mut status = read_saved_status(directory);
         if status.error.as_deref() == Some(PIPELINE_INSTALL_ERROR) {
             if status.phase == Phase::Error {
@@ -1317,11 +1326,8 @@ fn complete_pipeline_install(
                 .map_err(|_| PIPELINE_INSTALL_ERROR)?;
         }
         Ok(())
-    })?;
-    if completed && !guard.listener_pending() {
-        guard.publish_completion_receipt()?;
-    }
-    Ok(())
+    })
+    .map(|_| ())
 }
 
 fn install_pipeline_scripts(deadline: Option<Instant>) -> Result<PipelineCompletion, String> {
@@ -1560,6 +1566,7 @@ fn reconcile_installed(
         || pipeline(pipeline_deadline),
         || listener(deadline),
         make_report,
+        true,
     )
     .and_then(Reconciliation::hook_result)
 }
@@ -1576,6 +1583,7 @@ fn reconcile_startup(guard: &InstallGuard<'_>, started: Instant) -> Result<(), S
         || install_pipeline_scripts(Some(pipeline_deadline)),
         || recover_listener_until(deadline),
         report,
+        false,
     )
     .and_then(|work| work.listener);
     finish_listener(&result);
@@ -1636,9 +1644,10 @@ fn reconcile_and_save(
     pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
     listener: impl FnOnce() -> Result<(), String>,
     make_report: impl Fn(&Status) -> serde_json::Value,
+    force: bool,
 ) -> Result<Reconciliation, String> {
-    let result =
-        preflight().and_then(|()| reconcile_install(guard, pipeline, listener, &make_report));
+    let result = preflight()
+        .and_then(|()| reconcile_install(guard, pipeline, listener, &make_report, force));
     let directory = guard.directory;
     let status = read_status(directory);
     let error = match &result {
@@ -1670,19 +1679,13 @@ fn reconcile_install(
     pipeline: impl FnOnce() -> Result<PipelineCompletion, String>,
     listener: impl FnOnce() -> Result<(), String>,
     make_report: impl FnOnce(&Status) -> serde_json::Value,
+    force: bool,
 ) -> Result<Reconciliation, String> {
-    let current = guard.begin_reconciliation()?;
+    let current = guard.begin_reconciliation(force)?;
     // The generation installer verifies hashes and deduplicates publication, even on reinstall.
     let pipeline = complete_pipeline_install(guard, pipeline, make_report);
     let listener = listener();
-    if listener.is_ok() {
-        if pipeline.is_ok() {
-            guard.publish_completion_receipt()?;
-        }
-        guard
-            .clear_listener_pending()
-            .map_err(|_| "Could not clear listener restart state.")?;
-    }
+    guard.finish_listener_recovery(listener.is_ok())?;
     Ok(Reconciliation {
         changed: !current,
         pipeline,
@@ -1704,10 +1707,10 @@ pub fn restarted() {
     let _ = after_update();
 }
 fn restart_listener(guard: &InstallGuard<'_>, recover: impl FnOnce() -> Result<(), String>) {
-    if guard.listener_pending() {
+    if guard.listener_pending() == Ok(true) {
         let _ = fs::remove_file(guard.directory.join("update-listener.stop"));
         if recover().is_ok() {
-            let _ = guard.clear_listener_pending();
+            let _ = guard.finish_listener_recovery(true);
         } else {
             let _ = save(&Status { phase: Phase::Error, error: Some("The update finished, but the listener could not restart. Check its Sidenote task.".into()), ..load() });
         }
@@ -1763,8 +1766,7 @@ fn apply_installed(
     if listener_stopping() {
         return Err("An update is already being installed.".into());
     }
-    let _ = install_record::read(directory)?;
-    if guard.listener_pending() {
+    if guard.listener_pending()? {
         return Err(
             "Reopen Sidenote to finish restarting its meeting listener, then retry the update."
                 .into(),
@@ -1953,9 +1955,13 @@ mod tests {
         preflight()?;
         let guard = InstallGuard::acquire(directory).map_err(InstallAdmission::message)?;
         preflight()?;
-        super::reconcile_install(&guard, pipeline, listener, |status| {
-            serde_json::json!(status)
-        })
+        super::reconcile_install(
+            &guard,
+            pipeline,
+            listener,
+            |status| serde_json::json!(status),
+            true,
+        )
         .and_then(Reconciliation::hook_result)
     }
 
@@ -2150,6 +2156,7 @@ mod tests {
             PipelineCompletion::NotConfigured
         );
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
         let guard = InstallGuard::acquire(root.path()).unwrap();
@@ -2172,6 +2179,7 @@ mod tests {
             PIPELINE_INSTALL_ERROR
         );
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         fs::write(&marker, VERSION).unwrap();
         let guard = InstallGuard::acquire(root.path()).unwrap();
@@ -2245,6 +2253,7 @@ mod tests {
     fn overlapping_hook_does_no_work_and_can_retry() {
         let root = tempfile::tempdir().unwrap();
         let files = [
+            install_record::FILE,
             "install-hook.complete",
             "pipeline-install.pending",
             "update-listener.resume",
@@ -2278,12 +2287,15 @@ mod tests {
             assert_eq!(fs::read(root.path().join(name)).unwrap(), name.as_bytes());
         }
         drop(lock);
+        // Retire the deliberately corrupt snapshot before retrying legacy recovery.
+        fs::remove_file(root.path().join(install_record::FILE)).unwrap();
         assert!(reconcile_install(root.path(), || Ok(()), || Ok(Complete), || Ok(())).unwrap());
     }
 
     #[test]
     fn pending_pipeline_survives_after_update_reset_and_restart() {
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         let status_path = root.path().join("updates.json");
         fs::write(&marker, VERSION).unwrap();
@@ -2333,8 +2345,11 @@ mod tests {
             assert_eq!(restarted.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
             assert!(install_state::pipeline_pending(root.path()));
         }
-        // A failed install, including a marker from an older version, remains pending.
-        fs::write(&marker, "older version").unwrap();
+        // A pipeline retry cannot run work from another app version.
+        let mut record = guard.state().unwrap();
+        let state_path = root.path().join(install_record::FILE);
+        record.app_version = "0.0.1".into();
+        write_json(&state_path, &record).unwrap();
         assert!(
             install_pending_pipeline(
                 &guard,
@@ -2346,8 +2361,9 @@ mod tests {
         let reset = pipeline_status(Status::default(), root.path());
         assert_eq!(reset.phase, Phase::Error);
         assert_eq!(reset.error.as_deref(), Some(PIPELINE_INSTALL_ERROR));
-        // Only successful completion removes the marker, enabling the normal reset.
-        fs::write(&marker, VERSION).unwrap();
+        // Only successful completion ends the retry and enables the normal reset.
+        record.app_version = VERSION.into();
+        write_json(&state_path, &record).unwrap();
         assert!(install_pending_pipeline(&guard, || Ok(Complete), || Ok(())).unwrap());
         assert!(!install_state::pipeline_pending(root.path()));
         let cleared = after_update_status(read_status(root.path()), root.path());
@@ -2359,6 +2375,7 @@ mod tests {
     #[test]
     fn pipeline_retry_survives_failure_between_status_save_and_marker_removal() {
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("install-hook.complete"), VERSION).unwrap();
         let marker = root.path().join("pipeline-install.pending");
         let path = root.path().join("updates.json");
         fs::write(&marker, VERSION).unwrap();

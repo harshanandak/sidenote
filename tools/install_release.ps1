@@ -132,7 +132,7 @@ function Invoke-ReleaseInstall {
     $setup = Get-SetupPath
     if ($WhatIf) {
         Write-Output '1. Require Hex idle with no capture jobs; reserve the existing update activity, window and worker locks; refuse pending notes/routing.'
-        Write-Output '2. Request listener stop with its existing stop/resume markers; wait up to 8 seconds. Re-check Hex and Sidenote immediately before Setup.'
+        Write-Output '2. Request listener stop with its existing PID stop marker; wait up to 8 seconds. Re-check Hex and Sidenote immediately before Setup.'
         Write-Output "3. Run $(Split-Path -Leaf $setup) --silent --log <Log>; release reservations only after Setup starts; wait and require exit 0."
         Write-Output "4. Run installed sidenote.exe --veloapp-updated $Version; require success, then verify the listener within 30 seconds."
         Write-Output "5. Run tools/install_check.ps1 -Expect $Version; require every row to pass. Hex settings stay as they are; startup folder discovery catches recordings from the install window."
@@ -140,8 +140,6 @@ function Invoke-ReleaseInstall {
     }
     $locks = [Collections.Generic.List[IDisposable]]::new()
     $stopOwned = $false
-    $resumeCreated = $false
-    $handoff = @{ Started = $false }
     try {
         $script:stage = 'Hex idle check: require readable idle status and no capture jobs'
         Assert-HexIdle
@@ -154,10 +152,8 @@ function Invoke-ReleaseInstall {
         Assert-SidenoteIdle $paths
         $script:stage = 'listener handoff: another install must not own its stop marker; listener must stop within 8 seconds'
         $stop = Join-Path $paths.Updates 'update-listener.stop'
-        $resume = Join-Path $paths.Updates 'update-listener.resume'
         Write-NewMarker $stop (@{pid=$PID; created=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()} | ConvertTo-Json -Compress)
         $stopOwned = $true
-        if (-not (Test-Path -LiteralPath $resume)) { Write-NewMarker $resume 'resume'; $resumeCreated = $true }
         Wait-ListenerStopped (Join-Path $paths.Updates 'update-listener.lock')
         $logPath = [IO.Path]::GetFullPath($Log)
         $script:stage = 'silent Setup: require the feed installer'
@@ -168,7 +164,6 @@ function Invoke-ReleaseInstall {
         Assert-SidenoteIdle $paths
         $script:stage = 'silent Setup: require exit 0; inspect the requested log on failure'
         Invoke-Setup $setup $logPath {
-            $handoff.Started = $true
             Release-InstallLocks $locks
         }
         $script:stage = 'after-update hook: require the installed app and exit 0'
@@ -195,7 +190,6 @@ function Invoke-ReleaseInstall {
         }
         Release-InstallLocks $locks
         if ($restore) {
-            if ($resumeCreated -and -not $handoff.Started) { Remove-Item -LiteralPath $resume -ErrorAction SilentlyContinue }
             try { Start-ScheduledTask -TaskPath '\' -TaskName 'Sidenote meeting listener' *> $null } catch { }
         }
     }
