@@ -186,6 +186,13 @@ fn submit(s: &mut State, question: &str, tx: &mut Tx) {
     keep_question_focus(s, tx);
 }
 
+#[rustfmt::skip]
+fn type_in_question(s: &mut State, e: &KeyEvent, tx: &mut Tx) -> bool {
+    let typing = matches!(&e.key, Key::Text(_)) && !((e.mods.cmd || e.mods.ctrl) && (cfg!(target_os = "macos") || !e.mods.alt));
+    if typing { s.ask_settings.scope_open = false; s.question.key(e, None); keep_question_focus(s, tx); }
+    typing
+}
+
 pub(super) fn focus_open(s: &mut State, tx: &mut Tx) -> bool {
     let open = s.question.focused
         || tx.focused().is_some_and(|key| {
@@ -622,7 +629,7 @@ fn mount_ask_menu(
     p: Palette,
     layer: &mut Vec<El>,
     menu: AskMenu,
-    (key, label, anchor, gutter): (&str, &str, &str, f32),
+    (key, label, anchor, gutter): (&'static str, &'static str, &'static str, f32),
     close: fn(&mut State),
 ) {
     let motion = if s.ask_settings.reduced_motion.get() {
@@ -666,6 +673,7 @@ fn mount_ask_menu(
         } else {
             OPTIONS_KEY
         })
+        .on_key(move |s, e, tx| key == OPTIONS_KEY && type_in_question(s, e, tx))
         .modal(true, close);
     layer.push(rune_kit::scrim(format!("{key}-scrim"), close));
     layer.push(surface);
@@ -992,27 +1000,16 @@ fn card_open(s: &State) -> bool {
 }
 #[rustfmt::skip]
 fn quick_chips(s: &State, p: Palette, compact: bool, reading: bool) -> El {
-    let control = roles::MEETING_CONTROL;
     let chip = |e: El| pressable(e).h(24.0).px(10.0).radius(12.0).hover(p.button_hover).preserve_focus_on_press(true);
-    let more = chip(row().items_center().gap(2.0).child(control.line("More", p.soft))
-        .child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)))
-    .key(OPTIONS_KEY).label("Ask options")
-    .description("Choose the question scope or a suggested prompt.");
-    let more = super::widgets::menu_trigger(more, s.ask_settings.scope_open, p, |s| {
-        s.ask_settings.scope_open = !s.ask_settings.scope_open;
-    }).focus_ring(1.0, 1.0, p.faint);
-    let chips = prompt_list(s)
-        .into_iter()
-        .take(quick_chip_count(s, reading))
-        .enumerate()
-        .map(|(index, prompt)| {
-            chip(row().items_center().child(control.line(prompt, p.ink)))
-                .key(format!("ask-quick-{index}")).label(format!("Ask: {prompt}"))
-                .min_w(0.0).fill(p.chip).shrink().on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
-        });
-    row().w_full().h(QUICK_ROW).px(6.0).pb(8.0).items_center().gap(6.0)
-        .children(chips).child(more).child(rune::el().grow(1.0))
-        .children((!compact).then(|| roles::MEETING_META.line(scope_text(s), p.faint).key("ask-scope")))
+    let more = chip(row().items_center().gap(2.0).child(roles::MEETING_CONTROL.line("More", p.soft)).child(icons::draw(&icons::CHEVRON_DOWN, 12.0, p.soft)))
+        .key(OPTIONS_KEY).label("Ask options").description("Choose the question scope or a suggested prompt.");
+    let more = super::widgets::menu_trigger(more, s.ask_settings.scope_open, p, |s| { s.ask_settings.scope_open = !s.ask_settings.scope_open; }).focus_ring(1.0, 1.0, p.faint);
+    let chips = prompt_list(s).into_iter().take(quick_chip_count(s, reading)).enumerate().map(|(index, prompt)| {
+        chip(row().items_center().child(roles::MEETING_CONTROL.line(prompt, p.ink)))
+            .key(format!("ask-quick-{index}")).label(format!("Ask: {prompt}"))
+            .min_w(0.0).fill(p.chip).shrink().on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
+    });
+    row().w_full().h(QUICK_ROW).px(6.0).pb(8.0).items_center().gap(6.0).children(chips).child(more).child(rune::el().grow(1.0)).children((!compact).then(|| roles::MEETING_META.line(scope_text(s), p.faint).key("ask-scope")))
 }
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.

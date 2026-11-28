@@ -3249,6 +3249,7 @@ fn ask_card_more_menu_lists_the_rest_scope_and_all_prompts() {
                 rt.key(Key::Text("x".into()).into());
                 rt.frame(0.0);
                 poll_ask_bar(&mut rt);
+                assert_eq!(rt.state.question.text, "x");
                 assert!(rt.find("ask-options-menu").is_none() && ask_editor(&rt).focused);
             }
         }
