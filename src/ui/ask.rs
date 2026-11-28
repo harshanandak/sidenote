@@ -10,7 +10,7 @@ use super::{
 };
 use regex::{Captures, Regex};
 use rune::tok::motion::{SNAP, pair};
-use rune::{El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
+use rune::{Color, El, Key, KeyEvent, Spring, SpringPair, Transition, Tx, col, row};
 use rune_kit::{Kit, Markdown, MarkdownStyle, Menu, MenuItem, Placement, Spinner, TextInput};
 use sidenote::core::{self, Meeting, Message, ask::SUGGESTIONS, ask_all};
 use std::sync::LazyLock;
@@ -820,6 +820,16 @@ const PILL_HEIGHT: f32 = 48.0;
 const PROMPT_HEIGHT: f32 = 28.0;
 const PROMPT_GAP: f32 = 4.0;
 
+fn pill_edge(open: bool, error: bool, p: Palette) -> (Color, f32, f32) {
+    if error {
+        (p.warn, 4.0, 18.0)
+    } else if open {
+        (p.faint, 8.0, 28.0)
+    } else {
+        (p.line, 4.0, 18.0)
+    }
+}
+
 /// The round button at the pill's right end: a send arrow once there is text, a Stop square
 /// while a question runs.
 fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
@@ -854,25 +864,25 @@ fn action(s: &State, p: Palette, pending: bool, empty: bool) -> El {
             }),
         );
     }
-    slot.child(
-        super::widgets::icon_button(
-            &super::icons::ARROW_UP,
-            "Ask (Enter)",
-            "ask-send",
-            super::widgets::ButtonRole::Primary,
-            p,
-        )
-        .size(DOCK_BUTTON, DOCK_BUTTON)
-        .radius(DOCK_BUTTON / 2.0)
-        .focus_ring(1.0, 1.0, p.faint)
-        .preserve_focus_on_press(true)
-        .transition(replace)
-        .button_disabled(empty)
-        .on_press_tx(|s: &mut State, tx| {
-            let q = s.question.text.clone();
-            submit(s, &q, tx);
-        }),
+    let send = super::widgets::icon_button(
+        &super::icons::ARROW_UP,
+        "Ask (Enter)",
+        "ask-send",
+        super::widgets::ButtonRole::Primary,
+        p,
     )
+    .size(DOCK_BUTTON, DOCK_BUTTON)
+    .radius(DOCK_BUTTON / 2.0)
+    .focus_ring(1.0, 1.0, p.faint)
+    .preserve_focus_on_press(true)
+    .transition(replace)
+    .disabled(empty)
+    .dim(if s.ask_has_text { 1.0 } else { 0.5 })
+    .on_press_tx(|s: &mut State, tx| {
+        let q = s.question.text.clone();
+        submit(s, &q, tx);
+    });
+    slot.child(if empty { send.inert() } else { send })
 }
 
 /// Pinned to the bottom of the meeting pane or the home page, over what is behind it.
@@ -1074,9 +1084,12 @@ pub fn overlay_with(
             .self_start()
             .on_press_tx(move |s: &mut State, tx| submit(s, prompt, tx))
     }));
+    let (ring, shadow_y, shadow_blur) = pill_edge(s.ask_open, s.ask_errors.contains_key(&id), p);
+    let pill = if s.ask_open { pill } else { pill.hover(p.chip) };
     let pill = pill
         .fill(p.card)
-        .focus_within_flat()
+        .border(1.0, ring)
+        .shadow(shadow_y, shadow_blur, p.shadow)
         .on_press_tx(|_: &mut State, tx| tx.focus("ask-input", false))
         .children(lead)
         .child(input)
