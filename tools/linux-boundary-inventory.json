@@ -419,7 +419,7 @@
 
   "src/ui/final_refresh_proofs.rs": "4989e687f2aa229c6ad0f7883147d48ae569a29e8b271ab8cf96e9c62b68d56c",
 
-  "src/ui/hex.rs": "cf7218712a71544d59dd9f7a5d86569e75199bcdd7942a6920bac2089deb03a9",
+  "src/ui/hex.rs": "972ebf3177474e5da01676e3cb02a8b7323ebc4c8e97cfc35cfdba340d95f6b4",
 
   "src/ui/hex/connection/stop.rs": "06d782f8fa7ed737d5dd3f0752c428b0cff819fb6949683d5c39a164b9ee053a",
 
@@ -429,7 +429,7 @@
 
   "src/ui/hex/connection/stop_tests/readiness.rs": "f602446d98114226eb807ad043fe0fef85b4ec4b532e2c52838f4b9f67e95da6",
 
-  "src/ui/hex/settings.rs": "4d64f27ec661195d4b144cf10ad5f0593407704bc9fc5ccbd240ff29d570712e",
+  "src/ui/hex/settings.rs": "0a07a6062e5c86792b31b9d9c2fb570b4b313f62efd2e8f005762f31c21fdbe3",
 
   "src/ui/hex/setup.rs": "796724b155b0e9d4a08c72c8d4842b9460c69b348a8c1652279515939c6c2e08",
 
@@ -449,7 +449,7 @@
 
   "src/ui/memory/settled.rs": "de41d04607b3d7e97544ffffea73837ce69afa18f2fd8d2170e7561b1f859728",
 
-  "src/ui/mod.rs": "7c5feafc16005bd0728522a72e7a3c3f70096af5d8b115e810ed5744d1248d55",
+  "src/ui/mod.rs": "05360bae152e692a4dbb5cf761693df593fbf4d6d5d349afbebb2dd1c2ffce01",
 
   "src/ui/models.rs": "eb6ea41c084af0bdb6ec17cdf7a2fad8e4f812d859351e73b05fac2ccbd703f9",
 
