@@ -115,7 +115,7 @@ function New-ProofFixture([string]$Root, [string]$Source, [string]$Feed = (Join-
     }
 }
 
-function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture) {
+function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [switch]$Capture, [int]$TimeoutMs = 120000) {
     $start = [Diagnostics.ProcessStartInfo]::new($Exe)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
@@ -130,7 +130,7 @@ function Invoke-ProofProcess($Fixture, [string]$Exe, [string[]]$Arguments, [swit
             $stdout = $process.StandardOutput.ReadToEndAsync()
             $stderr = $process.StandardError.ReadToEndAsync()
         }
-        if (-not $process.WaitForExit(120000)) {
+        if (-not $process.WaitForExit($TimeoutMs)) {
             $process.Kill($true)
             $process.WaitForExit()
             throw "Timed out running $([IO.Path]::GetFileName($Exe))."
@@ -197,6 +197,108 @@ function Assert-RecoveryState([string]$Updates, [string]$Version, [switch]$Canon
     if ([IO.File]::ReadAllText((Join-Path $Updates 'install-hook.complete')) -cne $Version) {
         throw "Install hook did not complete for $Version."
     }
+}
+
+function Assert-SlowListenerHandoff($Fixture, [string]$Version) {
+    # NTFS delays a conflicting open until the batch oplock is released.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+public sealed class ProofListenerOplock : IDisposable {
+    const uint RequestBatchOplock = 0x90008;
+    const int IoPending = 997;
+    readonly ManualResetEvent signal = new ManualResetEvent(false);
+    SafeFileHandle file;
+    IntPtr request;
+    bool pending;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+    static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle file, uint code, IntPtr input, uint inputSize,
+        IntPtr output, uint outputSize, IntPtr bytesReturned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CancelIoEx(SafeFileHandle file, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetOverlappedResult(SafeFileHandle file, IntPtr overlapped, out uint bytes, bool wait);
+
+    public ProofListenerOplock(string path) {
+        try {
+            const uint GenericRead = 0x80000000, ShareAll = 7, OpenExisting = 3, Overlapped = 0x40000000;
+            file = CreateFileW(path, GenericRead, ShareAll, IntPtr.Zero, OpenExisting, Overlapped, IntPtr.Zero);
+            if (file.IsInvalid) throw new Win32Exception();
+            request = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlapped>());
+            Marshal.StructureToPtr(new NativeOverlapped { EventHandle = signal.SafeWaitHandle.DangerousGetHandle() },
+                request, false);
+            bool completed = DeviceIoControl(file, RequestBatchOplock, IntPtr.Zero, 0, IntPtr.Zero, 0,
+                IntPtr.Zero, request);
+            if (completed) throw new InvalidOperationException("The batch oplock was not held.");
+            if (Marshal.GetLastWin32Error() != IoPending) throw new Win32Exception();
+            pending = true;
+        } catch {
+            Dispose();
+            throw;
+        }
+    }
+
+    public bool Broken {
+        get {
+            if (!signal.WaitOne(0)) return false;
+            uint bytes;
+            if (!GetOverlappedResult(file, request, out bytes, false)) throw new Win32Exception();
+            return true;
+        }
+    }
+
+    public void Dispose() {
+        if (pending && !signal.WaitOne(0)) {
+            // Drain the request before freeing the OVERLAPPED buffer.
+            CancelIoEx(file, request);
+            uint bytes;
+            GetOverlappedResult(file, request, out bytes, true);
+        }
+        if (file != null) file.Dispose();
+        Marshal.FreeHGlobal(request);
+        signal.Dispose();
+    }
+}
+'@
+    $stop = Join-Path $Fixture.Updates 'update-listener.stop'
+    $marker = @{ pid = $PID; created = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
+    [IO.File]::WriteAllText("$stop.tmp", ($marker | ConvertTo-Json -Compress))
+    [IO.File]::Move("$stop.tmp", $stop)
+    [void](Wait-Proof { -not (Get-Listener $Fixture) } 'The isolated listener did not stop before the slow-start proof.')
+
+    $gate = [ProofListenerOplock]::new((Join-Path $Fixture.Updates 'update-listener.lock'))
+    try {
+        if ((Invoke-ProofProcess $Fixture $Fixture.Exe @('--veloapp-updated', $Version) -Capture -TimeoutMs 15000) -ne 0) {
+            throw 'The fast hook failed while the listener was starting.'
+        }
+        $starting = Wait-Proof {
+            if ($gate.Broken) { Get-Listener $Fixture }
+        } 'The scheduled listener did not attempt to open its instance lock.'
+        Start-Sleep -Seconds 16
+        $held = Get-Listener $Fixture
+        if (-not $held -or $held.ProcessId -ne $starting.ProcessId) { throw 'The delayed listener exited.' }
+        if (-not (Test-Path -LiteralPath (Join-Path $Fixture.Updates 'update-listener.resume') -PathType Leaf) -or
+            (Test-Path -LiteralPath (Join-Path $Fixture.Updates 'install-hook.complete'))) {
+            throw 'The fast hook did not leave listener recovery pending.'
+        }
+    } finally { $gate.Dispose() }
+
+    if ((Invoke-UpdateCommand $Fixture '--update-window-start') -ne 0) { throw 'Slow listener startup recovery failed.' }
+    $report = Read-Json (Join-Path $Fixture.Updates 'update-report.json')
+    Assert-Report $Fixture $report $Version
+    Assert-UpdatedStatus $report.status
+    Assert-RecoveryState $Fixture.Updates $Version
+    $ready = Get-Listener $Fixture
+    if (-not $ready -or $ready.ProcessId -ne $starting.ProcessId) { throw 'The delayed listener did not stay running.' }
+    Write-Output 'Verified the fast hook exited successfully while the real listener waited over 15 seconds, then startup cleared recovery.'
 }
 
 function Assert-Fixture($Fixture, [string]$Version) {
@@ -597,6 +699,7 @@ try {
     }
     if ($release) { Assert-PackageExecutable $fixture $release }
     Write-Output "Verified $next, the restarted listener (PID $($newListener.ProcessId)), preserved fixtures and bundled runtime and notices."
+    Assert-SlowListenerHandoff $fixture $next
 } finally {
     if ($fixture) { Remove-ProofFixture $fixture }
     $root.Delete($true)
