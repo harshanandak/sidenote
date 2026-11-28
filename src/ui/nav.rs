@@ -1716,6 +1716,7 @@ mod tests {
             Env::default(),
             TextSystem::new(crate::ui::theme::fonts(), (crate::ui::theme::SANS, "Inter")),
         );
+        rt.on_key = Some(crate::ui::on_key);
         rt.set_system_dark(dark);
         settle(&mut rt);
         rt
@@ -1809,16 +1810,20 @@ mod tests {
                     s.rebuild_nav();
                 });
                 visit(&mut rt, width, "nav-home", Page::Home);
-                visit(&mut rt, width, "nav-meetings", Page::Meetings);
+                ensure_open(&mut rt);
+                tap(&mut rt, "nav-meetings");
+                assert!(rt.state.page() == Page::Meetings);
                 assert!(rt.state.selected.is_none());
-                if width < 600.0 && rt.state.sidebar_is_open() {
-                    tap(&mut rt, "sidebar-toggle");
-                }
+                // Navigation closes the phone drawer, exposing the meeting row to clicks.
+                assert!(!rt.state.narrow.get() || !rt.state.sidebar_is_open());
+                settle(&mut rt);
                 tap(&mut rt, &format!("meeting-{INVENTED_MEETING_ID}"));
                 assert_eq!(rt.state.selected.as_deref(), Some(INVENTED_MEETING_ID));
                 assert!(rt.state.page() == Page::Meetings);
                 ensure_open(&mut rt);
                 assert_full_identity(&rt, width);
+                visit(&mut rt, width, "nav-meetings", Page::Meetings);
+                assert!(rt.state.selected.is_none());
                 visit(&mut rt, width, "view-tasks", Page::Tasks);
                 visit(&mut rt, width, "nav-people", Page::People);
                 visit(&mut rt, width, "view-memory", Page::Memory);
@@ -1828,6 +1833,7 @@ mod tests {
                 tap(&mut rt, "profile-button");
                 tap(&mut rt, "profile-menu-item4");
                 assert!(rt.state.page() == Page::Hex);
+                ensure_open(&mut rt);
                 assert_full_identity(&rt, width);
                 assert_eq!(count(&rt, "nav-collapse"), usize::from(width >= 600.0));
                 assert_eq!(count(&rt, "sidebar-toggle"), usize::from(width < 600.0));
@@ -1840,10 +1846,16 @@ mod tests {
         for (width, height) in [(1334.0, 900.0), (390.0, 844.0)] {
             for dark in [false, true] {
                 let mut rt = identity_rt(width, height, dark);
-                rt.on_key = Some(crate::ui::on_key);
                 own_prefs(&mut rt);
                 ensure_open(&mut rt);
                 assert_full_identity(&rt, width);
+                let open_toggle = if width >= 600.0 {
+                    "nav-collapse"
+                } else {
+                    "sidebar-toggle"
+                };
+                rt.update(|_, tx| tx.focus(open_toggle, true));
+                settle(&mut rt);
                 key_backslash(&mut rt);
                 assert!(!rt.state.sidebar_is_open());
                 assert_compact_identity(&rt);
@@ -1852,13 +1864,8 @@ mod tests {
                 key_backslash(&mut rt);
                 assert!(rt.state.sidebar_is_open());
                 assert_full_identity(&rt, width);
-                if width >= 600.0 {
-                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
-                    assert!(el(&rt, "nav-collapse").focus_visible);
-                } else {
-                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
-                    assert!(el(&rt, "sidebar-toggle").focus_visible);
-                }
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some(open_toggle)));
+                assert!(el(&rt, open_toggle).focus_visible);
                 rt.update(|s, _| {
                     s.hex.status = Some(Ok(sidenote::hex_engine::EngineState {
                         running: true,
@@ -1886,22 +1893,14 @@ mod tests {
                 });
                 ensure_open(&mut rt);
                 assert_full_identity(&rt, width);
-                if width >= 600.0 {
-                    tap(&mut rt, "nav-collapse");
-                } else {
-                    tap(&mut rt, "sidebar-toggle");
-                }
+                tap(&mut rt, open_toggle);
                 assert_compact_identity(&rt);
                 rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
                 assert_eq!(count(&rt, "rail-recording"), 1);
                 assert_eq!(el(&rt, "nav").rect[2], RAIL);
                 tap(&mut rt, "sidebar-toggle");
                 assert_full_identity(&rt, width);
-                if width >= 600.0 {
-                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("nav-collapse")));
-                } else {
-                    rt.update(|_, tx| assert_eq!(tx.focused(), Some("sidebar-toggle")));
-                }
+                rt.update(|_, tx| assert_eq!(tx.focused(), Some(open_toggle)));
                 assert_eq!(count(&rt, "rail-recording"), 0);
             }
         }
@@ -1927,7 +1926,10 @@ mod tests {
                 type_text(&mut rt, "invented ask probe 7Q");
                 assert_eq!(rt.state.question.text, "invented ask probe 7Q");
                 assert!(rt.state.question.focused);
-                ensure_open(&mut rt);
+                if !rt.state.sidebar_is_open() {
+                    key_backslash(&mut rt);
+                }
+                assert!(rt.state.sidebar_is_open());
                 hover(&mut rt, "nav-logo");
                 hover(&mut rt, "nav-caret");
                 hover(&mut rt, "nav-name");
