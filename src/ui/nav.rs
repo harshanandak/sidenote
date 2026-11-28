@@ -571,6 +571,7 @@ fn workspace_row(p: Palette) -> El {
         .pl(6.0)
         .gap(2.0)
         .items_center()
+        .window_drag()
         .child(collapse(p))
         .child(search(p))
 }
@@ -1404,6 +1405,35 @@ mod tests {
             assert_eq!(action, Some(rune::TitlebarAction::Drag), "{name}");
             rt.pointer_up(x, y);
         }
+    }
+
+    #[test]
+    fn docked_sidebar_headers_drag_from_empty_space() {
+        for (name, sidebar) in [("home", "nav"), ("hex", "settings-sidebar")] {
+            let (mut rt, _) = chrome_page(name);
+            let [x, y, w, _] = el(&rt, sidebar).rect;
+            let (x, y) = (x + w / 2.0, y + 24.0);
+            rt.pointer_down(x, y);
+            assert_eq!(
+                rt.take_titlebar_action(),
+                Some(rune::TitlebarAction::Drag),
+                "{name}"
+            );
+            rt.pointer_up(x, y);
+            tap(&mut rt, "nav-search");
+            assert_eq!(rt.take_titlebar_action(), None, "{name}");
+            assert!(rt.state.finder.is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn collapsing_docked_sidebar_preserves_content_path() {
+        let (mut rt, _) = chrome_page("hex");
+        let path = el(&rt, "hex-scroll").path;
+        tap(&mut rt, "nav-collapse");
+        assert_eq!(el(&rt, "hex-scroll").path, path);
+        tap(&mut rt, "sidebar-toggle");
+        assert_eq!(el(&rt, "hex-scroll").path, path);
     }
 
     /// A toggle saves the sidebar preference, which every other test's `State::new` reads from

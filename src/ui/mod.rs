@@ -807,8 +807,10 @@ impl State {
             return;
         }
         if self.hex_open {
-            if self.app_w.get() < 540.0 {
+            if self.app_w.get() < hex::settings::DRAWER_AT {
                 self.hex.shell.navigation_open = true;
+            } else {
+                self.hex.shell.nav_hidden = false;
             }
             self.hex.filter.focused = true;
             return;
@@ -2614,11 +2616,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     };
     // Beside a docked sidebar the header is the content column's first row; otherwise it spans
     // the window above the body, so the toggle never moves for a rail, a drawer or a list.
-    let header = page_header(s, p, window_narrow);
     let (above, beside) = if s.sidebar_docked() {
-        (None, Some(header))
+        (None, Some(page_header(s, p, window_narrow)))
+    } else if on_hex && s.app_w.get() < hex::settings::DRAWER_AT {
+        // Settings paints this header above the drawer's modal layer.
+        (Some(rune::el().h(TITLEBAR_H).min_h(TITLEBAR_H)), None)
     } else {
-        (Some(header), None)
+        (Some(page_header(s, p, window_narrow)), None)
     };
     let mut main = col()
         .key("main")
@@ -2710,6 +2714,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.hex_recording() || (open && !window_narrow)
     };
     let mut body = row()
+        .key("body")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
